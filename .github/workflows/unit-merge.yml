@@ -1,0 +1,47 @@
+name: Unit merge
+
+# Runs from main's copy of this file, so a pull request cannot change its own merge rule.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge the unit pull request CI just passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          case "$HEAD_BRANCH" in
+            unit/*) ;;
+            *) echo "Not a unit branch; the owner merges it."; exit 0 ;;
+          esac
+          pr=$(gh api "repos/$REPO/pulls?state=open&head=$OWNER:$HEAD_BRANCH" --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then echo "No open pull request for $HEAD_BRANCH."; exit 0; fi
+          state=$(gh api "repos/$REPO/pulls/$pr" --jq '"\(.draft) \(.head.sha) \(.base.ref)"')
+          read -r draft head base <<< "$state"
+          if [ "$draft" != "false" ]; then echo "Draft: waits for the owner."; exit 0; fi
+          if [ "$base" != "main" ]; then echo "Base is $base, not main."; exit 0; fi
+          if [ "$head" != "$HEAD_SHA" ]; then echo "New commits since CI ran; the next run decides."; exit 0; fi
+          behind=$(gh api "repos/$REPO/compare/main...$HEAD_SHA" --jq '.behind_by')
+          if [ "$behind" != "0" ]; then
+            gh pr comment "$pr" --repo "$REPO" --body "Not merged: the branch is $behind commit(s) behind main. Rebase on main and push to rerun CI."
+            exit 0
+          fi
+          if gh api "repos/$REPO/pulls/$pr/files" --paginate --jq '.[].filename' | grep -qx '.github/workflows/unit-merge.yml'; then
+            gh pr comment "$pr" --repo "$REPO" --body "Not merged: this pull request changes the merge workflow, so the owner merges it."
+            exit 0
+          fi
+          gh pr merge "$pr" --repo "$REPO" --squash --delete-branch --match-head-commit "$HEAD_SHA"
