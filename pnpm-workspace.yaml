@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+  - libs/*
+
+# Supply chain (KTD41): only allowlisted packages may run install scripts, and a
+# version must be published for three days before it can be installed.
+strictDepBuilds: true
+minimumReleaseAge: 4320
+# false: the package works without its install script, which stays blocked.
+allowBuilds:
+  esbuild: false
+  nx: false

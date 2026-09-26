@@ -1,0 +1,25 @@
+{
+  "name": "@partledger/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "nx": {
+    "tags": [
+      "scope:api",
+      "type:lib"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "drizzle-kit": "^0.31.11"
+  },
+  "dependencies": {
+    "drizzle-orm": "~0.45.3"
+  }
+}
