@@ -1,6 +1,6 @@
 ---
 name: build-unit
-description: Build one implementation unit from the plan in docs/plans/ end to end — implement it with its tests, pass every gate, get two independent reviews (plus a UX review for UI work), have each finding challenged by a verifier, fix what survives, and open a draft pull request. Use when asked to build, implement or continue a unit ("build U3", "next unit").
+description: Build one implementation unit from the plan in docs/plans/ end to end — implement it with its tests, pass every gate, get two independent reviews (plus a UX review for UI work), have each finding challenged by a verifier, fix what survives, and open a pull request that the CI merge workflow merges once `verify` passes. Use when asked to build, implement or continue a unit ("build U3", "next unit").
 ---
 
 # Build one plan unit
@@ -10,7 +10,7 @@ Input: a unit ID such as `U3`, or "next". The plan is the newest implementation-
 ## 1. Orient
 
 - Read `CLAUDE.md`, the plan's Goal Capsule, the unit's section (goal, requirements, dependencies, files, approach, test scenarios, verification) and every Key Technical Decision the unit cites. Read the parts of `docs/brief.md` the unit touches.
-- "next" means the lowest-numbered unit whose dependencies are merged into `main` and that has no open pull request.
+- "next" means the first ready unit in the order of the plan's Sequencing section (Phase A's design lane, then its data lane, then Phases B to E): its dependencies are merged into `main`, it has no open pull request, and no product-owner gate listed in Sequencing blocks it.
 - Check the unit's dependencies are merged into `main`. If one is not, stop and report which unit must land first.
 - Work on the branch `unit/<id>-<short-name>`, created from the latest `main`, or continue it if it already exists.
 - If a GitHub issue exists for the unit (its title starts with the unit ID), note its number.
@@ -48,11 +48,13 @@ Fix every surviving finding. Add a test for each behavioural fix, then rerun all
 
 ## 7. Pull request
 
+- Rebase on the latest `main`. If the unit touches `libs/db`, regenerate migrations and run `pnpm db:check`. Rerun the gates if the rebase changed anything.
 - Commit with conventional messages that name the unit, for example `feat(rfq): compare quotes side by side (U7)`.
-- Push the branch and open a draft pull request titled `U7: <unit name>`.
+- Push the branch and open a pull request titled `U7: <unit name>`, ready for review, so the CI merge workflow merges it once `verify` passes on top of the latest `main` (plan KTD6).
+- Open it as a draft instead, so the owner merges it, when the unit is U3, when a finding stays unresolved, or when the diff changes `.github/`, `.claude/`, `CLAUDE.md` or `docs/plans/`.
 - The body lists what was built, the gate commands and their results, the review outcome (findings confirmed, refuted, fixed), and follow-ups. Add `Closes #<issue>` when the unit has an issue.
-- Never push to `main`. Never merge.
+- Never push to `main` and never merge by hand.
 
 ## 8. Report
 
-Finish with: the unit, the branch and pull request link, gate results, findings confirmed versus refuted, follow-ups, and the next unit that is ready.
+Finish with: the unit, the branch and pull request link, whether it merges automatically or waits for the owner (and why), gate results, findings confirmed versus refuted, follow-ups, and the next unit that is ready.

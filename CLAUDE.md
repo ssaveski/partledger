@@ -33,5 +33,5 @@ A parts-and-suppliers platform for small and mid-sized manufacturers. Read `docs
 
 ## Git
 
-- Work on a branch; never push to `main`. Open pull requests as drafts.
+- Work on a branch; never push to `main` and never merge by hand. A unit's pull request merges through the CI merge workflow once `verify` passes on top of the latest `main` (plan KTD6). Open it as a draft when the owner must merge instead: U3, an unresolved finding, or changes to `.github/`, `.claude/`, `CLAUDE.md` or `docs/plans/`.
 - Conventional commit messages: `feat(scope): …`, `fix(scope): …`.
