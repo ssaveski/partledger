@@ -1,7 +1,7 @@
-import { translate } from '@partledger/contracts';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { CopyIcon, PlusIcon } from 'lucide-react';
 
+import { useTranslate } from '../i18n/translation';
 import { samplePart, sampleSuppliers } from '../preview/sample-data';
 import { Button } from './button';
 import { Checkbox, Switch } from './checkbox';
@@ -27,80 +27,92 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-export const Buttons: Story = {
-  render: () => (
+function ButtonsPreview() {
+  const translate = useTranslate();
+  return (
     <div className="flex flex-wrap items-center gap-3">
-      <Button>{translate('pl.ui.preview.save')}</Button>
-      <Button variant="secondary">{translate('pl.ui.preview.cancel')}</Button>
+      <Button>{translate('pl.preview.save')}</Button>
+      <Button variant="secondary">{translate('pl.preview.cancel')}</Button>
       <Button variant="ghost">
         <PlusIcon aria-hidden />
-        {translate('pl.ui.preview.addPart')}
+        {translate('pl.preview.addPart')}
       </Button>
-      <Button variant="danger">{translate('pl.ui.preview.deleteSupplier')}</Button>
+      <Button variant="danger">{translate('pl.preview.deleteSupplier')}</Button>
       <Button size="sm" variant="secondary">
-        {translate('pl.ui.preview.importParts')}
+        {translate('pl.preview.importParts')}
       </Button>
-      <Button size="icon" variant="secondary" aria-label={translate('pl.ui.preview.copyPartNumber')}>
+      <Button size="icon" variant="secondary" aria-label={translate('pl.preview.copyPartNumber')}>
         <CopyIcon aria-hidden />
       </Button>
-      <Button disabled>{translate('pl.ui.preview.save')}</Button>
+      <Button disabled>{translate('pl.preview.save')}</Button>
     </div>
-  ),
-};
+  );
+}
 
-export const Inputs: Story = {
-  render: () => (
+export const Buttons: Story = { render: () => <ButtonsPreview /> };
+
+function InputsPreview() {
+  const translate = useTranslate();
+  return (
     <div className="grid max-w-md gap-5">
       <Field>
-        <FieldLabel>{translate('pl.ui.preview.partNumber')}</FieldLabel>
+        <FieldLabel>{translate('pl.preview.partNumber')}</FieldLabel>
         <Input defaultValue={samplePart.number} className="font-mono" />
-        <FieldDescription>{translate('pl.ui.preview.partNumberHint')}</FieldDescription>
+        <FieldDescription>{translate('pl.preview.partNumberHint')}</FieldDescription>
       </Field>
       <Field invalid>
-        <FieldLabel>{translate('pl.ui.preview.partNumber')}</FieldLabel>
-        <Input required aria-invalid />
-        <FieldError match>{translate('pl.ui.preview.partNumberError')}</FieldError>
+        <FieldLabel>{translate('pl.preview.partNumber')}</FieldLabel>
+        <Input required />
+        <FieldError match>{translate('pl.preview.partNumberError')}</FieldError>
       </Field>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="preview-notes">{translate('pl.ui.preview.notes')}</Label>
-        <Textarea id="preview-notes" />
-      </div>
+      <Field invalid>
+        <FieldLabel>{translate('pl.preview.notes')}</FieldLabel>
+        <Textarea />
+        <FieldDescription>{translate('pl.preview.notesHint')}</FieldDescription>
+        <FieldError match>{translate('pl.preview.notesError')}</FieldError>
+      </Field>
       <Field disabled>
-        <FieldLabel>{translate('pl.ui.preview.quantity')}</FieldLabel>
+        <FieldLabel>{translate('pl.preview.quantity')}</FieldLabel>
         <Input defaultValue={samplePart.quantity} className="font-mono" />
       </Field>
     </div>
-  ),
-};
+  );
+}
 
-export const ChecksAndSwitches: Story = {
-  render: () => (
+export const Inputs: Story = { render: () => <InputsPreview /> };
+
+function ChecksAndSwitchesPreview() {
+  const translate = useTranslate();
+  return (
     <div className="flex flex-col gap-4">
       <Label className="flex items-center gap-2">
         <Checkbox defaultChecked />
-        {translate('pl.ui.preview.notifySuppliers')}
+        {translate('pl.preview.notifySuppliers')}
       </Label>
       <Label className="flex items-center gap-2">
         <Checkbox />
-        {translate('pl.ui.preview.notifySuppliers')}
+        {translate('pl.preview.notifySuppliers')}
       </Label>
       <Label className="flex items-center gap-2">
         <Switch defaultChecked />
-        {translate('pl.ui.preview.showArchived')}
+        {translate('pl.preview.showArchived')}
       </Label>
       <Label className="flex items-center gap-2">
         <Switch />
-        {translate('pl.ui.preview.showArchived')}
+        {translate('pl.preview.showArchived')}
       </Label>
     </div>
-  ),
-};
+  );
+}
+
+export const ChecksAndSwitches: Story = { render: () => <ChecksAndSwitchesPreview /> };
 
 function SupplierSelect({ open }: { open: boolean }) {
+  const translate = useTranslate();
   return (
     <Field className="max-w-xs">
       <Select items={sampleSuppliers} defaultOpen={open}>
-        <FieldLabel>{translate('pl.ui.preview.supplier')}</FieldLabel>
+        <FieldLabel>{translate('pl.preview.supplier')}</FieldLabel>
         <SelectTrigger />
         <SelectContent>
           {sampleSuppliers.map((supplier) => (
@@ -118,88 +130,103 @@ export const SelectClosed: Story = { render: () => <SupplierSelect open={false} 
 
 export const SelectOpen: Story = { tags: ['body-portal'], render: () => <SupplierSelect open /> };
 
-export const DialogOpen: Story = {
-  render: () => (
+function DialogPreview() {
+  const translate = useTranslate();
+  return (
     <Dialog defaultOpen>
-      <DialogTrigger>{translate('pl.ui.preview.deleteSupplier')}</DialogTrigger>
+      <DialogTrigger>{translate('pl.preview.deleteSupplier')}</DialogTrigger>
       <DialogContent>
-        <DialogTitle>{translate('pl.ui.preview.deleteTitle')}</DialogTitle>
-        <DialogDescription>{translate('pl.ui.preview.deleteDescription')}</DialogDescription>
+        <DialogTitle>{translate('pl.preview.deleteTitle')}</DialogTitle>
+        <DialogDescription>{translate('pl.preview.deleteDescription')}</DialogDescription>
         <DialogFooter>
-          <DialogClose>{translate('pl.ui.preview.cancel')}</DialogClose>
-          <Button variant="danger">{translate('pl.ui.preview.deleteSupplier')}</Button>
+          <DialogClose>{translate('pl.preview.cancel')}</DialogClose>
+          <Button variant="danger">{translate('pl.preview.deleteSupplier')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  ),
-};
+  );
+}
 
-export const TabsPreview: Story = {
-  name: 'Tabs',
-  render: () => (
+export const DialogOpen: Story = { render: () => <DialogPreview /> };
+
+function TabsPreviewContent() {
+  const translate = useTranslate();
+  return (
     <Tabs defaultValue="overview" className="max-w-lg">
       <TabsList>
-        <Tab value="overview">{translate('pl.ui.preview.overview')}</Tab>
-        <Tab value="quotes">{translate('pl.ui.preview.quotes')}</Tab>
-        <Tab value="evidence">{translate('pl.ui.preview.evidence')}</Tab>
+        <Tab value="overview">{translate('pl.preview.overview')}</Tab>
+        <Tab value="quotes">{translate('pl.preview.quotes')}</Tab>
+        <Tab value="evidence">{translate('pl.preview.evidence')}</Tab>
       </TabsList>
-      <TabsPanel value="overview">{translate('pl.ui.preview.overviewBody')}</TabsPanel>
-      <TabsPanel value="quotes">{translate('pl.ui.preview.quotesBody')}</TabsPanel>
-      <TabsPanel value="evidence">{translate('pl.ui.preview.evidenceBody')}</TabsPanel>
+      <TabsPanel value="overview">{translate('pl.preview.overviewBody')}</TabsPanel>
+      <TabsPanel value="quotes">{translate('pl.preview.quotesBody')}</TabsPanel>
+      <TabsPanel value="evidence">{translate('pl.preview.evidenceBody')}</TabsPanel>
     </Tabs>
-  ),
-};
+  );
+}
 
-export const TooltipOpen: Story = {
-  tags: ['body-portal'],
-  render: () => (
+export const TabsPreview: Story = { name: 'Tabs', render: () => <TabsPreviewContent /> };
+
+function TooltipPreview() {
+  const translate = useTranslate();
+  return (
     <div className="pt-12">
       <Tooltip defaultOpen>
         <TooltipTrigger
-          render={<Button size="icon" variant="secondary" aria-label={translate('pl.ui.preview.copyPartNumber')} />}
+          render={<Button size="icon" variant="secondary" aria-label={translate('pl.preview.copyPartNumber')} />}
         >
           <CopyIcon aria-hidden />
         </TooltipTrigger>
-        <TooltipContent>{translate('pl.ui.preview.copyPartNumber')}</TooltipContent>
+        <TooltipContent>{translate('pl.preview.copyPartNumber')}</TooltipContent>
       </Tooltip>
     </div>
-  ),
-};
+  );
+}
 
-export const Display: Story = {
-  render: () => (
+export const TooltipOpen: Story = { tags: ['body-portal'], render: () => <TooltipPreview /> };
+
+function DisplayPreview() {
+  const translate = useTranslate();
+  return (
     <div className="grid max-w-lg gap-5">
       <div className="flex flex-wrap gap-2">
-        <Badge>{translate('pl.ui.preview.draft')}</Badge>
-        <Badge tone="accent">{translate('pl.ui.preview.quoted')}</Badge>
-        <Badge tone="success">{translate('pl.ui.preview.approved')}</Badge>
-        <Badge tone="warning">{translate('pl.ui.preview.pending')}</Badge>
-        <Badge tone="danger">{translate('pl.ui.preview.expired')}</Badge>
-        <Badge tone="info">{translate('pl.ui.preview.aiSuggestion')}</Badge>
+        <Badge>{translate('pl.preview.draft')}</Badge>
+        <Badge tone="accent">{translate('pl.preview.quoted')}</Badge>
+        <Badge tone="success">{translate('pl.preview.approved')}</Badge>
+        <Badge tone="warning">{translate('pl.preview.pending')}</Badge>
+        <Badge tone="danger">{translate('pl.preview.expired')}</Badge>
+        <Badge tone="info">{translate('pl.preview.aiSuggestion')}</Badge>
       </div>
       <Card>
-        <CardTitle>{translate('pl.ui.preview.partTitle')}</CardTitle>
-        <CardDescription>{translate('pl.ui.preview.partDescription')}</CardDescription>
+        <CardTitle>{translate('pl.preview.partTitle')}</CardTitle>
+        <CardDescription>{translate('pl.preview.partDescription')}</CardDescription>
         <Separator />
         <dl className="grid grid-cols-2 gap-2 text-sm">
-          <dt className="text-muted">{translate('pl.ui.preview.partNumber')}</dt>
+          <dt className="text-muted">{translate('pl.preview.partNumber')}</dt>
           <dd>
             <Mono>{samplePart.number}</Mono>
           </dd>
-          <dt className="text-muted">{translate('pl.ui.preview.unitPrice')}</dt>
+          <dt className="text-muted">{translate('pl.preview.unitPrice')}</dt>
           <dd>
             <Mono>{samplePart.unitPrice}</Mono>
           </dd>
-          <dt className="text-muted">{translate('pl.ui.preview.quantity')}</dt>
+          <dt className="text-muted">{translate('pl.preview.quantity')}</dt>
           <dd>
             <Mono>{samplePart.quantity}</Mono>
           </dd>
         </dl>
+        <div>
+          <Button variant="secondary" size="sm">
+            {translate('pl.preview.copyPartNumber')}
+          </Button>
+        </div>
       </Card>
       <div className="flex flex-col gap-2">
         <Skeleton className="h-4 w-3/4" />
         <Skeleton className="h-4 w-1/2" />
       </div>
     </div>
-  ),
-};
+  );
+}
+
+export const Display: Story = { render: () => <DisplayPreview /> };

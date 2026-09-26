@@ -44,3 +44,28 @@
   --pl-danger-hover: #9a1f26;
   --pl-info: #1b5ca3;
 }
+
+/* A light-scheme visitor sees the light theme before a script sets data-theme, so there is no dark flash. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --pl-surface: #f6f8f9;
+    --pl-surface-raised: #ffffff;
+    --pl-surface-overlay: #ffffff;
+    --pl-surface-sunken: #eef1f3;
+    --pl-text-primary: #14191d;
+    --pl-text-muted: #4f5961;
+    --pl-text-on-accent: #ffffff;
+    --pl-text-on-state: #ffffff;
+    --pl-accent: #006a73;
+    --pl-accent-hover: #005a62;
+    --pl-border: #d9dee2;
+    --pl-border-strong: #6f7982;
+    --pl-focus-ring: #006a73;
+    --pl-success: #146c50;
+    --pl-warning: #7a5000;
+    --pl-danger: #b3262d;
+    --pl-danger-hover: #9a1f26;
+    --pl-info: #1b5ca3;
+  }
+}

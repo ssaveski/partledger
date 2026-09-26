@@ -3,7 +3,7 @@ import { XIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 
 import { useTranslate } from '../i18n/translation';
-import { cn, type WithClassName } from '../lib/cn';
+import { cn, overlaySurface, type WithClassName } from '../lib/cn';
 import { buttonVariants } from './button';
 
 export const Dialog = BaseDialog.Root;
@@ -24,7 +24,8 @@ export function DialogContent({
       <BaseDialog.Popup
         className={cn(
           'fixed top-1/2 left-1/2 z-50 flex w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4',
-          'rounded-lg border border-line bg-surface-overlay p-6 text-primary shadow-xl outline-hidden',
+          'rounded-lg border border-line p-6 text-primary shadow-xl outline-hidden',
+          overlaySurface,
           className,
         )}
         {...props}

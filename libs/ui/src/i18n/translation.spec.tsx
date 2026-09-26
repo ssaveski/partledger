@@ -4,12 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { Select, SelectTrigger } from '../components/select';
+import { previewCatalogue } from '../preview/catalogue';
 import { EmptyState, ErrorState, LoadingState, NoPermissionState } from '../states/states';
 import { TranslationProvider } from './translation';
 
 // Every message becomes its own key in brackets, so any text outside brackets is a literal.
 const pseudoCatalogue: ModuleCatalogue = Object.fromEntries(
-  Object.keys(englishCatalogue).map((key) => [key, `⟦${key}⟧`]),
+  Object.keys(previewCatalogue).map((key) => [key, `⟦${key}⟧`]),
 );
 
 function renderWith(catalogue: ModuleCatalogue, node: ReactNode): string {
@@ -34,8 +35,8 @@ const rendered: [string, ReactNode][] = [
     'the empty state',
     <EmptyState
       key="empty"
-      titleKey="pl.ui.preview.noPartsTitle"
-      descriptionKey="pl.ui.preview.noPartsDescription"
+      titleKey="pl.preview.noPartsTitle"
+      descriptionKey="pl.preview.noPartsDescription"
       action={null}
     />,
   ],
@@ -50,16 +51,21 @@ const rendered: [string, ReactNode][] = [
 ];
 
 describe('component text', () => {
+  it('keeps the Storybook sample labels out of the shipped catalogue', () => {
+    expect(Object.keys(englishCatalogue).filter((key) => key.startsWith('pl.preview.'))).toEqual([]);
+    expect(Object.keys(previewCatalogue).some((key) => key.startsWith('pl.preview.'))).toBe(true);
+  });
+
   it.each(rendered)('%s renders translation keys, not literals', (_name, node) => {
     const markup = renderWith(pseudoCatalogue, node);
-    expect(markup).toContain('⟦pl.ui.');
+    expect(markup).toContain('⟦pl.');
     expect(literalText(markup)).toBe('');
   });
 
   it('fills message params in the error state', () => {
     const markup = renderWith(
-      englishCatalogue,
-      <ErrorState messageKey="pl.ui.preview.suppliersFailed" messageParams={{ status: 503 }} onRetry={noop} />,
+      previewCatalogue,
+      <ErrorState messageKey="pl.preview.suppliersFailed" messageParams={{ status: 503 }} onRetry={noop} />,
     );
     expect(markup).toContain('The supplier list could not be loaded (status 503).');
   });
@@ -70,10 +76,7 @@ describe('component text', () => {
   });
 
   it('shows the generic message when the error state misses a message param', () => {
-    const markup = renderWith(
-      englishCatalogue,
-      <ErrorState messageKey="pl.ui.preview.suppliersFailed" onRetry={noop} />,
-    );
+    const markup = renderWith(previewCatalogue, <ErrorState messageKey="pl.preview.suppliersFailed" onRetry={noop} />);
     expect(markup).toContain(englishCatalogue['pl.ui.state.error.unexpected']);
   });
 

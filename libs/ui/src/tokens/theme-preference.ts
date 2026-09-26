@@ -24,14 +24,39 @@ export function storeThemePreference(storage: Pick<Storage, 'setItem'>, preferen
   storage.setItem(storageKey, preference);
 }
 
-/** Sets `data-theme` on the document from the stored preference, following the system while it is `system`. */
-export function applyThemePreference(preference: ThemePreference = readThemePreference(window.localStorage)): void {
-  const query = window.matchMedia('(prefers-color-scheme: light)');
+export interface ColourSchemeQuery {
+  readonly matches: boolean;
+  addEventListener(type: 'change', listener: () => void): void;
+  removeEventListener(type: 'change', listener: () => void): void;
+}
+
+export interface ThemeEnvironment {
+  root: { dataset: DOMStringMap };
+  prefersLight: ColourSchemeQuery;
+}
+
+function browserEnvironment(): ThemeEnvironment {
+  return { root: document.documentElement, prefersLight: window.matchMedia('(prefers-color-scheme: light)') };
+}
+
+let stopFollowingSystem: (() => void) | undefined;
+
+/** Sets `data-theme` on the document, following the system colour scheme only while the preference is `system`. */
+export function applyThemePreference(
+  preference: ThemePreference = readThemePreference(window.localStorage),
+  environment: ThemeEnvironment = browserEnvironment(),
+): void {
+  const { root, prefersLight } = environment;
+  stopFollowingSystem?.();
+  stopFollowingSystem = undefined;
   const apply = () => {
-    document.documentElement.dataset['theme'] = resolveTheme(preference, query.matches);
+    root.dataset['theme'] = resolveTheme(preference, prefersLight.matches);
   };
   apply();
   if (preference === 'system') {
-    query.addEventListener('change', apply);
+    prefersLight.addEventListener('change', apply);
+    stopFollowingSystem = () => {
+      prefersLight.removeEventListener('change', apply);
+    };
   }
 }

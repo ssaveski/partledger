@@ -1,3 +1,4 @@
+import { Field as BaseField } from '@base-ui/react/field';
 import { Input as BaseInput } from '@base-ui/react/input';
 import type { ComponentProps } from 'react';
 
@@ -14,6 +15,9 @@ export function Input({ className, ...props }: WithClassName<ComponentProps<type
   return <BaseInput className={cn(controlClasses, 'h-9', className)} {...props} />;
 }
 
-export function Textarea({ className, ...props }: ComponentProps<'textarea'>) {
-  return <textarea className={cn(controlClasses, 'min-h-20 py-2', className)} {...props} />;
+/** A Field control rendered as a textarea, so a surrounding Field gives it its label, description and validity. */
+export function Textarea({ className, ...props }: WithClassName<ComponentProps<typeof BaseField.Control>>) {
+  return (
+    <BaseField.Control render={<textarea />} className={cn(controlClasses, 'min-h-20 py-2', className)} {...props} />
+  );
 }

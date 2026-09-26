@@ -32,6 +32,10 @@
 }
 
 @layer base {
+  :root {
+    --pl-ring-offset: var(--pl-surface);
+  }
+
   html {
     font-family: var(--font-sans);
     font-feature-settings: 'cv11', 'ss01';

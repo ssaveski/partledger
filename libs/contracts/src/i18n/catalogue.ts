@@ -66,7 +66,7 @@ export function formatMessage(
   catalogue: ModuleCatalogue = englishCatalogue,
 ): string {
   return translate(key, catalogue).replace(/\{([a-zA-Z][a-zA-Z0-9]*)\}/g, (_placeholder, name: string) => {
-    const value = params[name];
+    const value = Object.hasOwn(params, name) ? params[name] : undefined;
     if (value === undefined) {
       throw new Error(`Missing param ${name} for message key ${key}`);
     }

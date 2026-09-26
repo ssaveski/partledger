@@ -11,13 +11,15 @@ export function TabsList({ className, ...props }: WithClassName<ComponentProps<t
   return <BaseTabs.List className={cn('flex gap-1 border-b border-line', className)} {...props} />;
 }
 
-// The active tab carries a border, not only a colour, so it stays distinct in forced colours.
+// Forced colours would paint every tab's underline the same system colour, so the underline
+// switches to system colours there: Canvas (invisible) on unselected tabs, Highlight on the selected one.
 export function Tab({ className, ...props }: WithClassName<ComponentProps<typeof BaseTabs.Tab>>) {
   return (
     <BaseTabs.Tab
       className={cn(
         '-mb-px cursor-pointer rounded-t-md border-b-2 border-transparent px-3 py-2 text-sm font-medium text-muted',
         'hover:text-primary data-active:border-accent data-active:text-primary',
+        'forced-colors:border-b-[Canvas] forced-colors:data-active:border-b-[Highlight]',
         'data-disabled:cursor-not-allowed data-disabled:opacity-50',
         focusRing,
         className,

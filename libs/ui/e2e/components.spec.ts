@@ -64,6 +64,23 @@ for (const theme of themeNames) {
   });
 }
 
+for (const [colorScheme, theme] of [
+  ['light', 'light'],
+  ['dark', 'dark'],
+] as const) {
+  test(`before a theme is set, a ${colorScheme}-scheme visitor sees the ${theme} surface`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    await openStory(page, 'components--buttons', 'dark');
+    await page.evaluate(() => {
+      delete document.documentElement.dataset['theme'];
+    });
+    const main = page.getByRole('main');
+    expect(hex(await main.evaluate((element) => getComputedStyle(element).backgroundColor))).toBe(
+      themes[theme].surface,
+    );
+  });
+}
+
 interface FocusedOutline {
   tag: string;
   style: string;
@@ -126,6 +143,18 @@ test.describe('in forced-colours mode', () => {
     });
   }
 
+  test('the selected tab keeps an underline that unselected tabs do not have', async ({ page }) => {
+    await openStory(page, 'components--tabs-preview', 'dark');
+    const colours = await page
+      .getByRole('tab')
+      .evaluateAll((tabs) => tabs.map((tab) => getComputedStyle(tab).borderBottomColor));
+    const [selected, ...unselected] = colours;
+    expect(unselected.length).toBeGreaterThan(0);
+    for (const colour of unselected) {
+      expect(colour).not.toBe(selected);
+    }
+  });
+
   test('an unfocused button draws no outline', async ({ page }) => {
     await openStory(page, 'components--buttons', 'dark');
     const button = page.getByRole('button').first();
@@ -176,5 +205,57 @@ test('the loading state announces itself politely', async ({ page }) => {
 test('the no-permission state explains how to get access', async ({ page }) => {
   await openStory(page, 'states--no-permission', 'light');
   await expect(page.getByRole('heading', { name: 'You do not have access to this' })).toBeVisible();
-  await expect(page.getByText('Ask a tenant administrator to give your role access.')).toBeVisible();
+  await expect(page.getByText('Ask your administrator for access to this page.')).toBeVisible();
+});
+
+test('the no-permission state tells supplier staff to ask the buyer who invited them', async ({ page }) => {
+  await openStory(page, 'states--no-permission-for-supplier', 'dark');
+  await expect(page.getByText('Ask the buyer who invited you for access to this page.')).toBeVisible();
+});
+
+test('a textarea inside a field gets its label, description and invalid state', async ({ page }) => {
+  await openStory(page, 'components--inputs', 'dark');
+  const notes = page.getByRole('textbox', { name: 'Notes for suppliers' });
+  await expect(notes).toHaveAccessibleDescription(/Suppliers see these notes with the request for quotation\./);
+  await expect(notes).toHaveAttribute('aria-invalid', 'true');
+});
+
+test('the root error boundary moves focus to its heading when it takes over', async ({ page }) => {
+  await openStory(page, 'states--root-error-boundary-catches-missing-key', 'dark');
+  await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeFocused();
+});
+
+test('after a successful retry focus moves to the page the root error boundary rendered again', async ({ page }) => {
+  await openStory(page, 'states--root-error-boundary-recovers', 'dark');
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByRole('heading', { name: 'The page rendered again after the retry.' })).toBeVisible();
+  await expect(page.locator(':focus')).toContainText('The page rendered again after the retry.');
+});
+
+async function tabUntilFocused(page: Page, control: Locator): Promise<void> {
+  for (let presses = 0; presses < 10; presses += 1) {
+    if (await control.evaluate((element) => element === document.activeElement)) {
+      return;
+    }
+    await page.keyboard.press('Tab');
+  }
+  await expect(control).toBeFocused();
+}
+
+async function focusedBoxShadow(page: Page): Promise<string> {
+  return page.evaluate(() =>
+    document.activeElement === null ? '' : getComputedStyle(document.activeElement).boxShadow,
+  );
+}
+
+test('the focus ring offset matches the raised surface of a card', async ({ page }) => {
+  await openStory(page, 'components--display', 'dark');
+  await tabUntilFocused(page, page.getByRole('button', { name: 'Copy part number' }));
+  expect(await focusedBoxShadow(page)).toContain('rgb(18, 23, 27)');
+});
+
+test('the focus ring offset matches the overlay surface of a dialog', async ({ page }) => {
+  await openStory(page, 'components--dialog-open', 'light');
+  await tabUntilFocused(page, page.getByRole('button', { name: 'Cancel' }));
+  expect(await focusedBoxShadow(page)).toContain('rgb(255, 255, 255)');
 });

@@ -53,4 +53,9 @@ describe('translation catalogues', () => {
     const catalogue = buildCatalogue({ parts: { 'pl.parts.count': '{count} parts' } });
     expect(() => formatMessage('pl.parts.count', {}, catalogue)).toThrow(/Missing param count/);
   });
+
+  it('fails loudly on a placeholder named after an inherited object property', () => {
+    const catalogue = buildCatalogue({ parts: { 'pl.parts.owner': 'Made by {constructor}' } });
+    expect(() => formatMessage('pl.parts.owner', {}, catalogue)).toThrow(/Missing param constructor/);
+  });
 });

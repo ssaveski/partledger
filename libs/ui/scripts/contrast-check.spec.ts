@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { themes, type Palette } from '../src/tokens/themes.ts';
-import { checkPalette, contrastRatio, findTokenDrift, runContrastCheck } from './contrast-check.ts';
+import { checkPalette, contrastRatio, findTokenDrift, runContrastCheck } from './contrast.ts';
 
 const shippedCss = readFileSync(join(import.meta.dirname, '..', 'src', 'tokens', 'tokens.css'), 'utf8');
 
@@ -50,6 +50,18 @@ describe('contrast check', () => {
   it('reports a CSS variable that no longer matches its token', () => {
     const drifted = shippedCss.replace('--pl-accent: #006a73;', '--pl-accent: #00aabb;');
     expect(findTokenDrift(drifted)).toEqual(['light: --pl-accent is #00aabb, expected #006a73']);
+  });
+
+  it('reports drift in the light block used before a theme is set', () => {
+    const [before, fallback] = shippedCss.split('@media (prefers-color-scheme: light)');
+    const drifted = `${before ?? ''}@media (prefers-color-scheme: light)${(fallback ?? '').replace('--pl-surface: #f6f8f9;', '--pl-surface: #ffffff;')}`;
+    expect(findTokenDrift(drifted)).toEqual(['light before a theme is set: --pl-surface is #ffffff, expected #f6f8f9']);
+  });
+
+  it('runs the gate as a script that fails on a problem', () => {
+    expect(runContrastCheck(shippedCss.replace("[data-theme='light'] {", '.unrelated {'))).toContain(
+      'light: no theme block in tokens.css',
+    );
   });
 
   it('reports a CSS variable that has no token', () => {

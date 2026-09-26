@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, createRef, type ErrorInfo, type ReactNode } from 'react';
 
 import { ErrorState } from './states';
 
@@ -23,18 +23,31 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
     this.props.onError?.(error, info);
   }
 
+  private readonly content = createRef<HTMLDivElement>();
+
   private readonly retry = (): void => {
     this.setState({ failed: false });
   };
+
+  // The retry button disappears with the error state, so focus moves to the page it rendered again.
+  override componentDidUpdate(_props: RootErrorBoundaryProps, previous: RootErrorBoundaryState): void {
+    if (previous.failed && !this.state.failed) {
+      this.content.current?.focus();
+    }
+  }
 
   override render(): ReactNode {
     if (this.state.failed) {
       return (
         <main className="flex min-h-screen items-center justify-center bg-surface">
-          <ErrorState messageKey="pl.ui.state.error.unexpected" onRetry={this.retry} headingLevel={1} />
+          <ErrorState messageKey="pl.ui.state.error.unexpected" onRetry={this.retry} headingLevel={1} focusHeading />
         </main>
       );
     }
-    return this.props.children;
+    return (
+      <div ref={this.content} tabIndex={-1} className="outline-hidden">
+        {this.props.children}
+      </div>
+    );
   }
 }

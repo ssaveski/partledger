@@ -3,7 +3,7 @@ import { CheckIcon, ChevronsUpDownIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 
 import { useTranslate } from '../i18n/translation';
-import { cn, type WithClassName } from '../lib/cn';
+import { cn, overlaySurface, type WithClassName } from '../lib/cn';
 import { controlClasses } from './input';
 
 export const Select = BaseSelect.Root;
@@ -40,7 +40,8 @@ export function SelectContent({
       <BaseSelect.Positioner sideOffset={4} alignItemWithTrigger={false} className="z-50 outline-hidden">
         <BaseSelect.Popup
           className={cn(
-            'max-h-(--available-height) min-w-(--anchor-width) overflow-y-auto rounded-md border border-line bg-surface-overlay p-1 text-sm text-primary shadow-lg outline-hidden',
+            'max-h-(--available-height) min-w-(--anchor-width) overflow-y-auto rounded-md border border-line p-1 text-sm text-primary shadow-lg outline-hidden',
+            overlaySurface,
             className,
           )}
           {...props}

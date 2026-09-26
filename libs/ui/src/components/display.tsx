@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { LoaderCircleIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 
-import { cn, type WithClassName } from '../lib/cn';
+import { cn, raisedSurface, type WithClassName } from '../lib/cn';
 
 export const badgeVariants = cva(
   'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
@@ -29,14 +29,19 @@ export function Badge({ className, tone, ...props }: ComponentProps<'span'> & Va
 export function Card({ className, ...props }: ComponentProps<'section'>) {
   return (
     <section
-      className={cn('flex flex-col gap-3 rounded-lg border border-line bg-surface-raised p-5 text-primary', className)}
+      className={cn('flex flex-col gap-3 rounded-lg border border-line p-5 text-primary', raisedSurface, className)}
       {...props}
     />
   );
 }
 
-export function CardTitle({ className, ...props }: ComponentProps<'h2'>) {
-  return <h2 className={cn('text-base font-semibold', className)} {...props} />;
+export function CardTitle({
+  className,
+  headingLevel = 2,
+  ...props
+}: ComponentProps<'h2'> & { headingLevel?: 2 | 3 | 4 }) {
+  const Heading = headingLevel === 2 ? 'h2' : headingLevel === 3 ? 'h3' : 'h4';
+  return <Heading className={cn('text-base font-semibold', className)} {...props} />;
 }
 
 export function CardDescription({ className, ...props }: ComponentProps<'p'>) {
