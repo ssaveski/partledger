@@ -13,9 +13,21 @@ A parts-and-suppliers platform for small and mid-sized manufacturers. Read `docs
 
 - TypeScript end to end, `strict` on, Node LTS, pnpm workspace.
 - API: NestJS. Database: PostgreSQL with row-level security.
-- Frontend framework is an open decision (Vue 3 or React), settled in the first plan.
+- Frontend: React 19 with shadcn/ui on Base UI (plan KTD1); the staff app and the supplier portal share `libs/ui`.
 - zod schemas are the single source of truth for every boundary shape; types are inferred from them.
 - Tests: Vitest; integration tests against real PostgreSQL (Testcontainers); end-to-end with Playwright.
+
+## Workspace
+
+- Apps in `apps/` (api, web, portal, verifier), libraries in `libs/`. Nx tags enforce the boundaries in lint: `db`, `domain` and `packs` are API-only, `ui` is front-end-only, `contracts` is shared, and the verifier imports only `libs/chain`. Apps are never imported.
+- `pnpm verify` runs every gate: action pins, format and lint, typecheck, `db:check`, contrast, unit tests, vectors, integration tests (Docker for Testcontainers) and Playwright. Cloud-session setup: `docs/runbooks/cloud-session-setup.md`.
+- Only `apps/api/src/config/` reads `process.env`. User-facing text comes from translation keys; literal strings in components fail lint.
+- Dependencies: install scripts run only for packages allowlisted in `pnpm-workspace.yaml` (`allowBuilds`), and a version must be three days old (`minimumReleaseAge`). CI actions are pinned by commit digest.
+
+## Parallel sessions
+
+- Never share single files between units: translation catalogues (`libs/contracts/src/i18n/en/<module>.json`), permission expectations (`apps/api/test/permissions/<module>`) and job schedules are split per module.
+- Rebase every pull request on the latest `main` before pushing; units that touch `libs/db` regenerate migrations and run `pnpm db:check` after the rebase.
 
 ## Engineering rules
 

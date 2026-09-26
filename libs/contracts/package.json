@@ -1,0 +1,22 @@
+{
+  "name": "@partledger/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.3.0"
+  },
+  "devDependencies": {},
+  "nx": {
+    "tags": [
+      "scope:shared",
+      "type:lib"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["scripts", "tools", "vitest.config.ts", "playwright.config.ts"],
+  "exclude": ["tools/eslint/*.mjs"]
+}

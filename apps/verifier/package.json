@@ -1,0 +1,21 @@
+{
+  "name": "@partledger/verifier",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@partledger/chain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  },
+  "nx": {
+    "tags": [
+      "scope:verifier",
+      "type:app"
+    ]
+  }
+}

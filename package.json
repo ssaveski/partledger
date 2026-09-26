@@ -1,0 +1,40 @@
+{
+  "name": "partledger",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "lint": "prettier --check . && nx show projects > /dev/null && eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "typecheck": "pnpm -r --workspace-concurrency=4 typecheck && tsc -p tsconfig.json",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "test:vectors": "vitest run --project vectors --passWithNoTests",
+    "contrast:check": "node libs/ui/scripts/contrast-check.ts",
+    "db:check": "drizzle-kit check --config libs/db/drizzle.config.ts",
+    "actions:check": "node scripts/check-action-pins.ts",
+    "verify": "pnpm actions:check && pnpm lint && pnpm typecheck && pnpm db:check && pnpm contrast:check && pnpm test && pnpm test:vectors && pnpm test:integration && pnpm test:e2e"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@eslint/js": "^10.0.1",
+    "@nx/eslint-plugin": "^23.2.1",
+    "@playwright/test": "1.56.1",
+    "@types/node": "^24.13.6",
+    "drizzle-kit": "^0.31.11",
+    "drizzle-orm": "~0.45.3",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "nx": "^23.2.1",
+    "prettier": "^3.9.9",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vitest": "^5.0.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  }
+}

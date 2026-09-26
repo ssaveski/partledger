@@ -9,3 +9,6 @@ tmp/
 .env.*
 !.env.example
 local-dev/
+playwright-report/
+test-results/
+*.tsbuildinfo
