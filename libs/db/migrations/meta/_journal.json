@@ -29,6 +29,20 @@
       "when": 1790464842655,
       "tag": "0003_credential_resolver",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790466001079,
+      "tag": "0004_idempotency_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790466002348,
+      "tag": "0005_idempotency_keys_security",
+      "breakpoints": true
     }
   ]
 }

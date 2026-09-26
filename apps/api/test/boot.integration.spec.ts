@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 const apiDirectory = join(import.meta.dirname, '..');
 const entryPoint = join(apiDirectory, 'dist', 'main.js');
 const placeholderDatabaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:1/partledger';
+const ports = { STAFF_PORT: '3000', PORTAL_PORT: '3001', DROP_PORT: '3002', OPERATOR_PORT: '3003' };
 
 function startWith(environment: Readonly<Record<string, string>>) {
   return spawnSync(process.execPath, [entryPoint], {
@@ -54,45 +55,55 @@ describe('the built API entry point', () => {
     }
   });
 
-  it('refuses to boot on an invalid PORT and names the field', () => {
-    const result = startWith({ NODE_ENV: 'test', PORT: 'eighty', DATABASE_URL: placeholderDatabaseUrl });
+  it('refuses to boot on an invalid STAFF_PORT and names the field', () => {
+    const result = startWith({
+      NODE_ENV: 'test',
+      ...ports,
+      STAFF_PORT: 'eighty',
+      DATABASE_URL: placeholderDatabaseUrl,
+    });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/PORT/);
+    expect(result.stderr).toMatch(/STAFF_PORT/);
   });
 
   it('refuses to boot on an unknown NODE_ENV and names the field', () => {
-    const result = startWith({ NODE_ENV: 'staging', PORT: '3000', DATABASE_URL: placeholderDatabaseUrl });
+    const result = startWith({ NODE_ENV: 'staging', ...ports, DATABASE_URL: placeholderDatabaseUrl });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/NODE_ENV/);
   });
 
-  it('boots on a valid configuration and serves the health endpoint', async () => {
-    const port = await freePort();
+  it('boots on a valid configuration and serves the health endpoint on each of its four listeners', async () => {
+    const [staff, portal, drop, operator] = await Promise.all([freePort(), freePort(), freePort(), freePort()]);
     const child = spawn(process.execPath, [entryPoint], {
       env: {
         PATH: process.env.PATH,
         NODE_ENV: 'test',
-        PORT: String(port),
+        STAFF_PORT: String(staff),
+        PORTAL_PORT: String(portal),
+        DROP_PORT: String(drop),
+        OPERATOR_PORT: String(operator),
         DATABASE_URL: database.connectionString('pl_app'),
       },
       stdio: 'pipe',
     });
     running.push(child);
-    const deadline = Date.now() + 20_000;
-    let body: unknown = null;
-    while (body === null && Date.now() < deadline) {
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
-        body = await response.json();
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+    for (const port of [staff, portal, drop, operator]) {
+      const deadline = Date.now() + 20_000;
+      let body: unknown = null;
+      while (body === null && Date.now() < deadline) {
+        try {
+          const response = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+          body = await response.json();
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
       }
+      expect(healthResponseSchema.parse(body)).toEqual({ status: 'ok' });
     }
-    expect(healthResponseSchema.parse(body)).toEqual({ status: 'ok' });
   });
 
   it('refuses to boot without a DATABASE_URL and names the field', () => {
-    const result = startWith({ NODE_ENV: 'test', PORT: '3000' });
+    const result = startWith({ NODE_ENV: 'test', ...ports });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/DATABASE_URL/);
   });
@@ -101,7 +112,7 @@ describe('the built API entry point', () => {
     const superuser = await database.connect('superuser');
     try {
       await superuser.query('alter table credentials no force row level security');
-      const result = startWith({ NODE_ENV: 'test', PORT: '3000', DATABASE_URL: database.connectionString('pl_app') });
+      const result = startWith({ NODE_ENV: 'test', ...ports, DATABASE_URL: database.connectionString('pl_app') });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('row_security_not_forced: public.credentials');
     } finally {
@@ -111,7 +122,7 @@ describe('the built API entry point', () => {
   });
 
   it('refuses to boot when connected as the superuser, which bypasses row-level security', () => {
-    const result = startWith({ NODE_ENV: 'test', PORT: '3000', DATABASE_URL: database.connectionString('superuser') });
+    const result = startWith({ NODE_ENV: 'test', ...ports, DATABASE_URL: database.connectionString('superuser') });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('unexpected_connection_role: bootstrap_admin');
   });
@@ -119,7 +130,7 @@ describe('the built API entry point', () => {
   it('refuses to boot when connected as the owning role pl_migrator', () => {
     const result = startWith({
       NODE_ENV: 'test',
-      PORT: '3000',
+      ...ports,
       DATABASE_URL: database.connectionString('pl_migrator'),
     });
     expect(result.status).toBe(1);

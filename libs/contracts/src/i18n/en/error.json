@@ -1,0 +1,15 @@
+{
+  "pl.error.notFound.resource": "We could not find that record. It may have been removed, or you may not have access to it.",
+  "pl.error.notFound.route": "This action does not exist.",
+  "pl.error.conflict.versionMismatch": "Someone changed this record after you opened it. Reload it and try again.",
+  "pl.error.conflict.transitionNotAllowed": "This action is not available in the record's current state.",
+  "pl.error.conflict.alreadyExists": "A record with these details already exists.",
+  "pl.error.invalid.request": "Some of the information sent is missing or not in the expected form.",
+  "pl.error.invalid.idempotencyKeyRequired": "This action needs an idempotency key so that a retry cannot apply it twice.",
+  "pl.error.unprocessable.idempotencyKeyReused": "This idempotency key was already used for a different request.",
+  "pl.error.forbidden.notPermitted": "You do not have permission to do this.",
+  "pl.error.unavailable.dependencyUnavailable": "A service this action needs is unavailable. Try again shortly.",
+  "pl.error.stepUpRequired.recentAuthentication": "Confirm your identity again to continue.",
+  "pl.error.unauthenticated.credential": "Your session or link is not valid. Sign in again or request a new link.",
+  "pl.error.internal.unexpected": "Something went wrong on our side. Try again, and contact support if it keeps happening."
+}

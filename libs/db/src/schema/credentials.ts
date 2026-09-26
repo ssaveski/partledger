@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, foreignKey, index, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import { check, foreignKey, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core';
 
 import { credentialResolverRole } from '../roles.ts';
 import { defineTableAccess } from '../table-access.ts';
@@ -28,7 +28,8 @@ export const credentials = pgTable(
   },
   (table) => [
     foreignKey({ name: 'credentials_tenant_id_fkey', columns: [table.tenantId], foreignColumns: [tenants.id] }),
-    index('credentials_tenant_id_index').on(table.tenantId),
+    // The target of composite foreign keys from tenant-owned tables (KTD11).
+    unique('credentials_tenant_id_id_key').on(table.tenantId, table.id),
     check(
       'credentials_kind_check',
       sql`${table.kind} in ('staff_session', 'supplier_link', 'drop_credential', 'platform_operator')`,

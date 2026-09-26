@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -42,6 +44,14 @@ async function errorCodeOf(work: Promise<unknown>): Promise<string | undefined> 
   }
 }
 
+async function insertIdempotencyKey(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
+  await client.query(
+    `insert into idempotency_keys (tenant_id, credential_id, command, key, fingerprint, result, created_at, expires_at)
+     values ($1, $2, 'fixtures.create', $3, $4, '{}', now(), now() + interval '1 day')`,
+    [tenantId, credentialId, randomUUID(), hashCredentialSecret(randomUUID())],
+  );
+}
+
 describe('row-level security as pl_app', () => {
   let database: TestDatabase;
   let superuser: pg.Client;
@@ -50,6 +60,7 @@ describe('row-level security as pl_app', () => {
   let appDatabase: NodePgDatabase;
   let tenantA: string;
   let tenantB: string;
+  const credentialOf = new Map<string, string>();
   const inOneHour = () => new Date(Date.now() + 3_600_000);
 
   beforeAll(async () => {
@@ -90,12 +101,14 @@ describe('row-level security as pl_app', () => {
           (await superuser.query('insert into fixture_parents (tenant_id) values ($1) returning id', [tenant])).rows,
         )[0].id;
       await superuser.query('insert into fixture_children (tenant_id, parent_id) values ($1, $2)', [tenant, parent]);
-      await issueCredential(superuserDatabase, {
+      const credential = await issueCredential(superuserDatabase, {
         tenantId: tenant,
         kind: 'staff_session',
         subjectId: null,
         expiresAt: inOneHour(),
       });
+      credentialOf.set(tenant, credential.id);
+      await insertIdempotencyKey(superuser, tenant, credential.id);
     }
   });
 
@@ -147,7 +160,7 @@ describe('row-level security as pl_app', () => {
   });
 
   it('with no tenant context set, tenant-owned tables return no rows', async () => {
-    for (const table of ['tenants', ...fixtureTables]) {
+    for (const table of ['tenants', 'idempotency_keys', ...fixtureTables]) {
       const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
       expect(result[0].count, table).toBe(0);
     }
@@ -167,6 +180,11 @@ describe('row-level security as pl_app', () => {
       const visible = countRows.parse((await migrator.query(`select count(*) from ${table}`)).rows);
       expect(visible[0].count, table).toBe(0);
     }
+  });
+
+  it('an idempotency key referencing another tenant credential fails its composite foreign key', async () => {
+    const code = await errorCodeOf(insertIdempotencyKey(superuser, tenantA, credentialOf.get(tenantB) ?? ''));
+    expect(code).toBe('23503');
   });
 
   it('a row referencing another tenant parent row fails its composite foreign key', async () => {
