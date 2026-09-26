@@ -1,0 +1,269 @@
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import { credentialKinds } from '../src/schema/credentials.ts';
+import { hashCredentialSecret, issueCredential, verifyCredential } from '../src/credentials/credential-store.ts';
+import { insertTenant, startTestDatabase, type TestDatabase } from './harness.ts';
+
+const tenantRows = z.array(z.object({ id: z.uuid() }));
+const countRows = z.tuple([z.object({ count: z.coerce.number() })]);
+
+async function withTenant<T>(
+  client: pg.Client,
+  tenantId: string,
+  work: () => Promise<T>,
+  outcome: 'commit' | 'rollback' = 'rollback',
+): Promise<T> {
+  await client.query('begin');
+  try {
+    await client.query(`select set_config('app.tenant_id', $1, true)`, [tenantId]);
+    const result = await work();
+    await client.query(outcome);
+    return result;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  }
+}
+
+async function errorCodeOf(work: Promise<unknown>): Promise<string | undefined> {
+  try {
+    await work;
+    return undefined;
+  } catch (error) {
+    return error instanceof pg.DatabaseError ? error.code : String(error);
+  }
+}
+
+describe('row-level security as pl_app', () => {
+  let database: TestDatabase;
+  let superuser: pg.Client;
+  let app: pg.Client;
+  let migrator: pg.Client;
+  let tenantA: string;
+  let tenantB: string;
+  const inOneHour = () => new Date(Date.now() + 3_600_000);
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    superuser = await database.connect('superuser');
+    tenantA = await insertTenant(superuser, 'tenant-a');
+    tenantB = await insertTenant(superuser, 'tenant-b');
+    app = await database.connect('pl_app');
+    migrator = await database.connect('pl_migrator');
+
+    // A parent and child pair shaped like every later tenant-owned table.
+    await migrator.query(`
+      create table fixture_parents (
+        id uuid primary key default gen_random_uuid(),
+        tenant_id uuid not null references tenants (id),
+        constraint fixture_parents_tenant_id_id_key unique (tenant_id, id)
+      );
+      create table fixture_children (
+        id uuid primary key default gen_random_uuid(),
+        tenant_id uuid not null references tenants (id),
+        parent_id uuid not null,
+        constraint fixture_children_parent_fkey foreign key (tenant_id, parent_id)
+          references fixture_parents (tenant_id, id)
+      );
+      call pl_migration.enable_tenant_row_security('public.fixture_parents');
+      call pl_migration.enable_tenant_row_security('public.fixture_children');
+      grant select, insert on fixture_parents, fixture_children to pl_app;
+      grant select on fixture_parents, fixture_children to pl_backup;
+    `);
+  });
+
+  afterAll(async () => {
+    await Promise.all([superuser.end(), app.end(), migrator.end()]);
+    await database.stop();
+  });
+
+  it('with tenant A context, selecting tenant B rows returns none', async () => {
+    const rows = await withTenant(app, tenantA, async () =>
+      tenantRows.parse((await app.query('select id from tenants')).rows),
+    );
+    expect(rows).toEqual([{ id: tenantA }]);
+  });
+
+  it('with tenant A context, inserting a row with tenant B id fails the policy check', async () => {
+    const code = await withTenant(app, tenantA, () =>
+      errorCodeOf(
+        issueCredential(app, { tenantId: tenantB, kind: 'staff_session', subjectId: null, expiresAt: inOneHour() }),
+      ),
+    );
+    expect(code).toBe('42501');
+  });
+
+  it('with tenant A context, inserting a row with tenant A id succeeds', async () => {
+    const issued = await withTenant(app, tenantA, () =>
+      issueCredential(app, { tenantId: tenantA, kind: 'staff_session', subjectId: null, expiresAt: inOneHour() }),
+    );
+    expect(issued.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('with no tenant context set, tenant-owned tables return no rows', async () => {
+    await superuser.query('insert into fixture_parents (tenant_id) values ($1), ($2)', [tenantA, tenantB]);
+    for (const table of ['tenants', 'fixture_parents']) {
+      const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
+      expect(result[0].count, table).toBe(0);
+    }
+  });
+
+  it('with an empty tenant context set, tenant-owned tables return no rows', async () => {
+    const result = await withTenant(app, '', async () =>
+      countRows.parse((await app.query('select count(*) from tenants')).rows),
+    );
+    expect(result[0].count).toBe(0);
+  });
+
+  it('the owning role is bound by the policies too and sees no rows without a tenant context', async () => {
+    const result = countRows.parse((await migrator.query('select count(*) from tenants')).rows);
+    expect(result[0].count).toBe(0);
+    const credentials = countRows.parse((await migrator.query('select count(*) from credentials')).rows);
+    expect(credentials[0].count).toBe(0);
+  });
+
+  it('a row referencing another tenant parent row fails its composite foreign key', async () => {
+    const parentOfB = z
+      .tuple([z.object({ id: z.uuid() })])
+      .parse(
+        (await superuser.query('insert into fixture_parents (tenant_id) values ($1) returning id', [tenantB])).rows,
+      )[0].id;
+    const code = await withTenant(app, tenantA, () =>
+      errorCodeOf(
+        app.query('insert into fixture_children (tenant_id, parent_id) values ($1, $2)', [tenantA, parentOfB]),
+      ),
+    );
+    expect(code).toBe('23503');
+  });
+
+  it('pl_app cannot TRUNCATE or ALTER tenant tables', async () => {
+    for (const statement of [
+      'truncate tenants cascade',
+      'truncate credentials',
+      'alter table tenants no force row level security',
+      'alter table credentials disable row level security',
+      'drop policy credentials_tenant_isolation on credentials',
+    ]) {
+      const code = await withTenant(app, tenantA, () => errorCodeOf(app.query(statement)));
+      expect(code, statement).toBe('42501');
+    }
+  });
+
+  it('pl_app cannot SELECT the credential table directly', async () => {
+    const code = await withTenant(app, tenantA, () => errorCodeOf(app.query('select id from credentials')));
+    expect(code).toBe('42501');
+  });
+
+  it('resolve_credential returns exactly one row by id and nothing for unknown ids', async () => {
+    const issued = await withTenant(
+      app,
+      tenantB,
+      () =>
+        issueCredential(app, {
+          tenantId: tenantB,
+          kind: 'supplier_link',
+          subjectId: null,
+          expiresAt: inOneHour(),
+        }),
+      'commit',
+    );
+    const found = await app.query('select * from resolve_credential($1, $2)', ['supplier_link', issued.id]);
+    expect(found.rows).toHaveLength(1);
+    expect(z.object({ id: z.uuid(), tenant_id: z.uuid() }).parse(found.rows[0])).toMatchObject({
+      id: issued.id,
+      tenant_id: tenantB,
+    });
+
+    const unknown = await app.query('select * from resolve_credential($1, $2)', ['supplier_link', crypto.randomUUID()]);
+    expect(unknown.rows).toHaveLength(0);
+    const wrongKind = await app.query('select * from resolve_credential($1, $2)', ['staff_session', issued.id]);
+    expect(wrongKind.rows).toHaveLength(0);
+  });
+
+  it('a presented credential verifies only with its own secret, before expiry and while unrevoked', async () => {
+    const expiresAt = inOneHour();
+    const issued = await withTenant(
+      app,
+      tenantA,
+      () => issueCredential(app, { tenantId: tenantA, kind: 'drop_credential', subjectId: null, expiresAt }),
+      'commit',
+    );
+    const presented = { kind: 'drop_credential' as const, id: issued.id, secret: issued.secret };
+
+    expect(await verifyCredential(app, presented, new Date())).toMatchObject({
+      ok: true,
+      credential: { id: issued.id, tenantId: tenantA, kind: 'drop_credential' },
+    });
+    expect(await verifyCredential(app, { ...presented, secret: 'A'.repeat(43) }, new Date())).toEqual({
+      ok: false,
+      reason: 'secret_mismatch',
+    });
+    expect(await verifyCredential(app, { ...presented, kind: 'staff_session' }, new Date())).toEqual({
+      ok: false,
+      reason: 'unknown',
+    });
+    expect(await verifyCredential(app, { ...presented, id: 'not-a-uuid' }, new Date())).toEqual({
+      ok: false,
+      reason: 'unknown',
+    });
+    expect(await verifyCredential(app, presented, new Date(expiresAt.getTime() + 1))).toEqual({
+      ok: false,
+      reason: 'expired',
+    });
+    await superuser.query('update credentials set revoked_at = now() where id = $1', [issued.id]);
+    expect(await verifyCredential(app, presented, new Date())).toEqual({ ok: false, reason: 'revoked' });
+  });
+
+  it('the credential table stores only SHA-256 hashes of secrets, for every credential kind', async () => {
+    for (const kind of credentialKinds) {
+      const issued = await withTenant(
+        app,
+        tenantA,
+        () => issueCredential(app, { tenantId: tenantA, kind, subjectId: null, expiresAt: inOneHour() }),
+        'commit',
+      );
+      const stored = z
+        .tuple([z.object({ secret_hash: z.instanceof(Buffer), row_text: z.string() })])
+        .parse(
+          (
+            await superuser.query(
+              'select secret_hash, credential::text as row_text from credentials credential where id = $1',
+              [issued.id],
+            )
+          ).rows,
+        )[0];
+      expect(stored.secret_hash.equals(hashCredentialSecret(issued.secret)), kind).toBe(true);
+      expect(stored.secret_hash).toHaveLength(32);
+      expect(stored.row_text, kind).not.toContain(issued.secret);
+    }
+    const code = await errorCodeOf(
+      superuser.query(
+        `insert into credentials (tenant_id, kind, secret_hash, expires_at) values ($1, 'staff_session', 'plain-secret'::bytea, now() + interval '1 hour')`,
+        [tenantA],
+      ),
+    );
+    expect(code).toBe('23514');
+  });
+
+  it('a timestamp bound through raw SQL round-trips as the same UTC instant', async () => {
+    const instant = new Date('2026-03-08T10:30:15.123Z');
+    await app.query(`set time zone 'America/Vancouver'`);
+    try {
+      const result = z
+        .tuple([z.object({ value: z.date(), text: z.string() })])
+        .parse(
+          (
+            await app.query("select $1::timestamptz as value, ($1::timestamptz at time zone 'UTC')::text as text", [
+              instant.toISOString(),
+            ])
+          ).rows,
+        );
+      expect(result[0].value.toISOString()).toBe(instant.toISOString());
+      expect(result[0].text).toBe('2026-03-08 10:30:15.123');
+    } finally {
+      await app.query('reset time zone');
+    }
+  });
+});

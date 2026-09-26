@@ -1,0 +1,116 @@
+import { randomBytes } from 'node:crypto';
+
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import pg from 'pg';
+import { z } from 'zod';
+
+import { describeViolations } from '../src/catalog-check.ts';
+import { migrateDatabase } from '../src/migrate.ts';
+import { runtimeRoles, type RuntimeRole } from '../src/roles.ts';
+
+export const databaseName = 'partledger';
+
+export type ConnectingRole = RuntimeRole | 'pl_migrator' | 'superuser';
+
+/**
+ * PostgreSQL 18 in a container, bootstrapped like an environment: the container's superuser
+ * creates `pl_migrator` and the database it owns, migrations run as `pl_migrator`, and
+ * tests connect as the runtime roles. The superuser bypasses row-level security, so tests
+ * use it only to arrange fixtures and to break the schema on purpose.
+ */
+export interface TestDatabase {
+  readonly container: StartedPostgreSqlContainer;
+  connectionString(role: ConnectingRole, database?: string): string;
+  connect(role: ConnectingRole): Promise<pg.Client>;
+  pool(role: ConnectingRole, options?: Omit<pg.PoolConfig, 'connectionString' | 'options'>): pg.Pool;
+  /** Lets the runtime roles log in; they exist once the migrations have run. */
+  enableRuntimeLogins(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+/** A bootstrapped database with no migrations applied. */
+export async function startEmptyDatabase(): Promise<TestDatabase> {
+  const container = await new PostgreSqlContainer('postgres:18')
+    .withDatabase('bootstrap')
+    .withUsername('bootstrap_admin')
+    .withPassword(randomBytes(16).toString('hex'))
+    .start();
+  const passwords = new Map<string, string>();
+  const passwordOf = (role: string) => {
+    const existing = passwords.get(role);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = randomBytes(16).toString('hex');
+    passwords.set(role, created);
+    return created;
+  };
+
+  const connectionString = (role: ConnectingRole, database = databaseName) => {
+    const user = role === 'superuser' ? container.getUsername() : role;
+    const password = role === 'superuser' ? container.getPassword() : passwordOf(role);
+    return `postgres://${user}:${password}@${container.getHost()}:${container.getPort()}/${database}`;
+  };
+
+  async function asSuperuser(database: string, statements: readonly string[]): Promise<void> {
+    const client = new pg.Client({ connectionString: connectionString('superuser', database) });
+    await client.connect();
+    try {
+      for (const statement of statements) {
+        await client.query(statement);
+      }
+    } finally {
+      await client.end();
+    }
+  }
+
+  await asSuperuser('bootstrap', [
+    `create role pl_migrator login createrole nobypassrls password '${passwordOf('pl_migrator')}'`,
+    `create database ${databaseName} owner pl_migrator`,
+  ]);
+
+  return {
+    container,
+    connectionString,
+    async connect(role) {
+      const client = new pg.Client({ connectionString: connectionString(role), options: '-c TimeZone=UTC' });
+      await client.connect();
+      return client;
+    },
+    pool(role, options = {}) {
+      return new pg.Pool({ ...options, connectionString: connectionString(role), options: '-c TimeZone=UTC' });
+    },
+    async enableRuntimeLogins() {
+      await asSuperuser(
+        databaseName,
+        runtimeRoles.map((role) => `alter role ${role} password '${passwordOf(role)}'`),
+      );
+    },
+    async stop() {
+      await container.stop();
+    },
+  };
+}
+
+/** A database migrated as `pl_migrator` that passes the catalog check, with runtime logins enabled. */
+export async function startTestDatabase(): Promise<TestDatabase> {
+  const database = await startEmptyDatabase();
+  const migration = await migrateDatabase(database.connectionString('pl_migrator'));
+  if (!migration.ok) {
+    await database.stop();
+    throw new Error(`The shipped schema fails the catalog check:\n${describeViolations(migration.violations)}`);
+  }
+  await database.enableRuntimeLogins();
+  return database;
+}
+
+const insertedId = z.tuple([z.object({ id: z.uuid() })]);
+
+/** Inserts a synthetic tenant through a superuser connection, which bypasses row-level security. */
+export async function insertTenant(superuser: pg.Client, slug: string): Promise<string> {
+  const result = await superuser.query(
+    `insert into tenants (slug, display_name, region) values ($1, $2, 'ca') returning id`,
+    [slug, `Synthetic ${slug}`],
+  );
+  return insertedId.parse(result.rows)[0].id;
+}

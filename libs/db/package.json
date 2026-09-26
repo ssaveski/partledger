@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./test/harness.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
@@ -16,10 +17,15 @@
     ]
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^12.1.0",
     "@types/node": "^24.0.0",
-    "drizzle-kit": "^0.31.11"
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "testcontainers": "^12.1.0"
   },
   "dependencies": {
-    "drizzle-orm": "~0.45.3"
+    "drizzle-orm": "~0.45.3",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
   }
 }

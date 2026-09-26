@@ -16,6 +16,7 @@
     "test:vectors": "vitest run --project vectors --passWithNoTests",
     "contrast:check": "node libs/ui/scripts/contrast-check.ts",
     "db:check": "drizzle-kit check --config libs/db/drizzle.config.ts",
+    "db:migrate": "node libs/db/scripts/migrate.ts",
     "actions:check": "node scripts/check-action-pins.ts",
     "verify": "pnpm actions:check && pnpm lint && pnpm typecheck && pnpm db:check && pnpm contrast:check && pnpm test && pnpm test:vectors && pnpm test:integration && pnpm test:e2e"
   },

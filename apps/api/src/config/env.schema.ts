@@ -4,6 +4,9 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']),
   PORT: z.coerce.number().int().min(1).max(65535),
   HOST: z.string().min(1).default('127.0.0.1'),
+  /** Connects as `pl_app`, never as the owner or a superuser; row-level security depends on it. */
+  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
