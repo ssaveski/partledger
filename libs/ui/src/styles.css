@@ -1,0 +1,52 @@
+@import 'tailwindcss';
+@import './tokens/tokens.css';
+
+@source '.';
+
+/* Tailwind colour names map onto the semantic tokens; components use only these. */
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-surface: var(--pl-surface);
+  --color-surface-raised: var(--pl-surface-raised);
+  --color-surface-overlay: var(--pl-surface-overlay);
+  --color-surface-sunken: var(--pl-surface-sunken);
+  --color-primary: var(--pl-text-primary);
+  --color-muted: var(--pl-text-muted);
+  --color-on-accent: var(--pl-text-on-accent);
+  --color-on-state: var(--pl-text-on-state);
+  --color-accent: var(--pl-accent);
+  --color-accent-hover: var(--pl-accent-hover);
+  --color-line: var(--pl-border);
+  --color-line-strong: var(--pl-border-strong);
+  --color-focus: var(--pl-focus-ring);
+  --color-success: var(--pl-success);
+  --color-warning: var(--pl-warning);
+  --color-danger: var(--pl-danger);
+  --color-danger-hover: var(--pl-danger-hover);
+  --color-info: var(--pl-info);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--pl-surface);
+    color: var(--pl-text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  *,
+  ::before,
+  ::after {
+    border-color: var(--pl-border);
+  }
+}

@@ -48,9 +48,28 @@ export function buildCatalogue(modules: Readonly<Record<string, unknown>>): Modu
 export const englishCatalogue = buildCatalogue(englishModuleCatalogues);
 
 export function translate(key: string, catalogue: ModuleCatalogue = englishCatalogue): string {
-  const message = catalogue[key];
+  const message = Object.hasOwn(catalogue, key) ? catalogue[key] : undefined;
   if (message === undefined) {
     throw new Error(`Missing message for key ${key}`);
   }
   return message;
+}
+
+export const messageParamsSchema = z.record(z.string(), z.union([z.string(), z.number()]));
+
+export type MessageParams = z.infer<typeof messageParamsSchema>;
+
+/** Translates a key and fills its `{name}` placeholders; a placeholder without a param fails loudly. */
+export function formatMessage(
+  key: string,
+  params: MessageParams = {},
+  catalogue: ModuleCatalogue = englishCatalogue,
+): string {
+  return translate(key, catalogue).replace(/\{([a-zA-Z][a-zA-Z0-9]*)\}/g, (_placeholder, name: string) => {
+    const value = params[name];
+    if (value === undefined) {
+      throw new Error(`Missing param ${name} for message key ${key}`);
+    }
+    return String(value);
+  });
 }

@@ -8,6 +8,7 @@ export default defineConfig({
   projects: [
     { name: 'web', testDir: 'apps/web/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5173' } },
     { name: 'portal', testDir: 'apps/portal/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5174' } },
+    { name: 'ui', testDir: 'libs/ui/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5175' } },
   ],
   webServer: [
     {
@@ -21,6 +22,14 @@ export default defineConfig({
       cwd: 'apps/portal',
       url: 'http://127.0.0.1:5174',
       reuseExistingServer: false,
+    },
+    {
+      command:
+        'node node_modules/storybook/dist/bin/dispatcher.js dev --port 5175 --exact-port --host 127.0.0.1 --ci --no-open',
+      cwd: 'libs/ui',
+      url: 'http://127.0.0.1:5175/index.json',
+      reuseExistingServer: false,
+      timeout: 120_000,
     },
   ],
 });

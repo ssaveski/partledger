@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCatalogue, englishCatalogue, englishModuleCatalogues, modulesFromFiles, translate } from './catalogue';
+import {
+  buildCatalogue,
+  englishCatalogue,
+  englishModuleCatalogues,
+  formatMessage,
+  modulesFromFiles,
+  translate,
+} from './catalogue';
 
 describe('translation catalogues', () => {
   it('builds the shipped English catalogue', () => {
@@ -32,5 +39,18 @@ describe('translation catalogues', () => {
 
   it('fails loudly on a missing key', () => {
     expect(() => translate('pl.common.doesNotExist')).toThrow(/Missing message/);
+    expect(() => translate('toString')).toThrow(/Missing message/);
+  });
+
+  it('fills the placeholders of a message from its params', () => {
+    const catalogue = buildCatalogue({ parts: { 'pl.parts.count': '{count} parts from {supplier}' } });
+    expect(formatMessage('pl.parts.count', { count: 3, supplier: 'Northwind Castings' }, catalogue)).toBe(
+      '3 parts from Northwind Castings',
+    );
+  });
+
+  it('fails loudly on a placeholder without a param', () => {
+    const catalogue = buildCatalogue({ parts: { 'pl.parts.count': '{count} parts' } });
+    expect(() => formatMessage('pl.parts.count', {}, catalogue)).toThrow(/Missing param count/);
   });
 });
