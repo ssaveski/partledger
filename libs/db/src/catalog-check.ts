@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
-import { backupRole, credentialResolverRole, grantableRoles, migratorRole, runtimeRoles } from './roles.ts';
+import {
+  backupRole,
+  credentialResolverRole,
+  grantableRoles,
+  migratorRole,
+  runtimeRoles,
+  type RuntimeRole,
+} from './roles.ts';
 import { tableAccessManifest } from './schema/index.ts';
 import type { TableAccess } from './table-access.ts';
 
@@ -11,6 +18,7 @@ import type { TableAccess } from './table-access.ts';
  */
 
 export const catalogViolationCodes = [
+  'unexpected_connection_role',
   'missing_role',
   'role_bypasses_row_security',
   'runtime_role_is_superuser',
@@ -39,7 +47,8 @@ export const catalogViolationCodes = [
   'trigger_disabled',
   'unexpected_definer_function',
   'definer_search_path_not_pinned',
-  'function_executable_by_public',
+  'unexpected_function_grant',
+  'missing_function_grant',
   'timestamp_without_time_zone',
 ] as const;
 
@@ -62,16 +71,37 @@ export interface CatalogQueryable {
 
 export interface CatalogExpectations {
   readonly tables: readonly TableAccess[];
+  /**
+   * The role a service must be connected as, for example `pl_app` at API boot. The check
+   * then fails for any other session or current user, a superuser or a BYPASSRLS role.
+   */
+  readonly expectedRuntimeRole?: RuntimeRole;
 }
+
+export const shippedExpectations: CatalogExpectations = { tables: tableAccessManifest };
 
 const checkedSchemas = ['public', 'pl_migration'];
 const allowedDefinerFunction = 'public.resolve_credential(requested_kind text, requested_id uuid)';
+/** EXECUTE grants besides the owner's; every other function in the checked schemas has none. */
+const expectedFunctionGrants = new Map<string, readonly string[]>([[allowedDefinerFunction, ['pl_app', 'pl_portal']]]);
+/**
+ * The one read-all policy besides pl_backup's (KTD37): resolve_credential runs as the
+ * resolver role on a table whose row-level security is forced, and must find a credential
+ * before any tenant is known.
+ */
+const resolverReadAll = { table: 'credentials', role: credentialResolverRole };
 const pinnedSearchPath = 'search_path=pg_catalog, pg_temp';
 const tenantPredicate = (column: string) =>
   `(${column} = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid)`;
 const generatedIdentifierDefaults = new Set(['gen_random_uuid()', 'uuidv7()', 'uuidv4()']);
 const restrictingActions = new Set(['a', 'r']);
 
+const connectionRow = z.object({
+  sessionUser: z.string(),
+  currentUser: z.string(),
+  superuser: z.boolean(),
+  bypassRowSecurity: z.boolean(),
+});
 const roleRow = z.object({ name: z.string(), superuser: z.boolean(), bypassRowSecurity: z.boolean() });
 const membershipRow = z.object({ member: z.string(), granted: z.string() });
 const relationRow = z.object({
@@ -125,12 +155,19 @@ const functionRow = z.object({
   owner: z.string(),
   securityDefiner: z.boolean(),
   settings: z.array(z.string()),
-  publicExecute: z.boolean(),
+  grantees: z.array(z.string()),
 });
 
 const schemaList = checkedSchemas.map((schema) => `'${schema}'`).join(', ');
 
 const queries = {
+  connection: `
+    select session_user::text as "sessionUser", current_user::text as "currentUser",
+           role.rolsuper as "superuser", role.rolbypassrls as "bypassRowSecurity"
+      from pg_catalog.pg_roles role
+     where role.rolname in (session_user, current_user)
+     order by role.rolsuper desc, role.rolbypassrls desc
+     limit 1`,
   roles: `select rolname as "name", rolsuper as "superuser", rolbypassrls as "bypassRowSecurity" from pg_catalog.pg_roles`,
   memberships: `
     select member_role.rolname as "member", granted_role.rolname as "granted"
@@ -208,7 +245,7 @@ const queries = {
   uniqueIndexes: `
     select relation.relname as "table", index_relation.relname as "name", index_row.indisprimary as "primary",
            array(select coalesce(attribute.attname, '(expression)')
-                   from unnest(index_row.indkey::int2[]) with ordinality as key(number, position)
+                   from unnest((index_row.indkey::int2[])[0:index_row.indnkeyatts - 1]) with ordinality as key(number, position)
                    left join pg_catalog.pg_attribute attribute
                      on attribute.attrelid = index_row.indrelid and attribute.attnum = key.number
                   order by key.position)::text[] as "columns"
@@ -227,8 +264,10 @@ const queries = {
            namespace.nspname || '.' || routine.proname || '(' || pg_catalog.pg_get_function_identity_arguments(routine.oid) || ')' as "signature",
            pg_catalog.pg_get_userbyid(routine.proowner) as "owner", routine.prosecdef as "securityDefiner",
            coalesce(routine.proconfig, '{}')::text[] as "settings",
-           exists (select from pg_catalog.aclexplode(coalesce(routine.proacl, pg_catalog.acldefault('f', routine.proowner))) acl
-                    where acl.grantee = 0 and acl.privilege_type = 'EXECUTE') as "publicExecute"
+           array(select case when acl.grantee = 0 then 'public' else pg_catalog.pg_get_userbyid(acl.grantee) end
+                   from pg_catalog.aclexplode(coalesce(routine.proacl, pg_catalog.acldefault('f', routine.proowner))) acl
+                  where acl.privilege_type = 'EXECUTE' and acl.grantee <> routine.proowner
+                  order by 1)::text[] as "grantees"
       from pg_catalog.pg_proc routine
       join pg_catalog.pg_namespace namespace on namespace.oid = routine.pronamespace
      where namespace.nspname not in ('pg_catalog', 'information_schema')
@@ -244,9 +283,10 @@ const triggerType = { row: 1, before: 2, insert: 4, delete: 8, update: 16, trunc
 
 export async function checkCatalog(
   client: CatalogQueryable,
-  expectations: CatalogExpectations = { tables: tableAccessManifest },
+  expectations: CatalogExpectations = shippedExpectations,
 ): Promise<CatalogCheckResult> {
   // One query at a time: a single client must not run concurrent queries.
+  const connection = await load(client, queries.connection, connectionRow);
   const roles = await load(client, queries.roles, roleRow);
   const memberships = await load(client, queries.memberships, membershipRow);
   const relations = await load(client, queries.relations, relationRow);
@@ -269,6 +309,24 @@ export async function checkCatalog(
   const publicTables = relations.filter((relation) => relation.schema === 'public' && isTable(relation.kind));
   const tenantKeyOf = (table: string) => expectedTables.get(table)?.tenantKey;
   const isTenantOwned = (table: string) => tenantKeyOf(table) === 'tenant_id';
+
+  if (expectations.expectedRuntimeRole !== undefined) {
+    const expected = expectations.expectedRuntimeRole;
+    const session = connection[0];
+    if (
+      session === undefined ||
+      session.sessionUser !== expected ||
+      session.currentUser !== expected ||
+      session.superuser ||
+      session.bypassRowSecurity
+    ) {
+      report(
+        'unexpected_connection_role',
+        session?.sessionUser ?? 'unknown',
+        `expected ${expected}, connected as ${session?.sessionUser ?? 'unknown'}/${session?.currentUser ?? 'unknown'}`,
+      );
+    }
+  }
 
   // Roles.
   const roleByName = new Map(roles.map((role) => [role.name, role]));
@@ -414,9 +472,16 @@ export async function checkCatalog(
       if (routine.owner !== expectedOwner) {
         report('wrong_owner', routine.signature, routine.owner);
       }
-      if (routine.publicExecute) {
-        report('function_executable_by_public', routine.signature);
-      }
+      const expectedGrantees = new Set(expectedFunctionGrants.get(routine.signature) ?? []);
+      const actualGrantees = new Set(routine.grantees);
+      compareSets(
+        expectedGrantees,
+        actualGrantees,
+        routine.signature,
+        'missing_function_grant',
+        'unexpected_function_grant',
+        report,
+      );
     }
   }
 
@@ -451,7 +516,10 @@ function isGeneratedIdentifierKey(
 
 function checkPolicies(access: TableAccess, policies: readonly z.infer<typeof policyRow>[], report: Report): void {
   const predicate = tenantPredicate(access.tenantKey);
-  const readAllRoles = new Set<string>([backupRole, ...(access.readAllPolicyRoles ?? [])]);
+  const readAllRoles = new Set<string>([backupRole]);
+  if (access.table === resolverReadAll.table) {
+    readAllRoles.add(resolverReadAll.role);
+  }
   const tablePolicies = policies.filter((policy) => policy.table === access.table);
   let hasTenantPolicy = false;
   const readAllCovered = new Set<string>();

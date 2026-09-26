@@ -1,6 +1,6 @@
 {
-  "id": "88dd3044-ce7c-4184-bccc-08da3a168eac",
-  "prevId": "6b015c94-258e-4703-8c4d-cba460e8d7cd",
+  "id": "93c7fd94-41b6-4253-9940-9d9d011d9d9e",
+  "prevId": "407512fd-3467-4783-911b-a67d23afbc84",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -93,7 +93,7 @@
       "checkConstraints": {
         "credentials_kind_check": {
           "name": "credentials_kind_check",
-          "value": "\"credentials\".\"kind\" in ('staff_session', 'supplier_link', 'drop_credential', 'operator_grant')"
+          "value": "\"credentials\".\"kind\" in ('staff_session', 'supplier_link', 'drop_credential', 'platform_operator')"
         },
         "credentials_secret_hash_check": {
           "name": "credentials_secret_hash_check",

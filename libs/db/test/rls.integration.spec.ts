@@ -1,12 +1,16 @@
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { credentialKinds } from '../src/schema/credentials.ts';
+import { tableAccessManifest } from '../src/schema/index.ts';
 import { hashCredentialSecret, issueCredential, verifyCredential } from '../src/credentials/credential-store.ts';
 import { insertTenant, startTestDatabase, type TestDatabase } from './harness.ts';
 
 const tenantRows = z.array(z.object({ id: z.uuid() }));
+const tenantIdRows = z.array(z.object({ tenant_id: z.uuid() }));
+const fixtureTables = ['fixture_parents', 'fixture_children'];
 const countRows = z.tuple([z.object({ count: z.coerce.number() })]);
 
 async function withTenant<T>(
@@ -32,7 +36,9 @@ async function errorCodeOf(work: Promise<unknown>): Promise<string | undefined> 
     await work;
     return undefined;
   } catch (error) {
-    return error instanceof pg.DatabaseError ? error.code : String(error);
+    // Drizzle wraps the driver's error in its own, with the original as the cause.
+    const databaseError = error instanceof Error && error.cause instanceof pg.DatabaseError ? error.cause : error;
+    return databaseError instanceof pg.DatabaseError ? databaseError.code : String(error);
   }
 }
 
@@ -41,6 +47,7 @@ describe('row-level security as pl_app', () => {
   let superuser: pg.Client;
   let app: pg.Client;
   let migrator: pg.Client;
+  let appDatabase: NodePgDatabase;
   let tenantA: string;
   let tenantB: string;
   const inOneHour = () => new Date(Date.now() + 3_600_000);
@@ -51,6 +58,7 @@ describe('row-level security as pl_app', () => {
     tenantA = await insertTenant(superuser, 'tenant-a');
     tenantB = await insertTenant(superuser, 'tenant-b');
     app = await database.connect('pl_app');
+    appDatabase = drizzle({ client: app });
     migrator = await database.connect('pl_migrator');
 
     // A parent and child pair shaped like every later tenant-owned table.
@@ -72,6 +80,23 @@ describe('row-level security as pl_app', () => {
       grant select, insert on fixture_parents, fixture_children to pl_app;
       grant select on fixture_parents, fixture_children to pl_backup;
     `);
+
+    // Every tenant-owned table holds rows of both tenants, so a missing policy or FORCE shows.
+    const superuserDatabase = drizzle({ client: superuser });
+    for (const tenant of [tenantA, tenantB]) {
+      const parent = z
+        .tuple([z.object({ id: z.uuid() })])
+        .parse(
+          (await superuser.query('insert into fixture_parents (tenant_id) values ($1) returning id', [tenant])).rows,
+        )[0].id;
+      await superuser.query('insert into fixture_children (tenant_id, parent_id) values ($1, $2)', [tenant, parent]);
+      await issueCredential(superuserDatabase, {
+        tenantId: tenant,
+        kind: 'staff_session',
+        subjectId: null,
+        expiresAt: inOneHour(),
+      });
+    }
   });
 
   afterAll(async () => {
@@ -89,7 +114,12 @@ describe('row-level security as pl_app', () => {
   it('with tenant A context, inserting a row with tenant B id fails the policy check', async () => {
     const code = await withTenant(app, tenantA, () =>
       errorCodeOf(
-        issueCredential(app, { tenantId: tenantB, kind: 'staff_session', subjectId: null, expiresAt: inOneHour() }),
+        issueCredential(appDatabase, {
+          tenantId: tenantB,
+          kind: 'staff_session',
+          subjectId: null,
+          expiresAt: inOneHour(),
+        }),
       ),
     );
     expect(code).toBe('42501');
@@ -97,14 +127,27 @@ describe('row-level security as pl_app', () => {
 
   it('with tenant A context, inserting a row with tenant A id succeeds', async () => {
     const issued = await withTenant(app, tenantA, () =>
-      issueCredential(app, { tenantId: tenantA, kind: 'staff_session', subjectId: null, expiresAt: inOneHour() }),
+      issueCredential(appDatabase, {
+        tenantId: tenantA,
+        kind: 'staff_session',
+        subjectId: null,
+        expiresAt: inOneHour(),
+      }),
     );
     expect(issued.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('with tenant A context, selecting a tenant_id-keyed table returns only tenant A rows', async () => {
+    for (const table of fixtureTables) {
+      const rows = await withTenant(app, tenantA, async () =>
+        tenantIdRows.parse((await app.query(`select tenant_id from ${table}`)).rows),
+      );
+      expect(rows, table).toEqual([{ tenant_id: tenantA }]);
+    }
+  });
+
   it('with no tenant context set, tenant-owned tables return no rows', async () => {
-    await superuser.query('insert into fixture_parents (tenant_id) values ($1), ($2)', [tenantA, tenantB]);
-    for (const table of ['tenants', 'fixture_parents']) {
+    for (const table of ['tenants', ...fixtureTables]) {
       const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
       expect(result[0].count, table).toBe(0);
     }
@@ -117,11 +160,13 @@ describe('row-level security as pl_app', () => {
     expect(result[0].count).toBe(0);
   });
 
-  it('the owning role is bound by the policies too and sees no rows without a tenant context', async () => {
-    const result = countRows.parse((await migrator.query('select count(*) from tenants')).rows);
-    expect(result[0].count).toBe(0);
-    const credentials = countRows.parse((await migrator.query('select count(*) from credentials')).rows);
-    expect(credentials[0].count).toBe(0);
+  it('the owning role is bound by the policies too and sees no rows of any tenant-owned table without a tenant context', async () => {
+    for (const table of [...tableAccessManifest.map((access) => access.table), ...fixtureTables]) {
+      const stored = countRows.parse((await superuser.query(`select count(*) from ${table}`)).rows);
+      expect(stored[0].count, `${table} holds committed rows`).toBeGreaterThan(0);
+      const visible = countRows.parse((await migrator.query(`select count(*) from ${table}`)).rows);
+      expect(visible[0].count, table).toBe(0);
+    }
   });
 
   it('a row referencing another tenant parent row fails its composite foreign key', async () => {
@@ -161,7 +206,7 @@ describe('row-level security as pl_app', () => {
       app,
       tenantB,
       () =>
-        issueCredential(app, {
+        issueCredential(appDatabase, {
           tenantId: tenantB,
           kind: 'supplier_link',
           subjectId: null,
@@ -187,7 +232,7 @@ describe('row-level security as pl_app', () => {
     const issued = await withTenant(
       app,
       tenantA,
-      () => issueCredential(app, { tenantId: tenantA, kind: 'drop_credential', subjectId: null, expiresAt }),
+      () => issueCredential(appDatabase, { tenantId: tenantA, kind: 'drop_credential', subjectId: null, expiresAt }),
       'commit',
     );
     const presented = { kind: 'drop_credential' as const, id: issued.id, secret: issued.secret };
@@ -221,7 +266,7 @@ describe('row-level security as pl_app', () => {
       const issued = await withTenant(
         app,
         tenantA,
-        () => issueCredential(app, { tenantId: tenantA, kind, subjectId: null, expiresAt: inOneHour() }),
+        () => issueCredential(appDatabase, { tenantId: tenantA, kind, subjectId: null, expiresAt: inOneHour() }),
         'commit',
       );
       const stored = z

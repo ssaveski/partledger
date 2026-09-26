@@ -1,3 +1,5 @@
+import { ClsPluginTransactional } from '@nestjs-cls/transactional';
+import { TransactionalAdapterDrizzleOrm } from '@nestjs-cls/transactional-adapter-drizzle-orm';
 import {
   Inject,
   Injectable,
@@ -10,19 +12,24 @@ import {
 import {
   checkCatalog,
   describeViolations,
+  schema,
+  shippedExpectations,
   verifyCredential,
   type CatalogViolation,
   type CredentialVerification,
   type PresentedCredential,
 } from '@partledger/db';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { ClsModule } from 'nestjs-cls';
 import pg from 'pg';
 
-import { runInTenantTransaction, type TenantTransaction } from './tenant-transaction';
+import { TenantTransactions, type AppDatabase } from './tenant-transaction';
 
 export const databasePool = Symbol('databasePool');
+export const appDatabase = Symbol('appDatabase');
 
 export interface DatabaseOptions {
-  /** A `pl_app` connection string. */
+  /** A `pl_app` connection string; the boot check refuses any other role. */
   readonly connectionString: string;
   readonly poolSize: number;
 }
@@ -52,25 +59,11 @@ export function createDatabasePool(options: DatabaseOptions): pg.Pool {
 }
 
 @Injectable()
-export class TenantDatabase {
-  constructor(@Inject(databasePool) private readonly pool: pg.Pool) {}
-
-  inTenant<T>(tenantId: string, work: (transaction: TenantTransaction) => Promise<T>): Promise<T> {
-    return runInTenantTransaction(this.pool, tenantId, work);
-  }
-
-  /** Resolves a credential before any tenant is known, through `resolve_credential` only. */
-  verifyCredential(presented: PresentedCredential, now: Date): Promise<CredentialVerification> {
-    return verifyCredential(this.pool, presented, now);
-  }
-}
-
-@Injectable()
 class DatabaseLifecycle implements OnApplicationBootstrap, OnApplicationShutdown {
   constructor(@Inject(databasePool) private readonly pool: pg.Pool) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    const result = await checkCatalog(this.pool);
+    const result = await checkCatalog(this.pool, { ...shippedExpectations, expectedRuntimeRole: 'pl_app' });
     if (!result.ok) {
       throw new CatalogCheckFailedError(result.violations);
     }
@@ -82,17 +75,56 @@ class DatabaseLifecycle implements OnApplicationBootstrap, OnApplicationShutdown
 }
 
 @Module({})
+class DatabaseConnectionModule {
+  static forRoot(options: DatabaseOptions): DynamicModule {
+    return {
+      module: DatabaseConnectionModule,
+      providers: [
+        { provide: databasePool, useFactory: () => createDatabasePool(options) },
+        {
+          provide: appDatabase,
+          inject: [databasePool],
+          useFactory: (pool: pg.Pool): AppDatabase => drizzle({ client: pool, schema }),
+        },
+        DatabaseLifecycle,
+      ],
+      exports: [databasePool, appDatabase],
+    };
+  }
+}
+
+@Injectable()
+export class CredentialResolver {
+  constructor(@Inject(databasePool) private readonly pool: pg.Pool) {}
+
+  /** Resolves a credential before any tenant is known, through `resolve_credential` only. */
+  verify(presented: PresentedCredential, now: Date): Promise<CredentialVerification> {
+    return verifyCredential(this.pool, presented, now);
+  }
+}
+
+@Module({})
 export class DatabaseModule {
   static forRoot(options: DatabaseOptions): DynamicModule {
+    const connection = DatabaseConnectionModule.forRoot(options);
     return {
       module: DatabaseModule,
       global: true,
-      providers: [
-        { provide: databasePool, useFactory: () => createDatabasePool(options) },
-        TenantDatabase,
-        DatabaseLifecycle,
+      imports: [
+        connection,
+        ClsModule.forRoot({
+          global: true,
+          middleware: { mount: true },
+          plugins: [
+            new ClsPluginTransactional({
+              imports: [connection],
+              adapter: new TransactionalAdapterDrizzleOrm<AppDatabase>({ drizzleInstanceToken: appDatabase }),
+            }),
+          ],
+        }),
       ],
-      exports: [TenantDatabase],
+      providers: [TenantTransactions, CredentialResolver],
+      exports: [TenantTransactions, CredentialResolver, connection],
     };
   }
 }

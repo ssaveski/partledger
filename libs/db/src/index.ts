@@ -2,6 +2,7 @@ export {
   catalogViolationCodes,
   checkCatalog,
   describeViolations,
+  shippedExpectations,
   type CatalogCheckResult,
   type CatalogExpectations,
   type CatalogQueryable,
@@ -23,6 +24,7 @@ export {
   type ParameterisedQueryable,
   type PresentedCredential,
   type ResolvedCredential,
+  type SqlExecutor,
 } from './credentials/credential-store.ts';
 export { migrateDatabase, migrationsFolder } from './migrate.ts';
 export {

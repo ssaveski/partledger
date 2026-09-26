@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
+import { sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 
 import { credentialKinds, type CredentialKind } from '../schema/credentials.ts';
@@ -19,6 +20,11 @@ export const credentialKindSchema = z.enum(credentialKinds);
 /** Anything that runs a parameterised query: a node-postgres client, pool client or pool. */
 export interface ParameterisedQueryable {
   query(text: string, values: unknown[]): Promise<{ rows: unknown[] }>;
+}
+
+/** A Drizzle database or transaction, such as the one the tenant transaction provides. */
+export interface SqlExecutor {
+  execute(query: SQL): Promise<unknown>;
 }
 
 export function generateCredentialSecret(): string {
@@ -46,16 +52,13 @@ export interface IssuedCredential {
  * Inserts a credential inside a tenant transaction. The app role holds INSERT only on the
  * credential table, so the id is generated here and nothing is read back.
  */
-export async function issueCredential(
-  client: ParameterisedQueryable,
-  input: IssueCredentialInput,
-): Promise<IssuedCredential> {
+export async function issueCredential(database: SqlExecutor, input: IssueCredentialInput): Promise<IssuedCredential> {
   const id = randomUUID();
   const secret = generateCredentialSecret();
-  await client.query(
-    `insert into credentials (id, tenant_id, kind, subject_id, secret_hash, expires_at)
-     values ($1, $2, $3, $4, $5, $6::timestamptz)`,
-    [id, input.tenantId, input.kind, input.subjectId, hashCredentialSecret(secret), input.expiresAt.toISOString()],
+  await database.execute(
+    sql`insert into credentials (id, tenant_id, kind, subject_id, secret_hash, expires_at)
+        values (${id}, ${input.tenantId}, ${input.kind}, ${input.subjectId}, ${hashCredentialSecret(secret)},
+                ${input.expiresAt.toISOString()}::timestamptz)`,
   );
   return { id, secret };
 }

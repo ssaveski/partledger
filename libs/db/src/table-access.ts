@@ -19,8 +19,6 @@ export interface TableAccess {
   >;
   /** Audit tables: no UPDATE or DELETE grants, guard triggers, nothing cascades into them. */
   readonly insertOnly?: boolean;
-  /** Read-all policies allowed besides `pl_backup`'s, one per role, SELECT only. */
-  readonly readAllPolicyRoles?: readonly GrantableRole[];
 }
 
 export function defineTableAccess(access: TableAccess): TableAccess {

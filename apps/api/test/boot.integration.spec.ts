@@ -109,4 +109,20 @@ describe('the built API entry point', () => {
       await superuser.end();
     }
   });
+
+  it('refuses to boot when connected as the superuser, which bypasses row-level security', () => {
+    const result = startWith({ NODE_ENV: 'test', PORT: '3000', DATABASE_URL: database.connectionString('superuser') });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unexpected_connection_role: bootstrap_admin');
+  });
+
+  it('refuses to boot when connected as the owning role pl_migrator', () => {
+    const result = startWith({
+      NODE_ENV: 'test',
+      PORT: '3000',
+      DATABASE_URL: database.connectionString('pl_migrator'),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unexpected_connection_role: pl_migrator');
+  });
 });

@@ -7,7 +7,7 @@ CREATE TABLE "credentials" (
 	"expires_at" timestamp with time zone NOT NULL,
 	"revoked_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "credentials_kind_check" CHECK ("credentials"."kind" in ('staff_session', 'supplier_link', 'drop_credential', 'operator_grant')),
+	CONSTRAINT "credentials_kind_check" CHECK ("credentials"."kind" in ('staff_session', 'supplier_link', 'drop_credential', 'platform_operator')),
 	CONSTRAINT "credentials_secret_hash_check" CHECK (octet_length("credentials"."secret_hash") = 32),
 	CONSTRAINT "credentials_expiry_check" CHECK ("credentials"."expires_at" > "credentials"."created_at")
 );

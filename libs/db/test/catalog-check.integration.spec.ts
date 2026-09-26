@@ -1,7 +1,12 @@
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { checkCatalog, type CatalogCheckResult, type CatalogExpectations } from '../src/catalog-check.ts';
+import {
+  checkCatalog,
+  shippedExpectations,
+  type CatalogCheckResult,
+  type CatalogExpectations,
+} from '../src/catalog-check.ts';
 import { tableAccessManifest } from '../src/schema/index.ts';
 import { defineTableAccess } from '../src/table-access.ts';
 import { startTestDatabase, type TestDatabase } from './harness.ts';
@@ -165,8 +170,75 @@ describe('the catalog check', () => {
   it('fails when PUBLIC may execute a function', async () => {
     const result = await checkAfter('grant execute on function resolve_credential(text, uuid) to public');
     expect(codesOf(result)).toEqual([
-      'function_executable_by_public public.resolve_credential(requested_kind text, requested_id uuid)',
+      'unexpected_function_grant public.resolve_credential(requested_kind text, requested_id uuid)',
     ]);
+  });
+
+  it('fails when resolve_credential is granted to a role other than pl_app and pl_portal', async () => {
+    const result = await checkAfter('grant execute on function resolve_credential(text, uuid) to pl_ai_worker');
+    expect(result).toEqual({
+      ok: false,
+      violations: [
+        {
+          code: 'unexpected_function_grant',
+          object: 'public.resolve_credential(requested_kind text, requested_id uuid)',
+          detail: 'pl_ai_worker',
+        },
+      ],
+    });
+  });
+
+  it('fails when pl_portal loses EXECUTE on resolve_credential', async () => {
+    const result = await checkAfter('revoke execute on function resolve_credential(text, uuid) from pl_portal');
+    expect(codesOf(result)).toEqual([
+      'missing_function_grant public.resolve_credential(requested_kind text, requested_id uuid)',
+    ]);
+  });
+
+  it('fails when an extra function is executable by pl_app', async () => {
+    const result = await checkAfter(`
+      set local role pl_migrator;
+      create function public.probe() returns integer language sql set search_path = pg_catalog, pg_temp as 'select 1';
+      grant execute on function public.probe() to pl_app;
+    `);
+    expect(codesOf(result)).toEqual(['unexpected_function_grant public.probe()']);
+  });
+
+  it('fails when the connection is not the expected runtime role', async () => {
+    const asApp = await checkAfter('select 1', { ...withFixtures, expectedRuntimeRole: 'pl_app' });
+    expect(codesOf(asApp)).toEqual(['unexpected_connection_role bootstrap_admin']);
+
+    const app = await database.connect('pl_app');
+    const migrator = await database.connect('pl_migrator');
+    try {
+      expect(await checkCatalog(app, { ...shippedExpectations, expectedRuntimeRole: 'pl_app' })).toEqual({ ok: true });
+      expect(codesOf(await checkCatalog(migrator, { ...shippedExpectations, expectedRuntimeRole: 'pl_app' }))).toEqual([
+        'unexpected_connection_role pl_migrator',
+      ]);
+      expect(codesOf(await checkCatalog(app, { ...shippedExpectations, expectedRuntimeRole: 'pl_portal' }))).toEqual([
+        'unexpected_connection_role pl_app',
+      ]);
+    } finally {
+      await Promise.all([app.end(), migrator.end()]);
+    }
+  });
+
+  it('fails when the expected runtime role has BYPASSRLS', async () => {
+    // A new connection reads the role's attributes, so this change is committed and undone after.
+    await superuser.query('alter role pl_app bypassrls');
+    try {
+      const app = await database.connect('pl_app');
+      try {
+        expect(codesOf(await checkCatalog(app, { ...shippedExpectations, expectedRuntimeRole: 'pl_app' }))).toEqual([
+          'unexpected_connection_role pl_app',
+          'role_bypasses_row_security pl_app',
+        ]);
+      } finally {
+        await app.end();
+      }
+    } finally {
+      await superuser.query('alter role pl_app nobypassrls');
+    }
   });
 
   it('fails when a unique constraint on a tenant table lacks tenant_id', async () => {
@@ -174,6 +246,20 @@ describe('the catalog check', () => {
       'alter table fixture_parents add constraint fixture_parents_code_key unique (code)',
     );
     expect(codesOf(result)).toEqual(['unique_key_without_tenant fixture_parents.fixture_parents_code_key']);
+  });
+
+  it('fails when a unique constraint on a tenant table carries tenant_id only as an INCLUDE column', async () => {
+    const result = await checkAfter(
+      'alter table fixture_parents add constraint fixture_parents_code_key unique (code) include (tenant_id)',
+    );
+    expect(codesOf(result)).toEqual(['unique_key_without_tenant fixture_parents.fixture_parents_code_key']);
+  });
+
+  it('fails when a unique index on a tenant table carries tenant_id only as an INCLUDE column', async () => {
+    const result = await checkAfter(
+      'create unique index fixture_parents_code_index on fixture_parents (code) include (tenant_id)',
+    );
+    expect(codesOf(result)).toEqual(['unique_key_without_tenant fixture_parents.fixture_parents_code_index']);
   });
 
   it('fails when a unique index on a tenant table lacks tenant_id', async () => {
@@ -208,6 +294,13 @@ describe('the catalog check', () => {
       'create policy fixture_parents_read_all on fixture_parents for select to pl_app using (true)',
     );
     expect(codesOf(result)).toEqual(['policy_not_tenant_scoped fixture_parents.fixture_parents_read_all']);
+  });
+
+  it('fails when the credential resolver has a read-all policy on any table but credentials', async () => {
+    const result = await checkAfter(
+      'create policy fixture_parents_resolver_read on fixture_parents for select to pl_credential_resolver using (true)',
+    );
+    expect(codesOf(result)).toEqual(['policy_not_tenant_scoped fixture_parents.fixture_parents_resolver_read']);
   });
 
   it('fails when pl_backup loses its read-all policy', async () => {
