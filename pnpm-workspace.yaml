@@ -8,5 +8,8 @@ strictDepBuilds: true
 minimumReleaseAge: 4320
 # false: the package works without its install script, which stays blocked.
 allowBuilds:
+  cpu-features: false
   esbuild: false
   nx: false
+  protobufjs: false
+  ssh2: false

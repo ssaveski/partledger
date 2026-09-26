@@ -9,10 +9,16 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@nestjs-cls/transactional": "4.0.0",
+    "@nestjs-cls/transactional-adapter-drizzle-orm": "2.0.0",
     "@nestjs/common": "^12.1.0",
     "@nestjs/core": "^12.1.0",
     "@nestjs/platform-express": "^12.1.0",
     "@partledger/contracts": "workspace:*",
+    "@partledger/db": "workspace:*",
+    "drizzle-orm": "~0.45.3",
+    "nestjs-cls": "7.0.0",
+    "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.3.0"
@@ -20,6 +26,7 @@
   "devDependencies": {
     "@nestjs/testing": "^12.1.0",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "vite": "^8.3.0"
   },
   "nx": {

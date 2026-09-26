@@ -3,10 +3,12 @@ import { createServer } from 'node:net';
 import { join } from 'node:path';
 
 import { healthResponseSchema } from '@partledger/contracts';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { startTestDatabase, type TestDatabase } from '@partledger/db/testing';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 const apiDirectory = join(import.meta.dirname, '..');
 const entryPoint = join(apiDirectory, 'dist', 'main.js');
+const placeholderDatabaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:1/partledger';
 
 function startWith(environment: Readonly<Record<string, string>>) {
   return spawnSync(process.execPath, [entryPoint], {
@@ -35,9 +37,15 @@ async function freePort(): Promise<number> {
 
 describe('the built API entry point', () => {
   const running: { kill: () => boolean }[] = [];
+  let database: TestDatabase;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     execFileSync('pnpm', ['build'], { cwd: apiDirectory, stdio: 'pipe' });
+    database = await startTestDatabase();
+  });
+
+  afterAll(async () => {
+    await database.stop();
   });
 
   afterEach(() => {
@@ -47,13 +55,13 @@ describe('the built API entry point', () => {
   });
 
   it('refuses to boot on an invalid PORT and names the field', () => {
-    const result = startWith({ NODE_ENV: 'test', PORT: 'eighty' });
+    const result = startWith({ NODE_ENV: 'test', PORT: 'eighty', DATABASE_URL: placeholderDatabaseUrl });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/PORT/);
   });
 
   it('refuses to boot on an unknown NODE_ENV and names the field', () => {
-    const result = startWith({ NODE_ENV: 'staging', PORT: '3000' });
+    const result = startWith({ NODE_ENV: 'staging', PORT: '3000', DATABASE_URL: placeholderDatabaseUrl });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/NODE_ENV/);
   });
@@ -61,7 +69,12 @@ describe('the built API entry point', () => {
   it('boots on a valid configuration and serves the health endpoint', async () => {
     const port = await freePort();
     const child = spawn(process.execPath, [entryPoint], {
-      env: { PATH: process.env.PATH, NODE_ENV: 'test', PORT: String(port) },
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: 'test',
+        PORT: String(port),
+        DATABASE_URL: database.connectionString('pl_app'),
+      },
       stdio: 'pipe',
     });
     running.push(child);
@@ -76,5 +89,40 @@ describe('the built API entry point', () => {
       }
     }
     expect(healthResponseSchema.parse(body)).toEqual({ status: 'ok' });
+  });
+
+  it('refuses to boot without a DATABASE_URL and names the field', () => {
+    const result = startWith({ NODE_ENV: 'test', PORT: '3000' });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/DATABASE_URL/);
+  });
+
+  it('refuses to boot when the database fails the catalog check and names the violation', async () => {
+    const superuser = await database.connect('superuser');
+    try {
+      await superuser.query('alter table credentials no force row level security');
+      const result = startWith({ NODE_ENV: 'test', PORT: '3000', DATABASE_URL: database.connectionString('pl_app') });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('row_security_not_forced: public.credentials');
+    } finally {
+      await superuser.query('alter table credentials force row level security');
+      await superuser.end();
+    }
+  });
+
+  it('refuses to boot when connected as the superuser, which bypasses row-level security', () => {
+    const result = startWith({ NODE_ENV: 'test', PORT: '3000', DATABASE_URL: database.connectionString('superuser') });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unexpected_connection_role: bootstrap_admin');
+  });
+
+  it('refuses to boot when connected as the owning role pl_migrator', () => {
+    const result = startWith({
+      NODE_ENV: 'test',
+      PORT: '3000',
+      DATABASE_URL: database.connectionString('pl_migrator'),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unexpected_connection_role: pl_migrator');
   });
 });
