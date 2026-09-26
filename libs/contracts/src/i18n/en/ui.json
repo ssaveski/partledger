@@ -1,0 +1,11 @@
+{
+  "pl.ui.dialog.close": "Close",
+  "pl.ui.select.placeholder": "Choose an option",
+  "pl.ui.state.loading.label": "Loading…",
+  "pl.ui.state.error.title": "Something went wrong",
+  "pl.ui.state.error.retry": "Try again",
+  "pl.ui.state.error.unexpected": "This page stopped because of an unexpected error. Try again; if it keeps happening, tell your administrator.",
+  "pl.ui.state.noPermission.title": "You do not have access to this",
+  "pl.ui.state.noPermission.description": "Ask your administrator for access to this page.",
+  "pl.ui.state.noPermission.supplierDescription": "Ask the buyer who invited you for access to this page."
+}

@@ -21,6 +21,7 @@ A parts-and-suppliers platform for small and mid-sized manufacturers. Read `docs
 
 - Apps in `apps/` (api, web, portal, verifier), libraries in `libs/`. Nx tags enforce the boundaries in lint: `db`, `domain` and `packs` are API-only, `ui` is front-end-only, `contracts` is shared, and the verifier imports only `libs/chain`. Apps are never imported.
 - `pnpm verify` runs every gate: action pins, format and lint, typecheck, `db:check`, contrast, unit tests, vectors, integration tests (Docker for Testcontainers) and Playwright. Cloud-session setup: `docs/runbooks/cloud-session-setup.md`.
+- UI components live in `libs/ui` and use only the semantic colour tokens (`libs/ui/src/tokens/themes.ts` and `tokens.css`, kept in step by `pnpm contrast:check`); every component has a Storybook story (`pnpm --filter @partledger/ui storybook`, port 5175) that the `ui` Playwright project checks with axe in both themes. Screens use the state components (loading, empty, error, no permission) from `libs/ui`.
 - Only `apps/api/src/config/` reads `process.env`. User-facing text comes from translation keys; literal strings in components fail lint.
 - Dependencies: install scripts run only for packages allowlisted in `pnpm-workspace.yaml` (`allowBuilds`), and a version must be three days old (`minimumReleaseAge`). CI actions are pinned by commit digest.
 

@@ -1,4 +1,7 @@
+import '@partledger/ui/global';
+
 import { translate } from '@partledger/contracts';
+import { applyThemePreference, RootErrorBoundary } from '@partledger/ui';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -10,9 +13,12 @@ if (container === null) {
 }
 
 document.title = translate('pl.common.staffAppTitle');
+applyThemePreference();
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <RootErrorBoundary>
+      <App />
+    </RootErrorBoundary>
   </StrictMode>,
 );
