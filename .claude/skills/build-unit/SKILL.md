@@ -51,7 +51,7 @@ Fix every surviving finding. Add a test for each behavioural fix, then rerun all
 - Rebase on the latest `main`. If the unit touches `libs/db`, regenerate migrations and run `pnpm db:check`. Rerun the gates if the rebase changed anything.
 - Commit with conventional messages that name the unit, for example `feat(rfq): compare quotes side by side (U7)`.
 - Push the branch and open a pull request titled `U7: <unit name>`, ready for review, so the CI merge workflow merges it once `verify` passes on top of the latest `main` (plan KTD6).
-- Open it as a draft instead, so the owner merges it, when the unit is U3, when a finding stays unresolved, or when the diff changes `.github/`, `.claude/`, `CLAUDE.md` or `docs/plans/`.
+- Open it as a draft instead, so the owner merges it, when a finding stays unresolved or the diff changes `.claude/` or `docs/plans/`. Never change `.github/workflows/unit-merge.yml`.
 - The body lists what was built, the gate commands and their results, the review outcome (findings confirmed, refuted, fixed), and follow-ups. Add `Closes #<issue>` when the unit has an issue.
 - Never push to `main` and never merge by hand.
 

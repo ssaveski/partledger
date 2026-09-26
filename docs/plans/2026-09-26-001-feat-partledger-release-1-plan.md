@@ -19,7 +19,7 @@ execution: code
 
 - **Objective:** build Release 1 of Partledger, a generic multi-tenant parts-and-suppliers platform that takes an RFQ from a parts list to a sealed, tamper-evident award (independently verifiable offline if the demand check in Dependencies confirms that feature), deployed in the Canada region and ready for its first customer once the IP gate clears.
 - **Authority, highest first:** `CLAUDE.md`; this plan's Requirements and Key Technical Decisions; `docs/brief.md`; unit-level judgment.
-- **Execution profile:** one implementation unit per session, built either by a cloud session running the repository's `build-unit` skill or as a ticket for the operator's code factory. Units whose dependencies are merged can run in parallel; parallel sessions follow the conventions in KTD38.
+- **Execution profile:** one implementation unit at a time per session, built by a cloud session running the repository's `build-unit` skill, or unattended with `build-all` (KTD6); code-factory tickets remain an option. Units whose dependencies are merged can run in parallel; parallel sessions follow the conventions in KTD38.
 - **Tracking:** each unit is a GitHub issue titled `U<n>: <title>` on the repository's project board; the unit's pull request closes it.
 - **Stop conditions:** a unit needs a decision that changes a Requirement or Key Technical Decision; gates stay red after five fix rounds; the work would put customer names, customer data or client-derived material into the repository; the work is specific to the first customer (their data, integration settings, branding) before the IP gate clears; a unit needs production credentials (U33 is operator-run); U21 or U32 would start before the demand check in Dependencies is recorded, or the check found no demand, in which case their scope returns to the product owner.
 - **Tail ownership:** unit pull requests merge automatically under KTD6; the repository owner merges the ones KTD6 holds back, owns OVHcloud accounts and credentials, and runs production deploys. No unit deploys to production.
@@ -214,7 +214,7 @@ All deferred and non-blocking; the plan adopts the stated default until the firs
 - KTD3. The AI layer is provider-agnostic: the platform default or the tenant's own key, with region restriction as a per-tenant setting that is off for the first customer. (session-settled: user-directed — chosen over region-locked AI or AI switched off for Canada: the first customer may use any AI)
 - KTD4. UX comes first: the design system and clickable key screens land before feature logic. (session-settled: user-approved — chosen over logic-first: the product sells on the clarity of dense screens)
 - KTD5. The build stays generic; nothing specific to the first customer is built before the IP gate clears. (session-settled: user-approved — chosen over building to the first customer's specification now: avoids conflict with their separate contract)
-- KTD6. Units are built one per session with the repository's `build-unit` skill or as code-factory tickets. Each unit's pull request merges automatically once every gate passes: the in-session gates, reviews and verifier, then CI's `verify` on a branch that contains the latest `main`. The merge rule runs from `main`'s copy of the workflow (U1), so no pull request can change its own rule; U3 (the owner's walkthrough), unresolved findings, and changes to CI, `.claude/`, `CLAUDE.md` or the plan wait for the owner. (session-settled: user-directed — chosen over running the operator's factory inside cloud sessions: only cloud sessions spend the one-time cloud credit; automatic merging chosen over a person merging every pull request)
+- KTD6. Units are built with the repository's `build-unit` skill, or unattended with `build-all`, which works through ready units in Sequencing order; code-factory tickets remain an option. Each unit's pull request merges automatically once every gate passes: the in-session gates, reviews and verifier, then CI's `verify` on a branch that contains the latest `main`. The merge workflow (`.github/workflows/unit-merge.yml`, in place before U1) runs from `main`'s copy, so no pull request can change its own rule; only drafts (a finding the session could not resolve, or a change to `.claude/` or the plan) and changes to the merge workflow itself wait for the owner. (session-settled: user-directed — chosen over running the operator's factory inside cloud sessions: only cloud sessions spend the one-time cloud credit; automatic merging of every unit chosen over owner merges)
 
 **Platform and structure**
 
@@ -505,7 +505,7 @@ flowchart TB
 | Tamper-evident awards may not be something buyers ask for | The demand check before U21 and U32 (Dependencies, brief risk 3); the hash-chained seal stays either way |
 | Competitors (Tacto) add Cyber Resilience Act evidence | Phase 2 EU pack sequencing; speed on the verifiable award record |
 | Drizzle v1 changes migrations when it leaves release candidate | Pin 0.45; schedule the upgrade as its own unit |
-| Auto-merged pull requests break `main` when parallel units pass separately, or a pull request edits its own merge rule | The merge workflow runs from `main`'s copy (`workflow_run`), merges only branches that contain the latest `main`, at the commit CI tested, and leaves changes to CI, tooling and the plan to the owner (KTD6) |
+| Auto-merged pull requests break `main` when parallel units pass separately, or a pull request edits its own merge rule | The merge workflow runs from `main`'s copy (`workflow_run`), merges only branches that contain the latest `main`, at the commit CI tested, and never merges a change to itself (KTD6); units that change `.claude/` or the plan open drafts |
 | The one-time cloud credit ends in early November 2026 | Units sized for one session each; the code factory continues on the plan or an API key afterwards |
 
 ---
@@ -558,7 +558,7 @@ flowchart TB
 
 **Dependencies:** none.
 
-**Files:** `package.json`, `pnpm-workspace.yaml`, `nx.json`, `tsconfig.base.json`, `eslint.config.mjs`, `vitest.workspace.ts`, `playwright.config.ts`, `.nvmrc`, `.npmrc`, `.github/workflows/ci.yml`, `.github/workflows/unit-merge.yml`, `tools/merge-decision.ts`, `tools/merge-decision.spec.ts`, `apps/api/src/main.ts`, `apps/api/src/config/env.schema.ts`, `apps/api/src/health/health.controller.ts`, `apps/web/src/main.tsx`, `apps/portal/src/main.tsx`, `apps/verifier/src/main.ts`, `libs/contracts/src/index.ts`, `libs/chain/src/index.ts`, `libs/domain/src/index.ts`, `libs/db/src/index.ts`, `libs/ui/src/index.ts`, `libs/packs/src/index.ts`, `libs/contracts/src/i18n/`, `CLAUDE.md`, `.claude/skills/build-unit/SKILL.md`, `docs/runbooks/cloud-session-setup.md`, `apps/api/src/config/env.schema.spec.ts`, `apps/api/test/health.e2e-spec.ts`.
+**Files:** `package.json`, `pnpm-workspace.yaml`, `nx.json`, `tsconfig.base.json`, `eslint.config.mjs`, `vitest.workspace.ts`, `playwright.config.ts`, `.nvmrc`, `.npmrc`, `.github/workflows/ci.yml`, `apps/api/src/main.ts`, `apps/api/src/config/env.schema.ts`, `apps/api/src/health/health.controller.ts`, `apps/web/src/main.tsx`, `apps/portal/src/main.tsx`, `apps/verifier/src/main.ts`, `libs/contracts/src/index.ts`, `libs/chain/src/index.ts`, `libs/domain/src/index.ts`, `libs/db/src/index.ts`, `libs/ui/src/index.ts`, `libs/packs/src/index.ts`, `libs/contracts/src/i18n/`, `CLAUDE.md`, `.claude/skills/build-unit/SKILL.md`, `docs/runbooks/cloud-session-setup.md`, `apps/api/src/config/env.schema.spec.ts`, `apps/api/test/health.e2e-spec.ts`.
 
 **Approach:**
 - Pin Node 24 LTS (`.nvmrc`, `engines`), TypeScript 6 and ESM throughout; NestJS 12 for the API.
@@ -568,7 +568,7 @@ flowchart TB
 - Supply chain (KTD41): a build-script allowlist and a minimum release age for dependencies in `.npmrc`/pnpm settings.
 - Translation catalogues are per module under `libs/contracts/src/i18n/`, with a check that fails on literal UI strings (KTD38).
 - Update `CLAUDE.md` to record React (KTD1) and the parallel-session conventions; document the cloud-session setup script (Node 24, pnpm) and its network allowlist in the runbook.
-- The merge workflow (KTD6): `.github/workflows/unit-merge.yml` runs on `workflow_run` after CI succeeds on a pull request, from `main`'s copy of the workflow, and squash-merges at the commit CI tested when `tools/merge-decision.ts` allows it: the head branch is `unit/*`, the pull request is not a draft, the branch contains the latest `main`, and the diff touches nothing under `.github/`, `.claude/`, `CLAUDE.md` or `docs/plans/`. Everything else waits for the owner. GitHub's built-in auto-merge and required checks need a paid plan on private repositories; this works on any plan.
+- The merge workflow (`.github/workflows/unit-merge.yml`, KTD6) is already on `main`: after the workflow named `CI` succeeds on a pull request, it squash-merges at the commit CI tested when the head branch is `unit/*`, the pull request is not a draft, the branch contains the latest `main`, and the diff leaves the merge workflow unchanged. U1 names its workflow `CI`, runs it on pull requests, and does not change the merge workflow. GitHub's built-in auto-merge and required checks need a paid plan on private repositories; this works on any plan.
 
 **Execution note:** this is mostly scaffolding; prove it with a clean install and every gate green rather than broad unit coverage.
 
@@ -580,9 +580,8 @@ flowchart TB
 - Installing a dependency whose build script is not allowlisted fails.
 - Installing a dependency version younger than the minimum release age fails.
 - `pnpm verify` fails when a workflow references an action by tag instead of by digest.
-- The merge decision refuses a draft, a branch behind `main`, a branch outside `unit/*`, and a diff that touches `.github/`, `.claude/`, `CLAUDE.md` or `docs/plans/`, and allows a clean unit pull request.
 
-**Verification:** a clean `pnpm install` followed by `pnpm verify` is green locally, in CI, and in a cloud session set up from the runbook.
+**Verification:** a clean `pnpm install` followed by `pnpm verify` is green locally, in CI, and in a cloud session set up from the runbook; U1's own pull request is merged by the merge workflow.
 
 ### U2. Design system: tokens, themes, components and states
 
@@ -653,7 +652,7 @@ flowchart TB
 - The approval packet shows the gate checklist with blocking reasons, evidence status and any active deviation per winner, the previous round when the RFQ is a re-bid, and approve or reject actions that are disabled with their reason when blocked.
 - Every screen designs loading, empty, error and no-permission states; `docs/design/key-screens.md` records flows and decisions.
 
-**Execution note:** the product owner's walkthrough of these screens is a condition for merging this unit, so its pull request stays a draft and never merges automatically; UX fixes are cheapest here.
+**Execution note:** the product owner walks through these screens after this unit merges and before Phase D wires them to the API; UX fixes are cheapest here.
 
 **Test scenarios:**
 - Comparison highlights the lowest price cell and has no winner selected on load.
@@ -663,7 +662,7 @@ flowchart TB
 - Each of the seven comparison cell states exposes an accessible name matching its legend entry.
 - Every screen passes axe in both themes and works by keyboard alone.
 
-**Verification:** the walkthrough is recorded in `docs/design/key-screens.md`; e2e and axe checks are green.
+**Verification:** `docs/design/key-screens.md` records the flows and decisions; e2e and axe checks are green.
 
 ### U27. Secondary staff screens
 
