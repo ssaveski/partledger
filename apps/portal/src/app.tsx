@@ -3,7 +3,7 @@ import { translate } from '@partledger/contracts';
 export function App() {
   return (
     <main>
-      <h1>{translate('pl.common.appName')}</h1>
+      <h1>{translate('pl.common.portalTitle')}</h1>
       <p>{translate('pl.common.portalTagline')}</p>
     </main>
   );

@@ -1,6 +1,6 @@
-import { z } from 'zod';
+/// <reference types="vite/client" />
 
-import common from './en/common.json' with { type: 'json' };
+import { z } from 'zod';
 
 export const messageKeyPattern = /^pl\.[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9.]*$/;
 
@@ -9,12 +9,24 @@ const moduleCatalogueSchema = z.record(z.string().regex(messageKeyPattern), z.st
 export type ModuleCatalogue = z.infer<typeof moduleCatalogueSchema>;
 
 /**
- * One catalogue per module (KTD38), so parallel units never edit the same file.
- * Every key in a module's catalogue must start with `pl.<module>.`.
+ * One catalogue per module (KTD38), discovered by file name so parallel units never edit
+ * the same file: `en/<module>.json` holds keys that start with `pl.<module>.`.
  */
-export const englishModuleCatalogues: Readonly<Record<string, unknown>> = {
-  common,
-};
+export function modulesFromFiles(files: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const modules: Record<string, unknown> = {};
+  for (const [path, catalogue] of Object.entries(files)) {
+    const moduleName = /\/([^/]+)\.json$/.exec(path)?.[1];
+    if (moduleName === undefined) {
+      throw new Error(`Catalogue file ${path} is not named <module>.json`);
+    }
+    modules[moduleName] = catalogue;
+  }
+  return modules;
+}
+
+export const englishModuleCatalogues = modulesFromFiles(
+  import.meta.glob<unknown>('./en/*.json', { eager: true, import: 'default' }),
+);
 
 export function buildCatalogue(modules: Readonly<Record<string, unknown>>): ModuleCatalogue {
   const merged: ModuleCatalogue = {};

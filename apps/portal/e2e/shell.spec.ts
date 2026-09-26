@@ -3,7 +3,8 @@ import { expect, test } from '@playwright/test';
 
 test('the portal shell renders its translated title with no axe violations', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Partledger' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Partledger supplier portal' })).toBeVisible();
+  await expect(page).toHaveTitle('Partledger supplier portal');
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 });

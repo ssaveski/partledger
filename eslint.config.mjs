@@ -23,7 +23,6 @@ const abbreviations = [
   'num',
   'cfg',
   'conf',
-  'env',
   'db',
   'tx',
   'idx',
@@ -31,6 +30,20 @@ const abbreviations = [
   'el',
   'fn',
 ];
+
+// Apps are never imported; Nx cannot resolve an app's package name, so this backs up the boundary rule.
+const appImportPatterns = [
+  {
+    regex: '^@partledger/(api|web|portal|verifier)(/|$)',
+    message: 'Apps are not importable; share code through a library.',
+  },
+];
+
+const processEnvImports = ['process', 'node:process'].map((name) => ({
+  name,
+  importNames: ['env'],
+  message: 'Read configuration through apps/api/src/config only.',
+}));
 
 export default tseslint.config(
   {
@@ -57,18 +70,7 @@ export default tseslint.config(
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       '@typescript-eslint/consistent-type-imports': 'error',
       'id-denylist': ['error', ...abbreviations],
-      // Apps are never imported; Nx cannot resolve an app's package name, so this backs up the boundary rule.
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              regex: '^@partledger/(api|web|portal|verifier)(/|$)',
-              message: 'Apps are not importable; share code through a library.',
-            },
-          ],
-        },
-      ],
+      'no-restricted-imports': ['error', { paths: processEnvImports, patterns: appImportPatterns }],
       'no-restricted-properties': [
         'error',
         { object: 'process', property: 'env', message: 'Read configuration through apps/api/src/config only.' },
@@ -92,8 +94,15 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/api/src/config/**'],
+    files: ['**/*.integration.spec.ts', '**/*.e2e-spec.ts'],
     rules: { 'no-restricted-properties': 'off' },
+  },
+  {
+    files: ['apps/api/src/config/**'],
+    rules: {
+      'no-restricted-properties': 'off',
+      'no-restricted-imports': ['error', { patterns: appImportPatterns }],
+    },
   },
   {
     files: ['apps/web/**/*.tsx', 'apps/portal/**/*.tsx', 'libs/ui/**/*.tsx'],

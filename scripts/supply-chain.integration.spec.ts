@@ -48,6 +48,34 @@ function installWithRepositorySettings(
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
+// Packages that publish several times a week; one of them always has a version younger
+// than the minimum release age, even when another pauses its releases.
+const frequentlyPublished = [
+  { name: 'typescript', tag: 'next' },
+  { name: 'react', tag: 'canary' },
+  { name: 'next', tag: 'canary' },
+  { name: '@types/node', tag: 'latest' },
+];
+
+const packumentSchema = z.object({
+  'dist-tags': z.record(z.string(), z.string()),
+  time: z.record(z.string(), z.string()),
+});
+
+async function findYoungVersion(minimumAgeMinutes: number): Promise<{ name: string; version: string }> {
+  const youngerThan = Date.now() - minimumAgeMinutes * 60_000;
+  for (const candidate of frequentlyPublished) {
+    const response = await fetch(`https://registry.npmjs.org/${candidate.name.replace('/', '%2F')}`);
+    const packument = packumentSchema.parse(await response.json());
+    const version = packument['dist-tags'][candidate.tag];
+    const published = version === undefined ? undefined : packument.time[version];
+    if (version !== undefined && published !== undefined && Date.parse(published) > youngerThan) {
+      return { name: candidate.name, version };
+    }
+  }
+  throw new Error(`None of ${frequentlyPublished.map((candidate) => candidate.name).join(', ')} has a young version`);
+}
+
 describe('dependency supply-chain policy', () => {
   it('fails an install whose dependency runs a build script that is not allowlisted', () => {
     expect(Object.keys(workspaceSettings.allowBuilds)).not.toContain('core-js');
@@ -58,6 +86,17 @@ describe('dependency supply-chain policy', () => {
 
   it('installs the same dependency once its build script is allowlisted', () => {
     expect(installWithRepositorySettings('core-js', '3.38.1', { 'core-js': true }).status).toBe(0);
+  });
+
+  it('installs a version older than the minimum release age', () => {
+    expect(installWithRepositorySettings('typescript', '5.9.3').status).toBe(0);
+  });
+
+  it('fails an install of a version younger than the minimum release age', async () => {
+    const young = await findYoungVersion(workspaceSettings.minimumReleaseAge);
+    const result = installWithRepositorySettings(young.name, young.version);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toMatch(/minimumReleaseAge/);
   });
 
   it('installs a version older than the minimum release age', () => {

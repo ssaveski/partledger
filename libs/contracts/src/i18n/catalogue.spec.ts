@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildCatalogue, englishCatalogue, translate } from './catalogue';
+import { buildCatalogue, englishCatalogue, englishModuleCatalogues, modulesFromFiles, translate } from './catalogue';
 
 describe('translation catalogues', () => {
   it('builds the shipped English catalogue', () => {
     expect(translate('pl.common.appName')).toBe('Partledger');
     expect(Object.keys(englishCatalogue).length).toBeGreaterThan(0);
+  });
+
+  it('discovers every module catalogue by its file name', () => {
+    expect(Object.keys(englishModuleCatalogues)).toContain('common');
+    expect(modulesFromFiles({ './en/parts.json': {}, './en/rfqs.json': {} })).toEqual({ parts: {}, rfqs: {} });
   });
 
   it('refuses a key that sits outside its module', () => {
