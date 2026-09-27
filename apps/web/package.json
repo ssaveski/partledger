@@ -7,10 +7,16 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
     "@partledger/contracts": "workspace:*",
     "@partledger/ui": "workspace:*",
+    "@tanstack/react-query": "^5.103.2",
+    "@tanstack/react-router": "^1.170.39",
+    "lucide-react": "^1.47.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-hook-form": "^7.88.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

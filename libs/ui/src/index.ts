@@ -38,7 +38,7 @@ export {
 } from './grid/data-grid';
 export { GridLegend, StateBadge, type GridStateDefinition, type StateTone } from './grid/state-badge';
 export { TranslationProvider, useTranslate, type Translate } from './i18n/translation';
-export { cn } from './lib/cn';
+export { cn, focusRing, raisedSurface } from './lib/cn';
 export { RootErrorBoundary } from './states/root-error-boundary';
 export {
   EmptyState,
