@@ -10,9 +10,18 @@ import { messageKeyPattern } from './i18n/catalogue';
  */
 export const domainErrorReasons = {
   NotFound: ['resource', 'route'],
-  Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists', 'lastTenantAdmin'],
-  Invalid: ['request', 'idempotencyKeyRequired'],
-  Unprocessable: ['idempotencyKeyReused', 'regionNotServed', 'aiRegionNotAllowed', 'aiOutputInvalid'],
+  Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists', 'lastTenantAdmin', 'uploadNotServable'],
+  Invalid: ['request', 'idempotencyKeyRequired', 'attestationRequired'],
+  Unprocessable: [
+    'idempotencyKeyReused',
+    'regionNotServed',
+    'aiRegionNotAllowed',
+    'aiOutputInvalid',
+    'uploadTypeNotAllowed',
+    'uploadContentMismatch',
+    'uploadTooLarge',
+    'uploadQuotaExceeded',
+  ],
   Forbidden: ['notPermitted', 'crossSiteRequest'],
   Unavailable: ['dependencyUnavailable'],
   StepUpRequired: ['recentAuthentication'],

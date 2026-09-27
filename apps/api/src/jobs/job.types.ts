@@ -132,12 +132,26 @@ export interface JobEnqueuer {
   ): Promise<string>;
 }
 
-export interface JobItemContext extends JobContext {
+export interface JobItemContext<Prepared = unknown> extends JobContext {
   readonly audit: JobAudit;
   /** Which run of this item this is: 1 the first time, one more for each retry after a failure. */
   readonly attempt: number;
   /** Enqueues follow-up jobs in the item's transaction, acting under what enqueued this job. */
   readonly jobs: JobEnqueuer;
+  /** What the handler's `prepare` returned for this item; undefined for a handler without one. */
+  readonly prepared: Prepared;
+}
+
+/**
+ * What a handler's `prepare` sees: no transaction, so slow work holds no pooled connection;
+ * a short tenant transaction of its own when it needs to read.
+ */
+export interface JobPreparationContext {
+  readonly jobId: string;
+  readonly principal: SystemPrincipal;
+  readonly now: Date;
+  /** Runs work in a short tenant transaction of its own, which ends before this resolves. */
+  inTransaction<Value>(work: (database: AppDatabase) => Promise<Value>): Promise<Value>;
 }
 
 /**
@@ -145,9 +159,19 @@ export interface JobItemContext extends JobContext {
  * transaction, where the item has already been claimed. A failure (returned or thrown) rolls
  * the item back, records it as failed and fails the run, so pg-boss retries it later.
  */
-export interface JobHandler<Declaration extends JobDeclaration = JobDeclaration> {
+export interface JobHandler<Declaration extends JobDeclaration = JobDeclaration, Prepared = unknown> {
   items(payload: PayloadOf<Declaration>, context: JobContext): Promise<readonly string[]>;
-  apply(item: string, payload: PayloadOf<Declaration>, context: JobItemContext): Promise<Result<void, DomainError>>;
+  /**
+   * Optional slow work for an item, such as a call to another service, run outside any
+   * transaction before the item's transaction opens; `apply` receives its result and must
+   * re-check under its own lock whatever the preparation read. A failure here fails the item.
+   */
+  prepare?(item: string, payload: PayloadOf<Declaration>, context: JobPreparationContext): Promise<Prepared>;
+  apply(
+    item: string,
+    payload: PayloadOf<Declaration>,
+    context: JobItemContext<Prepared>,
+  ): Promise<Result<void, DomainError>>;
 }
 
 export interface JobRegistration<Declaration extends JobDeclaration = JobDeclaration> {

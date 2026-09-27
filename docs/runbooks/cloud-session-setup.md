@@ -27,6 +27,9 @@ fi
 docker pull postgres:18
 # Keycloak for the staff sign-in tests (docs/runbooks/keycloak.md).
 docker pull quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007
+# clamd and a local S3-compatible store for the upload tests (docs/runbooks/uploads.md).
+docker pull clamav/clamav:1.4@sha256:a5f03c12a79dbe9f6d8a527b6bb1ea053fa8dd061d3738a26897f055ee2d9303
+docker pull versity/versitygw:v1.0.16@sha256:605de57c0cdc297fc5bc905ece592965d542d8df70d6eedf755734c80f2eb797
 ```
 
 If the image already has Node 24 installed but not first on `PATH`, prefix commands with `PATH=/usr/local/n/versions/node/24.<minor>.<patch>/bin:$PATH`.
@@ -43,7 +46,8 @@ The environment's network policy must allow:
 |---|---|
 | `registry.npmjs.org` | dependencies, and the supply-chain policy tests that probe the registry |
 | `github.com`, `api.github.com`, `codeload.github.com` | clone, push, resolving action digests |
-| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `postgres:18` image and later service images |
+| `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `postgres:18`, `clamav/clamav` and `versity/versitygw` images and later service images |
+| `cdn.sheetjs.com` | SheetJS, which the spreadsheet parser installs from its CDN tarball (KTD26) |
 | `quay.io`, `cdn01.quay.io` | the `quay.io/keycloak/keycloak:26.4` image |
 | `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` | only if a laptop or CI installs Playwright browsers |
 

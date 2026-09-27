@@ -27,6 +27,8 @@ import type { IdentityOrganizations } from './tenants/identity-organizations';
 import { membershipDirectory } from './tenants/membership-directory';
 import { TenantsModule } from './tenants/tenants.module';
 import { systemClock, type Clock } from './time/clock';
+import type { MalwareScanner } from './uploads/malware-scanner.port';
+import { UploadsModule } from './uploads/uploads.module';
 
 /** Replaceable parts, for tests only; production always uses the defaults. */
 export interface AppOverrides {
@@ -41,6 +43,8 @@ export interface AppOverrides {
   /** Tables a test created beside the shipped schema, which the boot-time catalog check must know. */
   readonly catalogExpectations?: CatalogExpectations;
   readonly emailPort?: EmailPort;
+  /** Replaces the configured malware scanner, to slow or fail scans. */
+  readonly malwareScanner?: MalwareScanner;
   readonly recipientDirectory?: RecipientDirectory;
   readonly keyService?: KeyService;
   /** Replaces the network AI calls use, so no call ever leaves the process. */
@@ -98,6 +102,7 @@ export class AppModule {
           roleDirectory: roles,
         }),
         TenantsModule.register({ config, clock: time, identityOrganizations: overrides.identityOrganizations }),
+        UploadsModule.register({ config, clock: time, roleDirectory: roles, malwareScanner: overrides.malwareScanner }),
         OperationsModule.register({
           registry: overrides.registry ?? productionRegistry,
           roleDirectory: roles,

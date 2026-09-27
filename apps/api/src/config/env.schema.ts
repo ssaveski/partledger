@@ -22,6 +22,10 @@ const kmsSettings = [
   'OVH_KMS_CLIENT_CERTIFICATE_FILE',
   'OVH_KMS_CLIENT_KEY_FILE',
 ] as const;
+/** An S3 bucket name: lowercase letters, digits, dots and hyphens. */
+const bucketName = z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/);
+
+const byteCount = z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 
 const issuer = z.url({ protocol: /^https?$/ }).transform((value) => value.replace(/\/+$/, ''));
 
@@ -184,6 +188,45 @@ export const envSchema = z
     AI_PLATFORM_ENDPOINT_REGION: z.string().min(1).max(40).optional(),
     /** How long one AI call may take before it is abandoned. */
     AI_CALL_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(600).default(120),
+    /**
+     * The object storage port's adapter (KTD36). `local` keeps objects as files under
+     * `STORAGE_LOCAL_DIRECTORY`, for development only, so production refuses it and must name
+     * `s3`: the region's S3-compatible object storage (OVHcloud in Canada). Unset means `local`
+     * outside production.
+     */
+    STORAGE_ADAPTER: z.enum(['local', 's3']).optional(),
+    STORAGE_LOCAL_DIRECTORY: z.string().min(1).default('local-dev/object-storage'),
+    /** Where uploads wait for their scan; nothing in it is ever served (KTD22). */
+    STORAGE_QUARANTINE_BUCKET: bucketName.default('partledger-quarantine'),
+    /** Clean evidence and staff documents. */
+    STORAGE_EVIDENCE_BUCKET: bucketName.default('partledger-evidence'),
+    /** Clean import and drop files, deleted once their import commits or is discarded; never Object Lock. */
+    STORAGE_IMPORTS_BUCKET: bucketName.default('partledger-imports'),
+    /** The region's S3 endpoint, such as `https://s3.bhs.io.cloud.ovh.net`. */
+    S3_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
+    S3_REGION: z.string().min(1).default('bhs'),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    /** Set per environment from the secret store. */
+    S3_SECRET_ACCESS_KEY: z.string().min(8).optional(),
+    /** `on` addresses buckets by path rather than by host name, as most self-hosted stores need. */
+    S3_FORCE_PATH_STYLE: z.enum(['on', 'off']).default('off'),
+    /**
+     * The malware scanner port's adapter (KTD22, KTD36). `local` flags only the EICAR test
+     * file and passes everything else, for development only, so production refuses it and must
+     * name `clamd`, which runs in the region on the private network. Unset means `local`
+     * outside production.
+     */
+    MALWARE_SCANNER: z.enum(['local', 'clamd']).optional(),
+    CLAMD_HOST: z.string().min(1).optional(),
+    CLAMD_PORT: port.default(3310),
+    /** How long one scan may take before the scanner counts as unavailable and the file stays pending. */
+    CLAMD_TIMEOUT_SECONDS: z.coerce.number().int().min(1).max(600).default(60),
+    /** How many files, and how many bytes, one supplier link may upload over its lifetime (KTD21). */
+    UPLOAD_LINK_QUOTA_FILES: z.coerce.number().int().min(1).max(10_000).default(25),
+    UPLOAD_LINK_QUOTA_BYTES: byteCount.default(250 * 1024 * 1024),
+    /** How many files, and how many bytes, one tenant may upload in any 24 hours. */
+    UPLOAD_TENANT_DAILY_QUOTA_FILES: z.coerce.number().int().min(1).max(1_000_000).default(2_000),
+    UPLOAD_TENANT_DAILY_QUOTA_BYTES: byteCount.default(4 * 1024 * 1024 * 1024),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -267,6 +310,41 @@ export const envSchema = z
       if (config.AI_WORKER_DATABASE_URL === undefined) {
         context.addIssue({ code: 'custom', path: ['AI_WORKER_DATABASE_URL'], message: 'is required in production' });
       }
+      if (config.STORAGE_ADAPTER !== 's3') {
+        context.addIssue({
+          code: 'custom',
+          path: ['STORAGE_ADAPTER'],
+          message: 'must be s3 in production; local keeps files on this machine',
+        });
+      }
+      if (config.MALWARE_SCANNER !== 'clamd') {
+        context.addIssue({
+          code: 'custom',
+          path: ['MALWARE_SCANNER'],
+          message: 'must be clamd in production; local scans for nothing but the test file',
+        });
+      }
+    }
+    if (config.STORAGE_ADAPTER === 's3') {
+      for (const name of ['S3_ENDPOINT', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const) {
+        if (config[name] === undefined) {
+          context.addIssue({ code: 'custom', path: [name], message: 'is required with STORAGE_ADAPTER=s3' });
+        }
+      }
+      if (config.NODE_ENV === 'production' && config.S3_ENDPOINT?.startsWith('https://') === false) {
+        context.addIssue({ code: 'custom', path: ['S3_ENDPOINT'], message: 'must use https in production' });
+      }
+    }
+    if (config.MALWARE_SCANNER === 'clamd' && config.CLAMD_HOST === undefined) {
+      context.addIssue({ code: 'custom', path: ['CLAMD_HOST'], message: 'is required with MALWARE_SCANNER=clamd' });
+    }
+    const buckets = [config.STORAGE_QUARANTINE_BUCKET, config.STORAGE_EVIDENCE_BUCKET, config.STORAGE_IMPORTS_BUCKET];
+    if (new Set(buckets).size !== buckets.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['STORAGE_QUARANTINE_BUCKET'],
+        message: 'quarantine, evidence and imports need three different buckets',
+      });
     }
   });
 

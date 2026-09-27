@@ -1,0 +1,26 @@
+# The region's malware scanner (U14, KTD22), for U24 to include in the region's compose project.
+# The API reaches clamd only on the internal `scanner` network; no port is published, and no
+# file leaves the region. freshclam, in the same container, fetches signature updates over the
+# separate `signature-updates` network, which the API never joins.
+services:
+  clamd:
+    # Pinned by digest (KTD41): ClamAV 1.4 LTS, supported until August 2027.
+    image: clamav/clamav:1.4@sha256:a5f03c12a79dbe9f6d8a527b6bb1ea053fa8dd061d3738a26897f055ee2d9303
+    restart: unless-stopped
+    volumes:
+      - ./clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav-signatures:/var/lib/clamav
+    networks:
+      - scanner
+      - signature-updates
+    mem_limit: 3g
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  scanner:
+    internal: true
+  signature-updates: {}
+
+volumes:
+  clamav-signatures:

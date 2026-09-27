@@ -26,6 +26,7 @@ import { parseConfig } from '../../src/config/env.schema';
 import type { ModuleJobs } from '../../src/jobs/job.types';
 import type { HttpEntryAdapter } from '../../src/listeners/entry-adapters';
 import type { EmailPort } from '../../src/notifications/email.port';
+import type { MalwareScanner } from '../../src/uploads/malware-scanner.port';
 import type { RecipientDirectory } from '../../src/notifications/recipient-directory';
 import { formatCredentialToken } from '../../src/principals/credential-token';
 import type { RoleDirectory } from '../../src/principals/role-directory';
@@ -105,6 +106,8 @@ export interface ApiProcessOptions {
   readonly catalogTables?: readonly TableAccess[];
   /** Replaces the local email adapter, to see or fail sends. */
   readonly emailPort?: EmailPort;
+  /** Replaces the configured malware scanner. */
+  readonly malwareScanner?: MalwareScanner;
   /** Replaces the shipped recipient directory, to reach recipients of later units. */
   readonly recipientDirectory?: RecipientDirectory;
   /** Replaces the network AI calls use, so no AI call leaves the process. */
@@ -197,6 +200,7 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         jobPollingIntervalSeconds: 0.5,
         ...(apiProcess.jobs === undefined ? {} : { jobs: apiProcess.jobs }),
         ...(apiProcess.emailPort === undefined ? {} : { emailPort: apiProcess.emailPort }),
+        ...(apiProcess.malwareScanner === undefined ? {} : { malwareScanner: apiProcess.malwareScanner }),
         ...(apiProcess.recipientDirectory === undefined ? {} : { recipientDirectory: apiProcess.recipientDirectory }),
         ...(apiProcess.aiNetwork === undefined ? {} : { aiNetwork: apiProcess.aiNetwork }),
         ...(apiProcess.aiLocalResponder === undefined ? {} : { aiLocalResponder: apiProcess.aiLocalResponder }),
