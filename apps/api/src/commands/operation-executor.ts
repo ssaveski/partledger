@@ -18,7 +18,7 @@ import { isAllowed } from '../principals/authorize';
 import type { AuthenticatedPrincipal, Principal } from '../principals/principal';
 import { PrincipalResolver, type Authentication, type PresentedHeaders } from '../principals/principal-resolver';
 import { roleDirectory, type RoleDirectory } from '../principals/role-directory';
-import { hasRecentStepUp } from '../principals/step-up';
+import { hasRecentStepUp, stepUpPolicy, type StepUpPolicy } from '../principals/step-up';
 import { clock, type Clock } from '../time/clock';
 import type { HandlerResult } from './handlers';
 import { operationRoutes, type OperationRoutes } from './route-generator';
@@ -91,6 +91,7 @@ export class OperationExecutor {
     @Inject(TenantTransactions) private readonly transactions: TenantTransactions,
     @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
     @Inject(clock) private readonly time: Clock,
+    @Inject(stepUpPolicy) private readonly stepUp: StepUpPolicy,
     @Inject(ModuleRef) private readonly moduleRef: ModuleRef,
     @Inject(JobQueue) private readonly jobQueue: JobQueue,
   ) {}
@@ -140,7 +141,7 @@ export class OperationExecutor {
       if (!isAllowed(declaration.access, principal)) {
         return refused(domainError('Forbidden', 'notPermitted'));
       }
-      if (declaration.stepUp && !hasRecentStepUp(principal, now)) {
+      if (declaration.stepUp && !hasRecentStepUp(principal, now, this.stepUp)) {
         return refused(domainError('StepUpRequired', 'recentAuthentication'));
       }
       let claimId: string | undefined;

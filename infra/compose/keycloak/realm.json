@@ -10,7 +10,7 @@
   "verifyEmail": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": false,
+  "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
   "bruteForceStrategy": "MULTIPLE",
@@ -34,7 +34,16 @@
   "refreshTokenMaxReuse": 0,
   "firstBrokerLoginFlow": "first broker login",
   "identityProviders": [],
-  "users": [],
+  "users": [
+    {
+      "username": "service-account-partledger-api-admin",
+      "enabled": true,
+      "serviceAccountClientId": "partledger-api-admin",
+      "clientRoles": {
+        "realm-management": ["view-users", "manage-users"]
+      }
+    }
+  ],
   "clients": [
     {
       "clientId": "partledger-api",
@@ -91,6 +100,318 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "partledger-api-admin",
+      "name": "Partledger API administration",
+      "description": "The API's service account for the admin API: second-factor resets and ending a user's sessions (U29), organization membership (U8).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "consentRequired": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "defaultClientScopes": ["basic"],
+      "optionalClientScopes": []
     }
-  ]
+  ],
+  "attributes": {
+    "acr.loa.map": "{\"sign-in\":1,\"step-up\":2}"
+  },
+  "browserFlow": "partledger browser",
+  "resetCredentialsFlow": "partledger reset credentials",
+  "authenticationFlows": [
+    {
+      "alias": "partledger browser",
+      "description": "Sign-in at level 1 (a password or a customer identity provider) and step-up at level 2 (a Keycloak-held one-time code).",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "auth-cookie",
+          "authenticatorFlow": false
+        },
+        {
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "identity-provider-redirector",
+          "authenticatorFlow": false
+        },
+        {
+          "requirement": "ALTERNATIVE",
+          "priority": 30,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger organization"
+        },
+        {
+          "requirement": "ALTERNATIVE",
+          "priority": 40,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger levels"
+        }
+      ]
+    },
+    {
+      "alias": "partledger organization",
+      "description": "Identity-first login for organization members.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger conditional organization"
+        }
+      ]
+    },
+    {
+      "alias": "partledger conditional organization",
+      "description": "Runs identity-first login until the user is known.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-user-configured",
+          "authenticatorFlow": false
+        },
+        {
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "organization",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger levels",
+      "description": "The levels of authentication; acr.loa.map names them sign-in (1) and step-up (2).",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger level 1"
+        },
+        {
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger level 2"
+        }
+      ]
+    },
+    {
+      "alias": "partledger level 1",
+      "description": "Sign-in: a password, or a customer identity provider from the same page.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "authenticatorConfig": "partledger level 1"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "auth-username-password-form",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger level 2",
+      "description": "Step-up: a one-time code every time, enrolled at the first step-up.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "authenticatorConfig": "partledger level 2"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger post broker login",
+      "description": "Runs after every login through a customer identity provider: records the sign-in level, and asks for the one-time code at step-up.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "CONDITIONAL",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger broker level 1"
+        },
+        {
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger broker level 2"
+        }
+      ]
+    },
+    {
+      "alias": "partledger broker level 1",
+      "description": "The customer identity provider counts as sign-in.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "authenticatorConfig": "partledger broker level 1"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "allow-access-authenticator",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger broker level 2",
+      "description": "Step-up after a customer identity provider: a Keycloak-held one-time code.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-level-of-authentication",
+          "authenticatorFlow": false,
+          "authenticatorConfig": "partledger broker level 2"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "auth-otp-form",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger reset credentials",
+      "description": "Forgot-password resets the password only; it never removes or replaces a second factor.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "reset-credentials-choose-user",
+          "authenticatorFlow": false
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "reset-credential-email",
+          "authenticatorFlow": false
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "userSetupAllowed": false,
+          "authenticator": "reset-password",
+          "authenticatorFlow": false
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "partledger level 1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
+    {
+      "alias": "partledger level 2",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
+    },
+    {
+      "alias": "partledger broker level 1",
+      "config": {
+        "loa-condition-level": "1",
+        "loa-max-age": "36000"
+      }
+    },
+    {
+      "alias": "partledger broker level 2",
+      "config": {
+        "loa-condition-level": "2",
+        "loa-max-age": "0"
+      }
+    }
+  ],
+  "clientScopeMappings": {
+    "realm-management": [
+      {
+        "client": "partledger-api-admin",
+        "roles": ["view-users", "manage-users"]
+      }
+    ]
+  }
 }

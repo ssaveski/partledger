@@ -105,6 +105,7 @@ describe('the step-up rule', () => {
       'break_glass_approval',
       'ai_key_change',
       'drop_credential_issuance',
+      'second_factor_reset',
     ] as const) {
       expect(rulesBrokenBy({ ...createNote, impact, stepUp: false })).toEqual(['high_impact_without_step_up']);
     }

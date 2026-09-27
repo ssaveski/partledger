@@ -4,10 +4,12 @@ import { staffAuthPaths, staffRequestHeader, staffSessionSchema } from '@partled
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import type { IdentityProvider, RefreshOutcome } from '../src/auth/identity-provider';
+import type { IdentityProvider, RefreshOutcome, SignedInIdentity } from '../src/auth/identity-provider';
 import { sessionCookieName } from '../src/auth/session-cookie';
+import { StaffSessions } from '../src/auth/staff-sessions';
 import {
   credentialHeaders,
+  defaultStepUpLevel,
   newIdempotencyKey,
   startApiHarness,
   stubIdentity,
@@ -174,6 +176,56 @@ describe('staff session lifetimes', () => {
       nextRefresh = 'refreshed';
     }
     expect(await endReasonOf(person.credentialId)).toBe('identity_changed');
+  });
+
+  it('records a step-up only on its own session and person, and never on an ended or idle session', async () => {
+    const sessions = harness.api.app.get(StaffSessions);
+    const signedIn = (subject: string, tenantId = harness.tenantA): SignedInIdentity => {
+      const identity = {
+        subject,
+        tenantId,
+        organizationId: 'harness',
+        authenticationLevel: defaultStepUpLevel,
+        authenticatedAt: harness.clock.now(),
+      };
+      return { identity, refreshToken: JSON.stringify(identity) };
+    };
+    const person = await harness.issue('staff_session', harness.tenantA, { roles: ['approver'] });
+    const own = { tenantId: harness.tenantA, credentialId: person.credentialId };
+    const now = harness.clock.now();
+    expect(await sessions.recordStepUp(own, signedIn(randomUUID()), now)).toBe('refused');
+    expect(await sessions.recordStepUp(own, signedIn(person.subjectId, harness.tenantB), now)).toBe('refused');
+    const buyer = await harness.issue('staff_session', harness.tenantA, { roles: ['buyer'] });
+    const note = z
+      .object({ noteId: z.uuid() })
+      .parse(
+        (
+          await harness.command(
+            'staff',
+            'internalTest.createNote',
+            { title: 'Synthetic step-up note' },
+            { token: buyer.token, idempotencyKey: newIdempotencyKey() },
+          )
+        ).body,
+      );
+    const approve = () =>
+      harness.command(
+        'staff',
+        'internalTest.approveNote',
+        { noteId: note.noteId, expectedVersion: 1 },
+        { token: person.token, idempotencyKey: newIdempotencyKey() },
+      );
+    expect((await approve()).status).toBe(401);
+
+    expect(await sessions.recordStepUp(own, signedIn(person.subjectId), now)).toBe('recorded');
+    expect((await approve()).status).toBe(200);
+
+    const idle = await harness.issue('staff_session', harness.tenantA, { expiresInMilliseconds: 10 * 3_600_000 });
+    harness.clock.advance(idleMinutes * 60_000 + 1000);
+    const idleSession = { tenantId: harness.tenantA, credentialId: idle.credentialId };
+    expect(await sessions.recordStepUp(idleSession, signedIn(idle.subjectId), harness.clock.now())).toBe('refused');
+    expect(await endReasonOf(idle.credentialId)).toBe('idle_timeout');
+    expect(await sessions.recordStepUp(idleSession, signedIn(idle.subjectId), harness.clock.now())).toBe('refused');
   });
 
   it('signing out without a session still clears the cookie', async () => {

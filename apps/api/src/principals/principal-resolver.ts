@@ -6,7 +6,7 @@ import { StaffSessions } from '../auth/staff-sessions';
 import { CredentialResolver } from '../db/db.module';
 import { acceptsCredentialKind, type HttpEntryAdapter } from '../listeners/entry-adapters';
 import { parseAuthorizationHeader } from './credential-token';
-import type { AuthenticatedPrincipal } from './principal';
+import type { AuthenticatedPrincipal, StepUp } from './principal';
 
 /** The request headers that may carry a credential. */
 export interface PresentedHeaders {
@@ -51,13 +51,15 @@ export class PrincipalResolver {
       return refused;
     }
     const { credential } = verification;
+    let stepUp: StepUp | null = null;
     if (credential.kind === 'staff_session') {
       const resumed = await this.staffSessions.resume(credential, now);
       if (resumed.kind !== 'active') {
         return resumed.kind === 'unavailable' ? { ok: false, reason: 'unavailable' } : refused;
       }
+      stepUp = resumed.session.stepUp;
     }
-    const principal = principalFor(credential, adapter, correlationId);
+    const principal = principalFor(credential, adapter, correlationId, stepUp);
     return principal === null ? refused : { ok: true, principal };
   }
 }
@@ -72,6 +74,7 @@ function principalFor(
   credential: ResolvedCredential,
   adapter: HttpEntryAdapter,
   correlationId: string,
+  stepUp: StepUp | null,
 ): AuthenticatedPrincipal | null {
   const base = {
     tenantId: credential.tenantId,
@@ -81,9 +84,7 @@ function principalFor(
   };
   switch (credential.kind) {
     case 'staff_session':
-      return credential.subjectId === null
-        ? null
-        : { ...base, type: 'person', userId: credential.subjectId, stepUp: null };
+      return credential.subjectId === null ? null : { ...base, type: 'person', userId: credential.subjectId, stepUp };
     case 'supplier_link':
       return { ...base, type: 'supplier_token', supplierId: credential.subjectId };
     case 'drop_credential':

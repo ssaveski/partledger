@@ -10,6 +10,7 @@ const auth = {
   STAFF_APP_ORIGIN: 'http://127.0.0.1:5173',
   KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger/',
   KEYCLOAK_CLIENT_SECRET: 'placeholder-client-secret',
+  KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
   SESSION_TOKEN_KEY: sessionKey.toString('base64'),
   JOBS_DATABASE_URL: jobsDatabaseUrl,
 };
@@ -39,6 +40,10 @@ describe('API configuration', () => {
       KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger',
       KEYCLOAK_CLIENT_ID: 'partledger-api',
       KEYCLOAK_CLIENT_SECRET: 'placeholder-client-secret',
+      KEYCLOAK_ADMIN_CLIENT_ID: 'partledger-api-admin',
+      KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
+      STEP_UP_ACR: 'step-up',
+      STEP_UP_FRESHNESS_SECONDS: 300,
       KEYCLOAK_JWKS_COOLDOWN_SECONDS: 30,
       SESSION_TOKEN_KEY: sessionKey,
       STAFF_SESSION_IDLE_TIMEOUT_MINUTES: 30,
@@ -129,6 +134,20 @@ describe('API configuration', () => {
         KEYCLOAK_CLIENT_SECRET: undefined,
       }),
     ).toEqual(['KEYCLOAK_CLIENT_SECRET']);
+  });
+
+  it('refuses a missing admin client secret, a step-up level that is not a token and a freshness window out of range', () => {
+    expect(
+      fieldsRefusedIn({
+        NODE_ENV: 'test',
+        ...ports,
+        DATABASE_URL: databaseUrl,
+        ...auth,
+        KEYCLOAK_ADMIN_CLIENT_SECRET: undefined,
+        STEP_UP_ACR: 'step up',
+        STEP_UP_FRESHNESS_SECONDS: '3600',
+      }),
+    ).toEqual(['KEYCLOAK_ADMIN_CLIENT_SECRET', 'STEP_UP_ACR', 'STEP_UP_FRESHNESS_SECONDS']);
   });
 
   it('requires https for the staff app, the supplier portal and Keycloak in production', () => {

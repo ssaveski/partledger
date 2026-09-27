@@ -1,16 +1,23 @@
 import type { Principal } from './principal';
 
 /**
- * How recent a step-up must be for a command marked `stepUp` (KTD20). U29 sets the level from
- * the configured `acr` and fills `PersonPrincipal.stepUp` from the session; until then no
- * principal carries a step-up, so every step-up command is refused.
+ * What a command marked `stepUp` demands (KTD20): the session's latest authentication at the
+ * configured `acr`, with an `auth_time` inside the freshness window.
  */
-export const stepUpFreshnessMilliseconds = 5 * 60 * 1000;
+export interface StepUpPolicy {
+  readonly level: string;
+  readonly freshnessMilliseconds: number;
+}
 
-export function hasRecentStepUp(principal: Principal, now: Date): boolean {
-  if (principal.type !== 'person' || principal.stepUp === null) {
+export const stepUpPolicy = Symbol('StepUpPolicy');
+
+/** The identity provider's clock may run slightly ahead of ours; the same tolerance as token validation. */
+const clockToleranceMilliseconds = 5000;
+
+export function hasRecentStepUp(principal: Principal, now: Date, policy: StepUpPolicy): boolean {
+  if (principal.type !== 'person' || principal.stepUp === null || principal.stepUp.level !== policy.level) {
     return false;
   }
   const age = now.getTime() - principal.stepUp.authenticatedAt.getTime();
-  return age >= 0 && age <= stepUpFreshnessMilliseconds;
+  return age >= -clockToleranceMilliseconds && age <= policy.freshnessMilliseconds;
 }

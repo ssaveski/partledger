@@ -1,6 +1,6 @@
-# Keycloak: staff sign-in
+# Keycloak: staff sign-in and step-up
 
-Staff sign in through Keycloak 26, one instance per region (plan KTD20). This runbook covers local development, the realm's settings and why they are set, and how the API's sessions work. Everything here uses synthetic users only.
+Staff sign in through Keycloak 26, one instance per region (plan KTD20). This runbook covers local development, the realm's settings and why they are set, how the API's sessions work, and step-up authentication with its second factor (U29). Everything here uses synthetic users only.
 
 ## How sign-in works
 
@@ -11,7 +11,45 @@ Staff sign in through Keycloak 26, one instance per region (plan KTD20). This ru
 5. Every request on the staff listener presents that cookie. The API verifies the credential, then checks the session row: ended sessions and sessions idle for longer than the idle timeout are refused; once the refresh interval has passed, the API refreshes against Keycloak and ends the session if Keycloak refuses (a disabled user, an ended Keycloak session) or returns a token for another user or tenant. If Keycloak or its signing keys cannot be reached, the request is answered with 503 `pl.error.unavailable.dependencyUnavailable` and the session is kept; the staff app shows it as unavailable, not as signed out. An ended session row is frozen by a trigger, so it can never be reopened.
 6. `POST /api/v1/auth/sign-out` ends the session row, ends the Keycloak session through its logout endpoint and clears the cookie. `GET /api/v1/auth/session` returns the user id, tenant id and both expiries, or the uniform 401.
 
+The session row also keeps the latest `acr` and `auth_time` of the tokens it received (`authentication_level`, `authenticated_at`), from the sign-in, every refresh and every step-up.
+
 The browser never receives a token. The staff listener reads only the session cookie and ignores `Authorization` headers, so a session cannot be replayed as a bearer token; the other listeners keep their bearer credentials. Every state-changing request on the staff listener must carry `x-partledger-request: staff-app` (see `staffRequestHeader` in `libs/contracts/src/auth.ts`); without it the API answers 403 `pl.error.forbidden.crossSiteRequest`.
+
+## Step-up
+
+Approvals and KTD20's other high-impact commands (void, role grants and revocations, auditor grants, break-glass approvals, tenant AI-key changes, drop-credential issuance, and the second-factor reset) are declared with `stepUp: true`. The API runs them only when the session's latest `acr` is `STEP_UP_ACR` (default `step-up`) and its `auth_time` is at most `STEP_UP_FRESHNESS_SECONDS` old (default 300, five seconds of clock skew tolerated). Otherwise it answers 401 with `{ "error": "StepUpRequired", "message": "pl.error.stepUpRequired.recentAuthentication" }`, which the staff app tells apart from the uniform 401 of a refused session.
+
+1. The staff app (`apps/web/src/auth/step-up.ts`) keeps the refused command, with its idempotency key, in the tab's session storage and navigates to `GET /api/v1/auth/step-up?returnTo=/path`.
+2. The API resumes the session from its cookie (a top-level navigation from the app carries the SameSite=Strict cookie), seals the session's tenant and credential id into the `__Host-pl_sign_in` state cookie with a new state, nonce and PKCE verifier, and redirects to Keycloak with `acr_values=step-up`. Without an active session it sends the person back to `returnTo` with `?stepUp=failed`.
+3. Keycloak's browser flow reuses the SSO session for the sign-in level and asks for a one-time code at the step-up level; a user without a second factor enrols one first (the `CONFIGURE_TOTP` required action).
+4. The callback exchanges the code and records the new refresh token, `acr` and `auth_time` on the sealed session, but only if that session is still open, not idle, and the tokens name the same person and tenant; otherwise the new Keycloak session is ended and nothing changes. It redirects to `returnTo`, with `?stepUp=failed` when the tokens do not carry the step-up level.
+5. The app retries the kept command once with the same idempotency key, so the action happens once. A step-up that failed, a kept command older than ten minutes, or a second step-up error ends the attempt with `pl.auth.stepUpFailed` instead of another redirect.
+
+Refreshing keeps the `acr` and `auth_time` of the step-up, so the freshness window, not the refresh, decides how long a step-up lasts.
+
+### Levels of authentication in the realm
+
+The realm maps its levels with `acr.loa.map` (`{"sign-in":1,"step-up":2}`) and binds its own browser flow, `partledger browser`:
+
+| Execution | Requirement | Why |
+|---|---|---|
+| Cookie | alternative | SSO; for a step-up the cookie alone is not enough and the levels below run. |
+| Identity Provider Redirector | alternative | `kc_idp_hint`. |
+| `partledger organization` (conditional identity-first login) | alternative | Organization members are identified first, as in the built-in flow. |
+| `partledger level 1`: Condition - Level of Authentication (1, max age 36000 s), Username Password Form | conditional | Sign-in; skipped at step-up while the SSO session holds level 1. |
+| `partledger level 2`: Condition - Level of Authentication (2, max age 0), OTP Form | conditional | Step-up: a code every time it is asked for; enrolment at the first step-up. |
+
+Users brokered from a customer's identity provider never see the password form. Every identity provider must set **Post login flow** to `partledger post broker login`, which records level 1 after a brokered login (`Allow access` under a level-1 condition) and asks for the one-time code when a brokered login itself asks for level 2. Without it a brokered user's step-up asks for a Keycloak password they do not have, so it fails closed. The second factor is always held by Keycloak, never by the customer's identity provider.
+
+### Forgot-password and lost second factors
+
+`resetPasswordAllowed` is on and the realm binds `partledger reset credentials`: Choose User, Send Reset Email, Reset Password, and nothing else. The built-in flow's `Reset - Conditional OTP` (Reset OTP) is left out, so a forgot-password e-mail can change the password but never remove or replace a second factor, and a reset password counts for no level: the next step-up asks for the password and then a code from the existing factor. The realm needs SMTP settings per environment (Realm settings > Email) for the reset e-mail.
+
+A lost second factor is reset only by the `auth.resetSecondFactor` command: a tenant admin with a fresh step-up names a user of their own tenant (not themselves); the API ends the user's staff sessions (`second_factor_reset`) and, in the same transaction, appends an audit entry whose actor is the admin and whose payload holds only ids and counts, and enqueues the `auth.resetSecondFactor` job (KTD16). Once the command has committed, the job removes the user's `otp` credentials and ends their Keycloak sessions through the admin API, retrying every 30 seconds while Keycloak is unreachable, and appends its own `auth.secondFactorRemoved` entry. Until the job has run, the user has no staff session but could still sign in again with the old factor; a failed job shows in the job runner's failed jobs (`docs/runbooks/jobs.md`). The user enrols a new factor at their next step-up. Until U8 stores tenant roles, the role directory grants nobody `tenant_admin`, so the command is refused in production; U8 replaces the placeholder with membership rows.
+
+### The API's service account
+
+The client `partledger-api-admin` is confidential, has only the service-account grant, and its scope holds exactly `realm-management` `view-users` and `manage-users` (`fullScopeAllowed` is off; the roles reach the token through the client's scope mapping). The API uses it for second-factor resets and, from U8, organization membership. It cannot change the realm, and impersonation is disabled. Regenerate its secret after an import, like the API client's, and put it in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
 
 ### Why the refresh token is stored
 
@@ -31,6 +69,9 @@ Refreshing at a short interval is how a disabled user or a removed membership lo
 | `STAFF_SESSION_IDLE_TIMEOUT_MINUTES` | Default 30. |
 | `STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS` | Default 10; the session credential's expiry and the cookie's `Max-Age`. |
 | `STAFF_SESSION_REFRESH_INTERVAL_SECONDS` | Default 60; also the longest a disabled user keeps access. |
+| `KEYCLOAK_ADMIN_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | The service account for the admin API (`partledger-api-admin`). |
+| `STEP_UP_ACR` | The `acr` step-up commands require; default `step-up`, as the realm's `acr.loa.map` names level 2. |
+| `STEP_UP_FRESHNESS_SECONDS` | How old a step-up may be, 10 to 900; default 300. |
 
 ## Realm settings (`infra/compose/keycloak/realm.json`)
 
@@ -44,7 +85,11 @@ Refreshing at a short interval is how a disabled user or a removed membership lo
 | `bruteForceProtected` | `true`, 5 failures, 60 s wait rising to 15 min | Repeated failed sign-ins lock the account temporarily. |
 | `firstBrokerLoginFlow` | built-in `first broker login`, no `idp-auto-link` | A brokered login whose email matches an existing account is never linked automatically; the person must confirm and re-authenticate. Keep `trustEmail` off on every identity provider. |
 | `adminEventsEnabled`, `adminEventsDetailsEnabled`, `eventsEnabled` | `true` | Admin and login events are recorded (KTD41); production ships them to the in-region log store. |
-| `resetPasswordAllowed`, `registrationAllowed` | `false` | Accounts are invited (U8); lost second factors are reset by an audited tenant-admin command (U29). |
+| `registrationAllowed` | `false` | Accounts are invited (U8). |
+| `resetPasswordAllowed`, `resetCredentialsFlow` | `true`, `partledger reset credentials` | Forgot-password changes the password only; it has no conditional OTP reset (see Step-up). |
+| `browserFlow`, `acr.loa.map` | `partledger browser`, `{"sign-in":1,"step-up":2}` | Levels of authentication for step-up (see Step-up). |
+| `partledger post broker login` | set as every identity provider's post login flow | Brokered logins count as sign-in and can step up. |
+| Client `partledger-api-admin` | service account, `view-users` and `manage-users` only | Second-factor resets (U29) and membership (U8). |
 | `redirectUris` | the local staff app only | Each environment sets its own origin; nothing else may receive codes. |
 
 Keycloak itself runs with `--features-disabled=impersonation`, and the API refuses any token with an `impersonator` claim as a second line.
@@ -80,12 +125,13 @@ docker exec -it partledger-keycloak bash -c '
   $kc get clients/$client/client-secret -r partledger'
 ```
 
-Put the printed secret in `.env` as `KEYCLOAK_CLIENT_SECRET`, generate `SESSION_TOKEN_KEY`, start the API and the staff app (`apps/web`, port 5173, which proxies `/api` to `127.0.0.1:3000`), and open `http://127.0.0.1:5173/api/v1/auth/sign-in`. Keycloak asks for the username first and the password on the next page, because organizations are enabled.
+Put the printed secret in `.env` as `KEYCLOAK_CLIENT_SECRET`; do the same for the client `partledger-api-admin` and put its secret in `KEYCLOAK_ADMIN_CLIENT_SECRET`; generate `SESSION_TOKEN_KEY`, start the API and the staff app (`apps/web`, port 5173, which proxies `/api` to `127.0.0.1:3000`), and open `http://127.0.0.1:5173/api/v1/auth/sign-in`. Keycloak asks for the username first and the password on the next page, because organizations are enabled.
 
 Browsers accept `Secure` and `__Host-` cookies over plain HTTP only on `localhost` and `127.0.0.1`; every other environment serves the staff app over HTTPS.
 
 ## Tests
 
+- `apps/api/test/step-up.integration.spec.ts` starts Keycloak with this realm, a synthetic customer realm for brokering and a local mail catcher, and drives step-up with enrolment and one-time codes (an authenticator in the test), the freshness window, the retry with the same idempotency key, a brokered user's enrolment, the forgot-password flow and the second-factor reset.
 - `apps/api/test/auth.integration.spec.ts` starts Keycloak with this realm (plus a synthetic customer realm for brokering) and drives sign-in, sign-out, organizations, the disabled-user refresh, key rotation, brute-force lockout, the no-auto-link rule and the realm settings.
 - `apps/api/test/staff-sessions.integration.spec.ts` covers idle and absolute timeouts and refresh outcomes with a stand-in identity provider.
 - `apps/web/e2e/login.spec.ts` signs in and out in Chromium through the staff app's proxy. Playwright starts the stack with `apps/api/test/e2e/staff-stack.ts` (PostgreSQL and Keycloak containers, the built API on port 3000), which generates the synthetic user's password per run.

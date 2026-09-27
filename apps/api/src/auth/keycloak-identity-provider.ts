@@ -65,7 +65,7 @@ export class KeycloakIdentityProvider implements IdentityProvider {
       return failure('unavailable');
     }
     const url = new URL(endpoints.authorization);
-    url.search = new URLSearchParams({
+    const parameters = new URLSearchParams({
       client_id: this.options.clientId,
       response_type: 'code',
       scope: signInScope,
@@ -74,7 +74,11 @@ export class KeycloakIdentityProvider implements IdentityProvider {
       nonce: request.nonce,
       code_challenge: request.codeChallenge,
       code_challenge_method: 'S256',
-    }).toString();
+    });
+    if (request.acrValues !== undefined) {
+      parameters.set('acr_values', request.acrValues);
+    }
+    url.search = parameters.toString();
     return success(url);
   }
 

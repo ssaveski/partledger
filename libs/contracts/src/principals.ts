@@ -21,7 +21,8 @@ export type EntryAdapter = (typeof entryAdapters)[number];
 
 /**
  * KTD20's high-impact commands. Each requires step-up authentication; a command declares
- * which of these it is, or `standard`.
+ * which of these it is, or `standard`. `second_factor_reset` is the audited tenant-admin
+ * command that removes a user's step-up factor (KTD20, U29).
  */
 export const highImpactCategories = [
   'approval',
@@ -31,6 +32,7 @@ export const highImpactCategories = [
   'break_glass_approval',
   'ai_key_change',
   'drop_credential_issuance',
+  'second_factor_reset',
 ] as const;
 
 export type HighImpactCategory = (typeof highImpactCategories)[number];

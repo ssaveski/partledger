@@ -11,6 +11,8 @@ export interface AuthorizationRequest {
   readonly nonce: string;
   readonly codeChallenge: string;
   readonly redirectUri: string;
+  /** Asks for this authentication level (`acr_values`), as a step-up does (KTD20). */
+  readonly acrValues?: string;
 }
 
 export interface CodeExchange {

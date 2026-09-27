@@ -5,8 +5,11 @@ export {
   staffAuthPaths,
   staffRequestHeader,
   staffSessionSchema,
+  stepUpFailedParameter,
+  stepUpQuerySchema,
   type StaffSession,
 } from './auth';
+export { resetSecondFactor } from './auth/reset-second-factor';
 export {
   apiBasePath,
   commandPath,

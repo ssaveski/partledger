@@ -3,8 +3,11 @@ import type { StaffSession } from '@partledger/contracts';
 import { issueCredential, type ResolvedCredential, type StaffSessionEndReason } from '@partledger/db';
 
 import { TenantTransactions } from '../db/tenant-transaction';
+import type { StepUp } from '../principals/principal';
 import { identityProvider, type IdentityProvider, type SignedInIdentity } from './identity-provider';
-import { sessionStore } from './session.store';
+import type { StaffIdentity } from './jwks';
+import { sessionStore, type SessionAuthentication } from './session.store';
+import type { SteppedUpSession } from './sign-in-state';
 import { TokenCipher } from './token-cipher';
 
 export interface SessionSettings {
@@ -28,6 +31,8 @@ export interface ActiveSession {
   readonly subjectId: string;
   readonly expiresAt: Date;
   readonly lastSeenAt: Date;
+  /** The session's latest authentication level and time, when the identity provider sent both. */
+  readonly stepUp: StepUp | null;
 }
 
 /**
@@ -80,6 +85,7 @@ export class StaffSessions {
         credentialId: credential.id,
         subjectId: identity.subject,
         refreshTokenCiphertext: this.cipher.encrypt(signedIn.refreshToken, credential.id),
+        ...authenticationOf(identity),
         now,
       });
       return { credentialId: credential.id, secret: credential.secret, expiresAt: sessionExpiresAt };
@@ -103,7 +109,7 @@ export class StaffSessions {
       }
       if (now.getTime() - stored.refreshedAt.getTime() < this.settings.refreshIntervalMilliseconds) {
         return (await sessionStore.touch(database, key, now))
-          ? ({ kind: 'active', subjectId: stored.subjectId } as const)
+          ? ({ kind: 'active', subjectId: stored.subjectId, authentication: stored } as const)
           : ({ kind: 'ended' } as const);
       }
       return { kind: 'refresh_due', subjectId: stored.subjectId, ciphertext: stored.refreshTokenCiphertext } as const;
@@ -112,10 +118,44 @@ export class StaffSessions {
       case 'ended':
         return ended;
       case 'active':
-        return this.activeSession(credential, checked.subjectId, now);
+        return this.activeSession(credential, checked.subjectId, checked.authentication, now);
       case 'refresh_due':
         return this.refresh(credential, checked.subjectId, checked.ciphertext, now);
     }
+  }
+
+  /**
+   * Records a completed step-up on the session it re-authenticated (KTD20): its new refresh
+   * token, level and time. Refused, leaving the session as it was, when the session has
+   * ended or gone idle, or when the identity provider signed in another person or tenant.
+   */
+  async recordStepUp(
+    steppedUp: SteppedUpSession,
+    signedIn: SignedInIdentity,
+    now: Date,
+  ): Promise<'recorded' | 'refused'> {
+    const { identity } = signedIn;
+    if (identity.tenantId !== steppedUp.tenantId) {
+      return 'refused';
+    }
+    return this.transactions.run(steppedUp.tenantId, async (database) => {
+      const stored = await sessionStore.find(database, steppedUp);
+      if (stored === undefined || stored.endedAt !== null || stored.subjectId !== identity.subject) {
+        return 'refused';
+      }
+      if (now.getTime() - stored.lastSeenAt.getTime() >= this.settings.idleTimeoutMilliseconds) {
+        await sessionStore.end(database, steppedUp, 'idle_timeout', now);
+        return 'refused';
+      }
+      const recorded = await sessionStore.recordRefresh(
+        database,
+        steppedUp,
+        this.cipher.encrypt(signedIn.refreshToken, steppedUp.credentialId),
+        authenticationOf(identity),
+        now,
+      );
+      return recorded ? 'recorded' : 'refused';
+    });
   }
 
   /** Ends the session and, best effort, the identity provider's session behind it. */
@@ -176,13 +216,26 @@ export class StaffSessions {
       await this.provider.endSession(outcome.refreshToken);
       return ended;
     }
+    const authentication = authenticationOf(identity);
     const recorded = await this.transactions.run(credential.tenantId, (database) =>
-      sessionStore.recordRefresh(database, key, this.cipher.encrypt(outcome.refreshToken, credential.id), now),
+      sessionStore.recordRefresh(
+        database,
+        key,
+        this.cipher.encrypt(outcome.refreshToken, credential.id),
+        authentication,
+        now,
+      ),
     );
-    return recorded ? this.activeSession(credential, subjectId, now) : ended;
+    return recorded ? this.activeSession(credential, subjectId, authentication, now) : ended;
   }
 
-  private activeSession(credential: ResolvedCredential, subjectId: string, now: Date): ResumedSession {
+  private activeSession(
+    credential: ResolvedCredential,
+    subjectId: string,
+    authentication: SessionAuthentication,
+    now: Date,
+  ): ResumedSession {
+    const { authenticationLevel: level, authenticatedAt } = authentication;
     return {
       kind: 'active',
       session: {
@@ -191,7 +244,12 @@ export class StaffSessions {
         subjectId,
         expiresAt: credential.expiresAt,
         lastSeenAt: now,
+        stepUp: level === null || authenticatedAt === null ? null : { level, authenticatedAt },
       },
     };
   }
+}
+
+function authenticationOf(identity: StaffIdentity): SessionAuthentication {
+  return { authenticationLevel: identity.authenticationLevel, authenticatedAt: identity.authenticatedAt };
 }

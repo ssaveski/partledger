@@ -21,6 +21,9 @@ export const realmName = 'partledger';
 
 export const clientId = 'partledger-api';
 
+/** The API's service-account client for the realm's admin API. */
+export const adminClientId = 'partledger-api-admin';
+
 export const realmFile = join(
   import.meta.dirname,
   '..',

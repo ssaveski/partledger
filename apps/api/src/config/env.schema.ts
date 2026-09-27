@@ -37,6 +37,19 @@ export const envSchema = z
     KEYCLOAK_CLIENT_ID: z.string().min(1).default('partledger-api'),
     /** The confidential client's secret; set per environment from the secret store. */
     KEYCLOAK_CLIENT_SECRET: z.string().min(16),
+    /**
+     * The API's service-account client for the realm's admin API: it resets second factors
+     * and ends users' Keycloak sessions (U29), and manages organization membership (U8).
+     */
+    KEYCLOAK_ADMIN_CLIENT_ID: z.string().min(1).default('partledger-api-admin'),
+    KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(16),
+    /** The `acr` a step-up command requires (KTD20); the realm's `acr.loa.map` names its levels. */
+    STEP_UP_ACR: z
+      .string()
+      .regex(/^[A-Za-z0-9._:-]{1,64}$/)
+      .default('step-up'),
+    /** How recent the step-up's `auth_time` must be for a step-up command (KTD20). */
+    STEP_UP_FRESHNESS_SECONDS: z.coerce.number().int().min(10).max(900).default(300),
     /** The shortest time between two fetches of the realm's signing keys when a token names an unknown key. */
     KEYCLOAK_JWKS_COOLDOWN_SECONDS: z.coerce.number().int().min(0).max(300).default(30),
     /**
