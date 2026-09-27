@@ -2,7 +2,14 @@ import { reviewQueueSchema } from '@partledger/contracts';
 import { evidenceFixtureOutputs, fixtureEvidenceDocumentIds } from '@partledger/contracts/fixtures';
 import { describe, expect, it } from 'vitest';
 
-import { deviationFormSchema, gapKey, isRejectionReasonGiven, withDeviation, withoutDocument } from './evidence-review';
+import {
+  deviationFormSchema,
+  gapKey,
+  isRejectionReasonGiven,
+  withDeviation,
+  withoutDocument,
+  withRejection,
+} from './evidence-review';
 
 const queue = reviewQueueSchema.parse(evidenceFixtureOutputs.reviewQueue);
 
@@ -22,8 +29,26 @@ describe('rejecting evidence', () => {
   });
 });
 
+describe('the preview rejection', () => {
+  const documentId = fixtureEvidenceDocumentIds.renewedQualityCertificate;
+
+  it('takes the reason with the document, as the command will', () => {
+    const next = withRejection(queue, { documentId, reason: 'The certificate names another company.' });
+    expect(next.documents.some((document) => document.documentId === documentId)).toBe(false);
+  });
+
+  it('changes nothing without a reason', () => {
+    expect(withRejection(queue, { documentId, reason: '  ' })).toEqual(queue);
+  });
+});
+
 describe('recording a deviation', () => {
   const schema = deviationFormSchema(queue);
+
+  it('refuses a reason longer than the field allows with its own message', () => {
+    const result = schema.safeParse({ reason: 'x'.repeat(1001), expiresOn: '2026-12-31' });
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual(['pl.evidence.deviation.error.reasonTooLong']);
+  });
 
   it('needs a reason and an end date after today and no later than the limit', () => {
     const messages = (value: unknown) => schema.safeParse(value).error?.issues.map((issue) => issue.message) ?? [];

@@ -6,18 +6,8 @@ import {
   type RfqAssignment,
 } from '@partledger/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
-import {
-  buttonVariants,
-  Checkbox,
-  cn,
-  EmptyState,
-  GridLegend,
-  Mono,
-  raisedSurface,
-  StateBadge,
-  useTranslate,
-} from '@partledger/ui';
-import { getRouteApi, Link, useNavigate } from '@tanstack/react-router';
+import { Checkbox, cn, EmptyState, GridLegend, Mono, raisedSurface, StateBadge, useTranslate } from '@partledger/ui';
+import { getRouteApi, useNavigate } from '@tanstack/react-router';
 import { InfoIcon } from 'lucide-react';
 import { useId, useRef, useState } from 'react';
 import { Controller, useForm, type Control } from 'react-hook-form';
@@ -34,8 +24,7 @@ import {
   assignmentFormFrom,
   assignmentFormSchema,
   canInvite,
-  publishedPreview,
-  withInvitations,
+  submitAssignment,
   type AssignmentFormValues,
   type AssignmentIntent,
 } from './assignment-form';
@@ -73,6 +62,7 @@ function AssignmentView({ assignment }: { assignment: RfqAssignment }) {
     shouldFocusError: true,
   });
   const [outcome, setOutcome] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const status = useRef<HTMLParagraphElement>(null);
   const editable = assignment.allowedTransitions.includes('assign');
   const save = actionAvailability(assignment, 'assign', preview !== null, notYetAvailableKey);
@@ -81,22 +71,20 @@ function AssignmentView({ assignment }: { assignment: RfqAssignment }) {
   const submit = (next: AssignmentIntent) => {
     intent.current = next;
     setOutcome(null);
+    setFailed(false);
     void form.handleSubmit(async (values) => {
-      if (preview === null) {
-        return;
-      }
-      const detail = await client.query(rfqDetailQuery, { rfqId: assignment.rfqId });
-      if (!detail.ok) {
-        return;
-      }
-      if (next === 'save') {
-        await preview.save({ detail: detail.value, assignment: withInvitations(assignment, values) });
+      const result = await submitAssignment(next, assignment, values, {
+        readDetail: () => client.query(rfqDetailQuery, { rfqId: assignment.rfqId }),
+        save: preview === null ? null : (change) => preview.save(change),
+      });
+      if (result === 'failed') {
+        setFailed(true);
+      } else if (result === 'saved') {
         setOutcome(translate('pl.rfqs.assignment.saved'));
         status.current?.focus();
-        return;
+      } else {
+        await navigate({ to: '/rfqs/$rfqId', params: { rfqId: assignment.rfqId }, search: {} });
       }
-      await preview.save(publishedPreview(assignment, detail.value, values));
-      await navigate({ to: '/rfqs/$rfqId', params: { rfqId: assignment.rfqId }, search: {} });
     })();
   };
 
@@ -127,11 +115,7 @@ function AssignmentView({ assignment }: { assignment: RfqAssignment }) {
         <EmptyState
           titleKey="pl.rfqs.assignment.empty.title"
           descriptionKey="pl.rfqs.assignment.empty.description"
-          action={
-            <Link to="/suppliers" className={buttonVariants({ variant: 'secondary' })}>
-              {translate('pl.rfqs.assignment.empty.action')}
-            </Link>
-          }
+          action={null}
         />
       ) : (
         <>
@@ -180,6 +164,11 @@ function AssignmentView({ assignment }: { assignment: RfqAssignment }) {
             <p ref={status} role="status" tabIndex={-1} className="text-sm font-medium text-success outline-hidden">
               {outcome}
             </p>
+            {failed ? (
+              <p role="alert" className="text-sm font-medium text-danger">
+                {translate('pl.rfqs.assignment.saveFailed')}
+              </p>
+            ) : null}
           </form>
         </>
       )}

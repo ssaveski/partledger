@@ -213,7 +213,7 @@
   "pl.rfqs.drift.change.revision": "Revision {snapshot} is now {current}",
   "pl.rfqs.drift.change.description": "Description is now {current}",
   "pl.rfqs.drift.change.unit": "Unit {snapshot} is now {current}",
-  "pl.rfqs.drift.notice": "An import changed a part after this RFQ was published. Suppliers still quote the published line; amend it if the change matters.",
+  "pl.rfqs.drift.notice": "An import changed a part after this RFQ was published. Suppliers still quote the published line. To have them quote the part as it is now, amend the line and re-issue it at the current part; answers to it then become stale.",
   "pl.rfqs.detail.column.quantityBreaks": "Quantity breaks",
   "pl.rfqs.detail.column.drift": "Part changes",
   "pl.rfqs.detail.noBreaks": "None",
@@ -304,5 +304,8 @@
   "pl.rfqs.builder.error.noLines": "Add at least one part.",
   "pl.rfqs.assignment.empty.title": "No suppliers to invite",
   "pl.rfqs.assignment.empty.description": "Suppliers arrive through an import with their approved scope. Once they do, you can invite them to each line here.",
-  "pl.rfqs.assignment.empty.action": "See suppliers"
+  "pl.rfqs.amend.reissue": "Re-issue at the current part ({changes})",
+  "pl.rfqs.amend.reissueHint": "Suppliers then quote the part as it is now. Leave this unticked to keep the published snapshot.",
+  "pl.rfqs.extend.error.reasonTooLong": "Keep the reason to 1,000 characters or fewer.",
+  "pl.rfqs.assignment.saveFailed": "The invitations could not be saved because the RFQ did not load. Try again."
 }

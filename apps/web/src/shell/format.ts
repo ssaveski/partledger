@@ -57,9 +57,21 @@ export function shortHash(hash: string): string {
   return hash.slice(0, 12);
 }
 
-/** Server params may carry flags; messages interpolate text and numbers only. */
+const calendarDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Server params may carry flags and calendar dates; messages interpolate text and numbers only,
+ * and a date reads as the screen shows dates elsewhere, so every reader hears the same date.
+ */
 export function messageParams(params: ErrorParams): MessageParams {
   return Object.fromEntries(
-    Object.entries(params).map(([name, value]) => [name, typeof value === 'boolean' ? String(value) : value]),
+    Object.entries(params).map(([name, value]) => [
+      name,
+      typeof value === 'boolean'
+        ? String(value)
+        : typeof value === 'string' && calendarDatePattern.test(value)
+          ? formatDate(value)
+          : value,
+    ]),
   );
 }

@@ -20,7 +20,7 @@ import { ActionButton } from '../../shell/action-button';
 import { useDocumentTitle } from '../../shell/document-title';
 import { formatDate, formatInstantUtc, formatNumber } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
-import { driftStates } from './drift-states';
+import { DriftCell } from './drift-cell';
 import { AmendDialog, ExtendDeadlineDialog } from './rfq-change-dialogs';
 import { withAmendment, withExtendedDeadline, type AmendForm, type ExtendForm } from './rfq-changes';
 import { Fact, RfqHeader } from './rfq-header';
@@ -282,26 +282,6 @@ function ResponsesSection({ detail }: { detail: RfqDetail }) {
 }
 
 type DetailLine = RfqDetail['lines'][number];
-
-/** A drifted line says what changed; the snapshot suppliers quote stays as published (R8). */
-function DriftCell({ drift }: { drift: DetailLine['drift'] }) {
-  const translate = useTranslate();
-  if (drift === null) {
-    return <StateBadge state={driftStates.unchanged} showLabel className="text-muted" />;
-  }
-  return (
-    <span className="inline-flex items-center gap-2">
-      <StateBadge state={driftStates.drifted} showLabel />
-      <span className="text-sm text-muted">
-        {drift.changes
-          .map((change) =>
-            translate(`pl.rfqs.drift.change.${change.field}`, { snapshot: change.snapshot, current: change.current }),
-          )
-          .join('; ')}
-      </span>
-    </span>
-  );
-}
 
 const lineHelper = createGridColumnHelper<DetailLine>();
 

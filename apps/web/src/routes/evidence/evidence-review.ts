@@ -17,7 +17,7 @@ export function deviationFormSchema(limits: Pick<ReviewQueue, 'asOf' | 'maxDevia
       .string()
       .trim()
       .min(1, 'pl.evidence.deviation.error.reason')
-      .max(reasonMaxLength, 'pl.evidence.deviation.error.reason'),
+      .max(reasonMaxLength, 'pl.evidence.deviation.error.reasonTooLong'),
     expiresOn: dateSchema('pl.evidence.deviation.error.until', [
       { test: (date) => date > limits.asOf, message: 'pl.evidence.deviation.error.untilPast' },
       { test: (date) => date <= limits.maxDeviationUntil, message: 'pl.evidence.deviation.error.untilTooLate' },
@@ -34,11 +34,27 @@ export function gapKey(gap: Pick<EvidenceGap, 'supplier' | 'evidenceType'>): str
 }
 
 /**
- * The preview's stand-in for confirming or rejecting (U15): the document leaves the queue.
- * Against the API the screen reads the queue again instead.
+ * The preview's stand-in for confirming (U15): the document leaves the queue. Against the API the
+ * screen reads the queue again instead.
  */
 export function withoutDocument(queue: ReviewQueue, documentId: string): ReviewQueue {
   return { ...queue, documents: queue.documents.filter((document) => document.documentId !== documentId) };
+}
+
+/** What rejecting sends: the document and the reason the supplier is told, in the command's shape. */
+export const rejectionSchema = z.object({
+  documentId: z.uuid(),
+  reason: z.string().trim().min(1).max(reasonMaxLength),
+});
+
+export type Rejection = z.output<typeof rejectionSchema>;
+
+/**
+ * The preview's stand-in for rejecting (U15). It takes the whole rejection, reason included, so
+ * wiring the command changes the call and not what the screen collects.
+ */
+export function withRejection(queue: ReviewQueue, rejection: Rejection): ReviewQueue {
+  return rejectionSchema.safeParse(rejection).success ? withoutDocument(queue, rejection.documentId) : queue;
 }
 
 /**

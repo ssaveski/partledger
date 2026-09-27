@@ -1,15 +1,6 @@
 import { partCategories, partListQuery, type PartList, type PartSummary } from '@partledger/contracts';
-import {
-  Button,
-  buttonVariants,
-  createGridColumnHelper,
-  DataGrid,
-  EmptyState,
-  Mono,
-  StateBadge,
-  useTranslate,
-} from '@partledger/ui';
-import { getRouteApi, Link } from '@tanstack/react-router';
+import { Button, createGridColumnHelper, DataGrid, EmptyState, Mono, StateBadge, useTranslate } from '@partledger/ui';
+import { getRouteApi } from '@tanstack/react-router';
 import { useMemo, useState } from 'react';
 
 import { useApiQuery } from '../../api/api-client';
@@ -97,11 +88,7 @@ function PartListView({ list }: { list: PartList }) {
         <EmptyState
           titleKey="pl.parts.list.empty.title"
           descriptionKey="pl.parts.list.empty.description"
-          action={
-            <Link to="/" className={buttonVariants({ variant: 'secondary' })}>
-              {translate('pl.parts.list.empty.action')}
-            </Link>
-          }
+          action={null}
         />
       ) : (
         <section aria-label={translate('pl.parts.list.gridLabel')} className="flex flex-col gap-3">

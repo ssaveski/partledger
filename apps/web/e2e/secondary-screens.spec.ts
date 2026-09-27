@@ -89,7 +89,7 @@ test.describe('designed states', () => {
       await expectNoAxeViolations(page);
     });
 
-    test(`the ${screen.name} shows its empty state with a next action, never an empty grid`, async ({ page }) => {
+    test(`the ${screen.name} shows its empty state, never an empty grid`, async ({ page }) => {
       await page.goto(`${screen.path}?preview=empty`);
       await expect(page.getByRole('heading', { name: screen.empty })).toBeVisible();
       await expect(page.getByRole('grid')).toHaveCount(0);
@@ -164,7 +164,10 @@ test.describe('overview and lists', () => {
     const suppliers = page.getByRole('region', { name: 'Suppliers needing attention' });
     await expect(suppliers).toContainText('Birchfield Precision');
     await expect(suppliers).toContainText('Expires within 60 days');
-    await expect(page.getByRole('region', { name: 'Evidence', exact: true })).toContainText('Awaiting confirmation');
+    const evidence = page.getByRole('region', { name: 'Evidence', exact: true });
+    const tile = (label: string) => evidence.getByRole('term').filter({ hasText: label }).locator('xpath=..');
+    await expect(tile('Awaiting confirmation, expiring within 60 days').getByRole('definition')).toHaveText('1');
+    await expect(evidence.getByRole('definition').first()).toHaveText('5');
   });
 
   test('the RFQ list sorts and filters by status, and flags drifted lines', async ({ page }) => {
@@ -223,8 +226,21 @@ test.describe('overview and lists', () => {
     await expect(row('Arbor Fasteners').locator('[data-state-badge="identityNotChecked"]')).toHaveText('Not checked');
     await expect(page.getByText('Your approved-supplier list mirrors your ERP')).toBeVisible();
 
+    await expect(row('Northwind Castings').locator('[data-state-badge="approvalCurrent"]')).toHaveText('Current');
+    await expect(row('Northwind Castings')).toContainText('NOR-0101 · CA');
+    await expect(page.locator('[data-legend-entry="approvalExpiringSoon"]')).toHaveText('Expires within 60 days');
+    await expect(page.locator('[data-legend-entry="identityMismatch"]')).toHaveText('Register names someone else');
+
     await page.getByRole('searchbox', { name: 'Search by name or code' }).fill('nor-0101');
     await expect(grid.getByRole('rowheader')).toHaveText(['Northwind Castings']);
+  });
+
+  test('the supplier grid fits a 1280-pixel window without scrolling sideways', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('/suppliers');
+    const container = page.getByRole('grid', { name: 'Suppliers' }).locator('xpath=..');
+    const overflow = await container.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 });
 
@@ -353,10 +369,14 @@ test.describe('RFQ detail changes', () => {
   });
 
   test('amending a line creates the next version and says answers to it become stale', async ({ page }) => {
+    await page.goto(detail(rfq.closed));
+    await expect(page.getByRole('button', { name: 'Amend a line' })).toHaveCount(0);
     await page.goto(detail(rfq.open));
     await page.getByRole('button', { name: 'Amend a line' }).click();
     const dialog = page.getByRole('dialog', { name: 'Amend a line' });
     await expect(dialog).toContainText('Answers to this line become stale until each supplier responds again.');
+    await dialog.getByRole('combobox', { name: 'Line' }).click();
+    await page.getByRole('option', { name: 'Line 1: PN-10432 rev C' }).click();
     await dialog.getByRole('button', { name: 'Amend', exact: true }).click();
     await expect(dialog.getByText('Change the quantity or the required date to amend the line.')).toBeVisible();
     await dialog.getByRole('textbox', { name: 'Quantity' }).fill('250');
@@ -364,6 +384,28 @@ test.describe('RFQ detail changes', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Line 1 amended; this is now version 3.' })).toBeVisible();
     const lines = page.getByRole('grid', { name: 'Lines of RFQ-1042' });
     await expect(lines.getByRole('row').nth(1)).toContainText('250');
+  });
+
+  test('amending opens on the drifted line and re-issues it at the current part', async ({ page }) => {
+    await page.goto(detail(rfq.open));
+    await expect(page.getByText('amend the line and re-issue it at the current part')).toBeVisible();
+    await page.getByRole('button', { name: 'Amend a line' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Amend a line' });
+    await expect(dialog.getByRole('combobox', { name: 'Line' })).toHaveText(/Line 3: PN-20877 rev B/);
+    const reissue = dialog.getByRole('checkbox', { name: 'Re-issue at the current part (Revision B is now C)' });
+    await expect(reissue).toBeChecked();
+    await reissue.click();
+    await dialog.getByRole('button', { name: 'Amend', exact: true }).click();
+    await expect(dialog.getByText('Change the quantity or the required date to amend the line.')).toBeVisible();
+    await reissue.click();
+    await dialog.getByRole('button', { name: 'Amend', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Line 3 amended; this is now version 3.' })).toBeVisible();
+    const shaft = page
+      .getByRole('grid', { name: 'Lines of RFQ-1042' })
+      .getByRole('row')
+      .filter({ hasText: 'PN-20877' });
+    await expect(shaft).toContainText('No change');
+    await expect(shaft.getByRole('gridcell', { name: 'C', exact: true })).toBeVisible();
   });
 
   test('a drifted line says what changed and keeps its published snapshot', async ({ page }) => {
@@ -449,7 +491,7 @@ test.describe('evidence review', () => {
     const arbor = gaps.getByRole('row').filter({ has: page.getByRole('rowheader', { name: 'Arbor Fasteners' }) });
     await expect(arbor).toContainText('Covered by a deviation');
     await expect(arbor.getByRole('button', { name: /^Record deviation/ })).toHaveAccessibleDescription(
-      'An active deviation already covers this gap until 2026-11-30.',
+      'An active deviation already covers this gap until Nov 30, 2026.',
     );
 
     const kestrel = gaps.getByRole('row').filter({ has: page.getByRole('rowheader', { name: 'Kestrel Machining' }) });

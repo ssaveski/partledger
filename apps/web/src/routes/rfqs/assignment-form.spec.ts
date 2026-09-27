@@ -1,8 +1,14 @@
-import { rfqAssignmentSchema, rfqDetailSchema } from '@partledger/contracts';
+import { rfqAssignmentSchema, rfqDetailSchema, type RfqAssignment, type RfqDetail } from '@partledger/contracts';
 import { fixtureRfqIds, fixtureSupplierIds, rfqFixtureOutputs } from '@partledger/contracts/fixtures';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { assignmentFormFrom, assignmentFormSchema, canInvite, publishedPreview } from './assignment-form';
+import {
+  assignmentFormFrom,
+  assignmentFormSchema,
+  canInvite,
+  publishedPreview,
+  submitAssignment,
+} from './assignment-form';
 
 function fixture(rfqId: string) {
   const assignment = rfqFixtureOutputs.assignments.find((output) => output.rfqId === rfqId);
@@ -67,5 +73,38 @@ describe('the supplier assignment form', () => {
     const assignment = rfqAssignmentSchema.parse(published.assignment);
     expect(assignment.allowedTransitions).toEqual([]);
     expect(assignment.lines[1]?.candidates.filter((candidate) => candidate.assigned)).toHaveLength(2);
+  });
+});
+
+describe('submitting the assignment', () => {
+  const values = assignmentFormFrom(draft.assignment);
+
+  it('fails, saving nothing, when the RFQ cannot be read', async () => {
+    const save = vi.fn(() => Promise.resolve());
+    const outcome = await submitAssignment('publish', draft.assignment, values, {
+      readDetail: () => Promise.resolve({ ok: false, failure: { kind: 'unavailable' } }),
+      save,
+    });
+    expect(outcome).toBe('failed');
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('fails when there is no preview to write to', async () => {
+    const outcome = await submitAssignment('save', draft.assignment, values, {
+      readDetail: () => Promise.resolve({ ok: true, value: draft.detail }),
+      save: null,
+    });
+    expect(outcome).toBe('failed');
+  });
+
+  it('saves the invitations, or publishes them with an open detail', async () => {
+    const save = vi.fn<(change: { detail: RfqDetail; assignment: RfqAssignment }) => Promise<void>>(() =>
+      Promise.resolve(),
+    );
+    const dependencies = { readDetail: () => Promise.resolve({ ok: true as const, value: draft.detail }), save };
+    expect(await submitAssignment('save', draft.assignment, values, dependencies)).toBe('saved');
+    expect(save.mock.lastCall?.[0].detail.status).toBe('draft');
+    expect(await submitAssignment('publish', draft.assignment, values, dependencies)).toBe('published');
+    expect(save.mock.lastCall?.[0].detail.status).toBe('published');
   });
 });

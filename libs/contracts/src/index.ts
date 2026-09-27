@@ -108,6 +108,7 @@ export {
   partListSchema,
   partQueries,
   partSources,
+  partUnits,
   partSummarySchema,
   type PartCategory,
   type PartList,
@@ -133,6 +134,7 @@ export {
   type AssignmentLine,
   type RfqAssignment,
 } from './rfqs/assignment';
+export { rfqModuleQueries } from './rfqs/module';
 export {
   alternateOfferSchema,
   approvalNotSubmittedSchema,

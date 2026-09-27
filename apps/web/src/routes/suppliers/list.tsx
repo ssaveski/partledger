@@ -1,21 +1,21 @@
 import { approvalStatuses, supplierListQuery, type SupplierList, type SupplierSummary } from '@partledger/contracts';
 import {
   Button,
-  buttonVariants,
   createGridColumnHelper,
   DataGrid,
   EmptyState,
+  GridLegend,
   Mono,
   StateBadge,
   useTranslate,
 } from '@partledger/ui';
-import { getRouteApi, Link } from '@tanstack/react-router';
+import { getRouteApi } from '@tanstack/react-router';
 import { InfoIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { useApiQuery } from '../../api/api-client';
 import { useDocumentTitle } from '../../shell/document-title';
-import { formatDate, formatInstantUtc } from '../../shell/format';
+import { formatDate } from '../../shell/format';
 import { FilterBar, SearchFilter, SelectFilter } from '../../shell/list-filters';
 import { QueryView } from '../../shell/query-view';
 import { searchValue } from '../../shell/text-filter';
@@ -26,6 +26,9 @@ import { approvalExpiryStates, approvalStates, identityStates } from './supplier
 const route = getRouteApi('/suppliers');
 
 const anyApproval = 'all';
+
+// Keys the expiry and identity icons, which repeat down their columns.
+const legendStates = [...Object.values(approvalExpiryStates), ...Object.values(identityStates)];
 
 export function SupplierListScreen() {
   const query = useApiQuery(supplierListQuery, {});
@@ -49,13 +52,17 @@ function SupplierListView({ list }: { list: SupplierList }) {
     () =>
       helper.columns([
         helper.accessor('name', { header: () => translate('pl.suppliers.list.column.name') }),
-        helper.accessor('code', {
+        helper.accessor((supplier) => `${supplier.code} ${supplier.country}`, {
+          id: 'code',
           header: () => translate('pl.suppliers.list.column.code'),
-          cell: ({ getValue }) => <Mono>{getValue()}</Mono>,
-        }),
-        helper.accessor('country', {
-          header: () => translate('pl.suppliers.list.column.country'),
-          cell: ({ getValue }) => <Mono>{getValue()}</Mono>,
+          cell: ({ row }) => (
+            <Mono>
+              {translate('pl.suppliers.list.codeAndCountry', {
+                code: row.original.code,
+                country: row.original.country,
+              })}
+            </Mono>
+          ),
         }),
         helper.accessor((supplier) => supplier.approval.status, {
           id: 'approval',
@@ -73,7 +80,7 @@ function SupplierListView({ list }: { list: SupplierList }) {
               return scope === '' ? (
                 <span className="text-muted">{translate('pl.suppliers.list.noScope')}</span>
               ) : (
-                scope
+                <span className="block min-w-36 whitespace-normal">{scope}</span>
               );
             },
           },
@@ -85,16 +92,18 @@ function SupplierListView({ list }: { list: SupplierList }) {
           cell: ({ row }) => {
             const { expiresOn, expiry } = row.original.approval;
             return (
-              <span className="inline-flex items-center gap-2">
+              <span className="flex flex-col gap-0.5 py-1">
                 {expiresOn === null ? null : <Mono>{formatDate(expiresOn)}</Mono>}
-                <StateBadge state={approvalExpiryStates[expiry]} showLabel={expiry !== 'current'} />
+                <StateBadge state={approvalExpiryStates[expiry]} showLabel />
               </span>
             );
           },
         }),
         helper.accessor('evidence', {
           header: () => translate('pl.suppliers.list.column.evidence'),
-          cell: ({ getValue }) => <StateBadge state={evidenceStates[getValue()]} showLabel />,
+          cell: ({ getValue }) => (
+            <StateBadge state={evidenceStates[getValue()]} showLabel className="whitespace-normal" />
+          ),
         }),
         helper.accessor((supplier) => supplier.identityCheck.status, {
           id: 'identity',
@@ -102,13 +111,13 @@ function SupplierListView({ list }: { list: SupplierList }) {
           cell: ({ row }) => {
             const check = row.original.identityCheck;
             return (
-              <span className="inline-flex items-center gap-2">
+              <span className="flex flex-col gap-0.5 py-1">
                 <StateBadge state={identityStates[check.status]} showLabel />
                 {check.register === null || check.checkedAt === null ? null : (
                   <span className="text-xs text-muted">
                     {translate('pl.suppliers.identity.checkedAt', {
                       register: translate(`pl.suppliers.register.${check.register}`),
-                      instant: formatInstantUtc(check.checkedAt),
+                      date: formatDate(check.checkedAt.slice(0, 10)),
                     })}
                   </span>
                 )}
@@ -138,11 +147,7 @@ function SupplierListView({ list }: { list: SupplierList }) {
         <EmptyState
           titleKey="pl.suppliers.list.empty.title"
           descriptionKey="pl.suppliers.list.empty.description"
-          action={
-            <Link to="/" className={buttonVariants({ variant: 'secondary' })}>
-              {translate('pl.suppliers.list.empty.action')}
-            </Link>
-          }
+          action={null}
         />
       ) : (
         <section aria-label={translate('pl.suppliers.list.gridLabel')} className="flex flex-col gap-3">
@@ -169,6 +174,7 @@ function SupplierListView({ list }: { list: SupplierList }) {
           <p role="status" className="text-sm text-muted">
             {translate('pl.suppliers.list.count', { shown: suppliers.length, total: list.suppliers.length })}
           </p>
+          <GridLegend states={legendStates} />
           {suppliers.length === 0 && hasSupplierFilters(search) ? (
             <EmptyState
               titleKey="pl.suppliers.list.noMatch.title"

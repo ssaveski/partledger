@@ -15,11 +15,10 @@ import { navigationLinkClasses } from '../shell/app-shell';
 import { useDocumentTitle } from '../shell/document-title';
 import { formatInstantUtc, formatNumber } from '../shell/format';
 import { SectionQueryView } from '../shell/query-view';
-import { documentExpiryStates } from './evidence/evidence-states';
 import { PreviewScenarios } from './home';
 import { evidenceStates } from './rfqs/comparison-states';
 import { driftStates } from './rfqs/drift-states';
-import { closingNext, dashboardCounts, suppliersNeedingAttention } from './dashboard-summary';
+import { closingNext, dashboardCounts, evidenceCounts, suppliersNeedingAttention } from './dashboard-summary';
 import { approvalExpiryStates } from './suppliers/supplier-states';
 
 /**
@@ -172,19 +171,14 @@ function EvidenceSection() {
 
 function EvidenceSummary({ queue }: { queue: ReviewQueue }) {
   const translate = useTranslate();
-  const uncovered = queue.gaps.filter((gap) => gap.deviation === null).length;
-  const expiring = queue.documents.filter((document) => document.expiry === 'expiringSoon').length;
+  const counts = evidenceCounts(queue);
   if (queue.documents.length === 0 && queue.gaps.length === 0) {
     return (
       <EmptyState
         headingLevel={3}
         titleKey="pl.web.dashboard.evidence.empty.title"
         descriptionKey="pl.web.dashboard.evidence.empty.description"
-        action={
-          <Link to="/suppliers" className={buttonVariants({ variant: 'secondary' })}>
-            {translate('pl.web.dashboard.evidence.empty.action')}
-          </Link>
-        }
+        action={null}
       />
     );
   }
@@ -192,17 +186,11 @@ function EvidenceSummary({ queue }: { queue: ReviewQueue }) {
     <>
       <Counts
         items={[
-          { labelKey: 'pl.web.dashboard.evidence.awaiting', count: queue.documents.length },
-          { labelKey: 'pl.web.dashboard.evidence.expiring', count: expiring },
-          { labelKey: 'pl.web.dashboard.evidence.uncovered', count: uncovered },
+          { labelKey: 'pl.web.dashboard.evidence.awaiting', count: counts.awaiting },
+          { labelKey: 'pl.web.dashboard.evidence.awaitingExpiring', count: counts.awaitingExpiring },
+          { labelKey: 'pl.web.dashboard.evidence.uncovered', count: counts.uncovered },
         ]}
       />
-      {expiring === 0 ? null : (
-        <p className="flex items-center gap-2 text-sm">
-          <StateBadge state={documentExpiryStates.expiringSoon} />
-          {translate('pl.web.dashboard.evidence.expiringNotice', { count: expiring })}
-        </p>
-      )}
       <Link to="/evidence" className={cn(navigationLinkClasses, '-ml-2 self-start')}>
         {translate('pl.web.dashboard.evidence.review')}
       </Link>
@@ -230,11 +218,7 @@ function SupplierSummaryList({ list }: { list: SupplierList }) {
         headingLevel={3}
         titleKey="pl.web.dashboard.suppliers.empty.title"
         descriptionKey="pl.web.dashboard.suppliers.empty.description"
-        action={
-          <Link to="/parts" className={buttonVariants({ variant: 'secondary' })}>
-            {translate('pl.web.dashboard.suppliers.empty.action')}
-          </Link>
-        }
+        action={null}
       />
     );
   }

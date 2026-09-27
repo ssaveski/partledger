@@ -14,8 +14,7 @@
   "pl.suppliers.identity.notApplicable": "No register applies",
   "pl.suppliers.register.vies": "EU VAT register",
   "pl.suppliers.register.lei": "LEI register",
-  "pl.suppliers.identity.checkedAt": "{register}, {instant} UTC",
-
+  "pl.suppliers.identity.checkedAt": "{register}, {date}",
   "pl.suppliers.list.title": "Suppliers",
   "pl.suppliers.list.loading": "Loading the suppliers…",
   "pl.suppliers.list.source.erp": "Your approved-supplier list mirrors your ERP, so approvals are read-only here.",
@@ -24,25 +23,21 @@
   "pl.suppliers.list.gridLabel": "Suppliers",
   "pl.suppliers.list.count": "Showing {shown} of {total} suppliers.",
   "pl.suppliers.list.column.name": "Supplier",
-  "pl.suppliers.list.column.code": "Code",
-  "pl.suppliers.list.column.country": "Country",
+  "pl.suppliers.list.column.code": "Code, country",
   "pl.suppliers.list.column.approval": "Approval",
   "pl.suppliers.list.column.scope": "Approved scope",
   "pl.suppliers.list.column.expires": "Approval ends",
   "pl.suppliers.list.column.evidence": "Evidence",
   "pl.suppliers.list.column.identity": "Identity check",
   "pl.suppliers.list.noScope": "None",
-  "pl.suppliers.list.noEndDate": "No end date",
   "pl.suppliers.list.empty.title": "No suppliers yet",
   "pl.suppliers.list.empty.description": "Suppliers arrive through a spreadsheet import or your ERP's export drop, with their approved scope and expiry.",
-  "pl.suppliers.list.empty.action": "Go to the overview",
   "pl.suppliers.list.noMatch.title": "No suppliers match these filters",
   "pl.suppliers.list.noMatch.description": "Try a shorter search, or show every approval status.",
   "pl.suppliers.list.noMatch.action": "Clear filters",
-  "pl.suppliers.legend.label": "Badges",
-
   "pl.suppliers.filter.label": "Filter suppliers",
   "pl.suppliers.filter.search": "Search by name or code",
   "pl.suppliers.filter.approval": "Approval",
-  "pl.suppliers.filter.allApprovals": "Any approval status"
+  "pl.suppliers.filter.allApprovals": "Any approval status",
+  "pl.suppliers.list.codeAndCountry": "{code} · {country}"
 }

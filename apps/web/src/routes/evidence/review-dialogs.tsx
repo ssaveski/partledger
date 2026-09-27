@@ -173,6 +173,7 @@ function DeviationFormFields({
         registration={form.register('reason')}
         error={errors.reason}
         errorParams={params}
+        maxLength={reasonMaxLength}
         required
       />
       <TextField

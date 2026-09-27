@@ -1,8 +1,8 @@
-import { rfqListSchema, supplierListSchema } from '@partledger/contracts';
-import { rfqFixtureOutputs, supplierFixtureOutputs } from '@partledger/contracts/fixtures';
+import { reviewQueueSchema, rfqListSchema, supplierListSchema } from '@partledger/contracts';
+import { evidenceFixtureOutputs, rfqFixtureOutputs, supplierFixtureOutputs } from '@partledger/contracts/fixtures';
 import { describe, expect, it } from 'vitest';
 
-import { closingNext, dashboardCounts, suppliersNeedingAttention } from './dashboard-summary';
+import { closingNext, dashboardCounts, evidenceCounts, suppliersNeedingAttention } from './dashboard-summary';
 
 const rfqs = rfqListSchema.parse(rfqFixtureOutputs.list);
 
@@ -29,5 +29,10 @@ describe('the overview', () => {
       'Halden Electronics',
       'Kestrel Machining',
     ]);
+  });
+
+  it('counts expiring documents among those awaiting confirmation only, and gaps without a deviation', () => {
+    const queue = reviewQueueSchema.parse(evidenceFixtureOutputs.reviewQueue);
+    expect(evidenceCounts(queue)).toEqual({ awaiting: 5, awaitingExpiring: 1, uncovered: 2 });
   });
 });

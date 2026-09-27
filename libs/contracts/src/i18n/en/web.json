@@ -69,18 +69,15 @@
   "pl.web.dashboard.evidence.title": "Evidence",
   "pl.web.dashboard.evidence.loading": "Loading the evidence queue…",
   "pl.web.dashboard.evidence.awaiting": "Awaiting confirmation",
-  "pl.web.dashboard.evidence.expiring": "Expiring within 60 days",
   "pl.web.dashboard.evidence.uncovered": "Gaps without a deviation",
-  "pl.web.dashboard.evidence.expiringNotice": "Documents awaiting confirmation that expire within 60 days: {count}.",
   "pl.web.dashboard.evidence.review": "Review evidence",
   "pl.web.dashboard.evidence.empty.title": "Nothing to review",
   "pl.web.dashboard.evidence.empty.description": "No document awaits confirmation and no approved supplier lacks required evidence.",
-  "pl.web.dashboard.evidence.empty.action": "See suppliers",
   "pl.web.dashboard.suppliers.title": "Suppliers needing attention",
   "pl.web.dashboard.suppliers.loading": "Loading the suppliers…",
   "pl.web.dashboard.suppliers.allClear": "No supplier's approval or evidence has expired or ends within 60 days.",
   "pl.web.dashboard.suppliers.all": "All suppliers",
   "pl.web.dashboard.suppliers.empty.title": "No suppliers yet",
   "pl.web.dashboard.suppliers.empty.description": "Suppliers arrive through an import with their approved scope and expiry.",
-  "pl.web.dashboard.suppliers.empty.action": "See parts"
+  "pl.web.dashboard.evidence.awaitingExpiring": "Awaiting confirmation, expiring within 60 days"
 }

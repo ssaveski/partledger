@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   amendFormFor,
   amendFormSchema,
+  amendTarget,
   emptyExtendForm,
   extendFormSchema,
   withAmendment,
@@ -44,6 +45,18 @@ describe('extending the deadline', () => {
     expect(extended.status).toBe('published');
     expect(extended.deadline).toBe('2026-10-16T16:00:00Z');
   });
+
+  it('gives a reopened RFQ the transitions of an open one, so it can be extended again', () => {
+    const closed = detailOf(fixtureRfqIds.closed);
+    const extended = withExtendedDeadline(closed, { deadline: '2026-10-16T16:00:00Z', reason: 'More time.' });
+    expect(extended.allowedTransitions).toEqual(['amend', 'extendDeadline', 'close', 'cancel']);
+    expect(extended.blockingReasons.map((reason) => reason.transition)).toEqual(['publish']);
+  });
+
+  it('refuses a reason longer than the field allows with its own message', () => {
+    const result = extendFormSchema(open, now).safeParse({ deadline: '2026-10-16T16:00', reason: 'x'.repeat(1001) });
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual(['pl.rfqs.extend.error.reasonTooLong']);
+  });
 });
 
 describe('amending a line', () => {
@@ -51,7 +64,12 @@ describe('amending a line', () => {
 
   it('starts from the line as published and refuses leaving it unchanged', () => {
     const values = amendFormFor(first);
-    expect(values).toEqual({ lineId: first?.lineId, quantity: '200', requiredBy: '2026-12-04' });
+    expect(values).toEqual({
+      lineId: first?.lineId,
+      quantity: '200',
+      requiredBy: '2026-12-04',
+      reissueAtCurrentPart: false,
+    });
     expect(amendFormSchema(open).safeParse(values).error?.issues[0]?.message).toBe('pl.rfqs.amend.error.unchanged');
   });
 
@@ -66,5 +84,30 @@ describe('amending a line', () => {
     expect(amended.version).toBe(open.version + 1);
     expect(amended.lines[0]?.quantity).toBe(250);
     expect(amended.lines.slice(1)).toEqual(open.lines.slice(1));
+  });
+
+  it('starts on the first line whose part drifted, re-issuing it at the current part', () => {
+    const target = amendTarget(open);
+    expect(target?.partNumber).toBe('PN-20877');
+    expect(amendFormFor(target).reissueAtCurrentPart).toBe(true);
+  });
+
+  it('re-issues a drifted line at the part current snapshot without other changes, clearing the drift', () => {
+    const form = amendFormSchema(open).parse(amendFormFor(amendTarget(open)));
+    const amended = withAmendment(open, form);
+    const line = amended.lines.find((candidate) => candidate.partNumber === 'PN-20877');
+    expect(line?.revision).toBe('C');
+    expect(line?.drift).toBeNull();
+    expect(amended.version).toBe(open.version + 1);
+  });
+
+  it('keeps the published snapshot when the buyer does not re-issue', () => {
+    const values = { ...amendFormFor(amendTarget(open)), reissueAtCurrentPart: false, quantity: '150' };
+    const line = withAmendment(open, amendFormSchema(open).parse(values)).lines.find(
+      (candidate) => candidate.partNumber === 'PN-20877',
+    );
+    expect(line?.revision).toBe('B');
+    expect(line?.drift).not.toBeNull();
+    expect(line?.quantity).toBe(150);
   });
 });

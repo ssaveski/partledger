@@ -363,7 +363,7 @@ test.describe('approval packet', () => {
     await expect(page.getByText('The gate is blocked. Blocking reasons: 1.')).toBeVisible();
     const blocked = page.locator('[data-gate-check="evidence"]');
     await expect(blocked).toContainText('Blocked');
-    await expect(blocked).toContainText("Kestrel Machining's quality certificate QC-4471 expired on 2026-09-24.");
+    await expect(blocked).toContainText("Kestrel Machining's quality certificate QC-4471 expired on Sep 24, 2026.");
 
     const approve = page.getByRole('button', { name: 'Approve and seal' });
     await expect(approve).toBeDisabled();

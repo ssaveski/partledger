@@ -49,6 +49,23 @@ describe('the evidence review queue contract', () => {
     expect(undated?.validUntil).toBe('2027-09-15');
   });
 
+  it('dates a gap exactly when its evidence expired or was rejected, never when it is missing', () => {
+    const [missing] = evidenceFixtureOutputs.reviewQueue.gaps.filter((gap) => gap.problem === 'missing');
+    const [expired] = evidenceFixtureOutputs.reviewQueue.gaps.filter((gap) => gap.problem === 'expired');
+    const withGap = (gap: unknown) =>
+      reviewQueueSchema.safeParse({ ...evidenceFixtureOutputs.reviewQueue, gaps: [gap] });
+    expect(withGap(missing).success).toBe(true);
+    expect(withGap({ ...missing, since: '2026-09-01' }).success).toBe(false);
+    expect(withGap(expired).success).toBe(true);
+    expect(withGap({ ...expired, since: null }).success).toBe(false);
+  });
+
+  it('lets a deviation recorded today end after today', () => {
+    const queue = evidenceFixtureOutputs.reviewQueue;
+    expect(reviewQueueSchema.safeParse({ ...queue, maxDeviationUntil: queue.asOf }).success).toBe(false);
+    expect(reviewQueueSchema.safeParse({ ...queue, maxDeviationUntil: '2026-09-28' }).success).toBe(true);
+  });
+
   it('blocks a second deviation on a gap an active deviation covers', () => {
     for (const gap of queue.gaps) {
       expect(gap.allowedTransitions.includes('recordDeviation')).toBe(gap.deviation === null);

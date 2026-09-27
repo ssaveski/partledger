@@ -104,6 +104,7 @@ export function TextAreaField({
   error,
   errorParams,
   required = false,
+  maxLength,
 }: {
   label: string;
   description?: string;
@@ -111,11 +112,13 @@ export function TextAreaField({
   error: FormFieldError | undefined;
   errorParams?: MessageParams;
   required?: boolean;
+  /** The longest text the form accepts, so the field stops where the check would refuse. */
+  maxLength: number;
 }) {
   return (
     <Field invalid={error !== undefined}>
       <FieldLabel>{label}</FieldLabel>
-      <Textarea required={required} {...registration} />
+      <Textarea required={required} maxLength={maxLength} {...registration} />
       {description === undefined ? null : <FieldDescription>{description}</FieldDescription>}
       <FormError error={error} params={errorParams} />
     </Field>

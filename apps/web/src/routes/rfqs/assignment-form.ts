@@ -1,5 +1,38 @@
 import type { RfqAssignment, RfqDetail } from '@partledger/contracts';
+import type { ClientResult } from '@partledger/contracts/client';
 import { z } from 'zod';
+
+export type AssignmentOutcome = 'saved' | 'published' | 'failed';
+
+/**
+ * Saves or publishes the invitations through the preview: the detail is read first, since
+ * publishing opens it. A read that fails, or a preview that cannot write, is a failure the screen
+ * shows, never a silent no-op.
+ */
+export async function submitAssignment(
+  intent: AssignmentIntent,
+  assignment: RfqAssignment,
+  values: AssignmentFormValues,
+  dependencies: {
+    readonly readDetail: () => Promise<ClientResult<RfqDetail>>;
+    readonly save: ((change: { detail: RfqDetail; assignment: RfqAssignment }) => Promise<void>) | null;
+  },
+): Promise<AssignmentOutcome> {
+  if (dependencies.save === null) {
+    return 'failed';
+  }
+  const detail = await dependencies.readDetail();
+  if (!detail.ok) {
+    return 'failed';
+  }
+  if (intent === 'save') {
+    await dependencies.save({ detail: detail.value, assignment: withInvitations(assignment, values) });
+    return 'saved';
+  }
+  const published = publishedPreview(assignment, detail.value, values);
+  await dependencies.save({ detail: published.detail, assignment: published.assignment });
+  return 'published';
+}
 
 /** Which suppliers are invited to each line, in the assignment's line order. */
 export interface AssignmentFormValues {

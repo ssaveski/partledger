@@ -320,6 +320,7 @@ function driftOf(part: PartSpec) {
   const changes = [
     { field: 'revision' as const, snapshot: part.revision, current: current.revision },
     { field: 'description' as const, snapshot: part.description, current: current.description },
+    { field: 'unit' as const, snapshot: partFields(part).unit, current: current.unit },
   ].filter((change) => change.snapshot !== change.current);
   return changes.length === 0 ? null : { detectedAt: current.updatedAt, changes };
 }

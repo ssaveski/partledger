@@ -1,4 +1,4 @@
-import type { RfqList, RfqListRow, SupplierList, SupplierSummary } from '@partledger/contracts';
+import type { ReviewQueue, RfqList, RfqListRow, SupplierList, SupplierSummary } from '@partledger/contracts';
 
 export function dashboardCounts(list: RfqList): {
   readonly open: number;
@@ -30,4 +30,20 @@ export function suppliersNeedingAttention(list: SupplierList): SupplierSummary[]
       supplier.evidence === 'expiring' ||
       supplier.evidence === 'invalid',
   );
+}
+
+/**
+ * The evidence queue in numbers. The expiring count covers only documents awaiting confirmation;
+ * confirmed evidence that expires soon shows on the supplier card instead.
+ */
+export function evidenceCounts(queue: ReviewQueue): {
+  readonly awaiting: number;
+  readonly awaitingExpiring: number;
+  readonly uncovered: number;
+} {
+  return {
+    awaiting: queue.documents.length,
+    awaitingExpiring: queue.documents.filter((document) => document.expiry === 'expiringSoon').length,
+    uncovered: queue.gaps.filter((gap) => gap.deviation === null).length,
+  };
 }

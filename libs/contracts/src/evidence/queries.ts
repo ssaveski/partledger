@@ -115,7 +115,18 @@ export const evidenceGapSchema = lifecycleRead(
     })
     .strict(),
   gapTransitions,
-).describe('Required evidence of one type that a supplier lacks, and any deviation covering it.');
+)
+  // Missing evidence was never supplied, so it has no date; expired or rejected evidence has one.
+  .superRefine((gap, context) => {
+    if ((gap.since === null) !== (gap.problem === 'missing')) {
+      context.addIssue({
+        code: 'custom',
+        path: ['since'],
+        message: 'since is null exactly when the problem is missing',
+      });
+    }
+  })
+  .describe('Required evidence of one type that a supplier lacks, and any deviation covering it.');
 
 export type EvidenceGap = z.infer<typeof evidenceGapSchema>;
 
@@ -127,6 +138,15 @@ export const reviewQueueSchema = z
     gaps: z.array(evidenceGapSchema).describe('Evidence gaps of approved suppliers, by supplier name.'),
   })
   .strict()
+  .superRefine((queue, context) => {
+    if (queue.maxDeviationUntil <= queue.asOf) {
+      context.addIssue({
+        code: 'custom',
+        path: ['maxDeviationUntil'],
+        message: 'a deviation recorded today must be able to end after today',
+      });
+    }
+  })
   .describe('The evidence review queue.');
 
 export type ReviewQueue = z.infer<typeof reviewQueueSchema>;

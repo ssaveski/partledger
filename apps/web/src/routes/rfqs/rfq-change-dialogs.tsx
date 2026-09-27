@@ -2,6 +2,7 @@ import type { RfqDetail } from '@partledger/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   Button,
+  Checkbox,
   DialogClose,
   DialogFooter,
   Field,
@@ -12,16 +13,19 @@ import {
   SelectTrigger,
   useTranslate,
 } from '@partledger/ui';
-import type { RefObject } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { useId, type RefObject } from 'react';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 
 import { formatDate, formatInstantUtc } from '../../shell/format';
 import { FormDialog, FormError, TextAreaField, TextField } from '../../shell/form-dialog';
+import { driftSummary } from './drift-cell';
 import {
   amendFormFor,
   amendFormSchema,
+  amendTarget,
   emptyExtendForm,
   extendFormSchema,
+  extendReasonMaxLength,
   type AmendForm,
   type AmendFormInput,
   type ExtendForm,
@@ -89,6 +93,7 @@ function ExtendFormFields({ detail, onExtended }: { detail: RfqDetail; onExtende
         description={translate('pl.rfqs.extend.reasonHint')}
         registration={form.register('reason')}
         error={errors.reason}
+        maxLength={extendReasonMaxLength}
         required
       />
       <DialogFooter>
@@ -133,11 +138,15 @@ export function AmendDialog({
 function AmendFormFields({ detail, onAmended }: { detail: RfqDetail; onAmended: (form: AmendForm) => void }) {
   const translate = useTranslate();
   const form = useForm<AmendFormInput, unknown, AmendForm>({
-    defaultValues: amendFormFor(detail.lines[0]),
+    defaultValues: amendFormFor(amendTarget(detail)),
     resolver: zodResolver(amendFormSchema(detail)),
     shouldFocusError: true,
   });
   const errors = form.formState.errors;
+  const reissueLabelId = useId();
+  const reissueHintId = useId();
+  const selectedLineId = useWatch({ control: form.control, name: 'lineId' });
+  const selectedDrift = detail.lines.find((line) => line.lineId === selectedLineId)?.drift ?? null;
   const items = detail.lines.map((line) => ({
     value: line.lineId,
     label: translate('pl.rfqs.amend.lineOption', {
@@ -189,6 +198,34 @@ function AmendFormFields({ detail, onAmended }: { detail: RfqDetail; onAmended: 
         inputMode="numeric"
         required
       />
+      {selectedDrift === null ? null : (
+        <Controller
+          control={form.control}
+          name="reissueAtCurrentPart"
+          render={({ field }) => (
+            <div className="flex flex-col gap-1">
+              <label className="flex cursor-pointer items-start gap-3 text-sm font-medium">
+                <Checkbox
+                  ref={field.ref}
+                  checked={field.value}
+                  aria-labelledby={reissueLabelId}
+                  aria-describedby={reissueHintId}
+                  className="mt-0.5"
+                  onCheckedChange={(checked) => {
+                    field.onChange(checked);
+                  }}
+                />
+                <span id={reissueLabelId}>
+                  {translate('pl.rfqs.amend.reissue', { changes: driftSummary(translate, selectedDrift) })}
+                </span>
+              </label>
+              <p id={reissueHintId} className="pl-7 text-sm text-muted">
+                {translate('pl.rfqs.amend.reissueHint')}
+              </p>
+            </div>
+          )}
+        />
+      )}
       <TextField
         label={translate('pl.rfqs.amend.requiredBy')}
         description={translate('pl.rfqs.amend.requiredByHint', deadlineParams)}

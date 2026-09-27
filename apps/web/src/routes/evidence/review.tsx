@@ -17,7 +17,6 @@ import {
   StateBadge,
   useTranslate,
 } from '@partledger/ui';
-import { Link } from '@tanstack/react-router';
 import { DownloadIcon, InfoIcon } from 'lucide-react';
 import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -28,7 +27,7 @@ import { useDocumentTitle } from '../../shell/document-title';
 import { formatBytes, formatDate, formatInstantUtc, shortHash } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
 import { Fact } from '../rfqs/rfq-header';
-import { gapKey, withDeviation, withoutDocument, type DeviationForm } from './evidence-review';
+import { gapKey, withDeviation, withoutDocument, withRejection, type DeviationForm } from './evidence-review';
 import { deviationStates, documentExpiryStates, problemStates, scanStates } from './evidence-states';
 import { DeviationDialog, RejectDialog } from './review-dialogs';
 
@@ -78,8 +77,8 @@ function ReviewView({ queue }: { queue: ReviewQueue }) {
     announce(translate('pl.evidence.documents.confirmed', describe(document)));
   };
 
-  const reject = (document: ReviewDocument) => {
-    write?.(reviewQueueQuery, {}, withoutDocument(queue, document.documentId));
+  const reject = (document: ReviewDocument, reason: string) => {
+    write?.(reviewQueueQuery, {}, withRejection(queue, { documentId: document.documentId, reason }));
     returnFocusTo.current = status.current;
     setRejecting(null);
     announce(translate('pl.evidence.documents.rejected', describe(document)));
@@ -176,11 +175,7 @@ function DocumentsSection({
           headingLevel={3}
           titleKey="pl.evidence.documents.empty.title"
           descriptionKey="pl.evidence.documents.empty.description"
-          action={
-            <Link to="/suppliers" className={buttonVariants({ variant: 'secondary' })}>
-              {translate('pl.evidence.documents.empty.action')}
-            </Link>
-          }
+          action={null}
         />
       ) : (
         <ul aria-label={translate('pl.evidence.documents.label')} className="grid gap-3 xl:grid-cols-2">
@@ -471,11 +466,7 @@ function GapsSection({
           headingLevel={3}
           titleKey="pl.evidence.gaps.empty.title"
           descriptionKey="pl.evidence.gaps.empty.description"
-          action={
-            <Link to="/suppliers" className={buttonVariants({ variant: 'secondary' })}>
-              {translate('pl.evidence.gaps.empty.action')}
-            </Link>
-          }
+          action={null}
         />
       ) : (
         <DataGrid
