@@ -11,14 +11,20 @@ import {
 } from '@partledger/ui';
 import { getRouteApi, Link } from '@tanstack/react-router';
 import { CircleCheckIcon, ClockIcon, EyeOffIcon } from 'lucide-react';
-import { useMemo } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { useApiQuery } from '../../api/api-client';
+import { actionAvailability } from '../../shell/action-availability';
+import { ActionButton } from '../../shell/action-button';
 import { useDocumentTitle } from '../../shell/document-title';
 import { formatDate, formatInstantUtc, formatNumber } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
+import { DriftCell } from './drift-cell';
+import { AmendDialog, ExtendDeadlineDialog } from './rfq-change-dialogs';
+import { withAmendment, withExtendedDeadline, type AmendForm, type ExtendForm } from './rfq-changes';
 import { Fact, RfqHeader } from './rfq-header';
+import { useRfqPreview } from './rfq-preview';
 
 export const responseFilters = ['all', 'notYet'] as const;
 
@@ -71,9 +77,94 @@ function RfqDetailView({ detail }: { detail: RfqDetail }) {
           <Mono>{detail.currency}</Mono>
         </Fact>
       </RfqHeader>
+      <ChangeActions detail={detail} />
       <ResponsesSection detail={detail} />
       <LinesSection detail={detail} />
     </>
+  );
+}
+
+const notYetAvailableKey = 'pl.rfqs.changes.notYetAvailable';
+
+/**
+ * Amending and extending the deadline (R16), each offered as the read allows: once staff have
+ * seen the answers after close, the server blocks the extension and says why.
+ */
+function ChangeActions({ detail }: { detail: RfqDetail }) {
+  const translate = useTranslate();
+  const preview = useRfqPreview();
+  const [open, setOpen] = useState<'amend' | 'extend' | null>(null);
+  const [outcome, setOutcome] = useState<string | null>(null);
+  const status = useRef<HTMLParagraphElement>(null);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+  const amend = actionAvailability(detail, 'amend', preview !== null, notYetAvailableKey);
+  const extend = actionAvailability(detail, 'extendDeadline', preview !== null, notYetAvailableKey);
+  if (amend.kind === 'hidden' && extend.kind === 'hidden') {
+    return null;
+  }
+
+  const finish = async (next: RfqDetail, messageKey: string, params: Record<string, string | number>) => {
+    await preview?.save({ detail: next });
+    setOutcome(translate(messageKey, params));
+    returnFocusTo.current = status.current;
+    setOpen(null);
+  };
+
+  return (
+    <section aria-labelledby="changes-heading" className="flex flex-col gap-2">
+      <h2 id="changes-heading" className="sr-only">
+        {translate('pl.rfqs.changes.title')}
+      </h2>
+      <div className="flex flex-wrap items-center gap-3">
+        <ActionButton
+          availability={amend}
+          onAction={() => {
+            returnFocusTo.current = null;
+            setOpen('amend');
+          }}
+        >
+          {translate('pl.rfqs.changes.amend')}
+        </ActionButton>
+        <ActionButton
+          availability={extend}
+          onAction={() => {
+            returnFocusTo.current = null;
+            setOpen('extend');
+          }}
+        >
+          {translate('pl.rfqs.changes.extend')}
+        </ActionButton>
+      </div>
+      <p ref={status} role="status" tabIndex={-1} className="text-sm font-medium text-success outline-hidden">
+        {outcome}
+      </p>
+      <AmendDialog
+        detail={detail}
+        open={open === 'amend'}
+        returnFocusTo={returnFocusTo}
+        onAmended={(form: AmendForm) => {
+          const next = withAmendment(detail, form);
+          const line = detail.lines.find((candidate) => candidate.lineId === form.lineId);
+          void finish(next, 'pl.rfqs.amend.done', { version: next.version, line: line?.lineNumber ?? 0 });
+        }}
+        onClose={() => {
+          setOpen(null);
+        }}
+      />
+      <ExtendDeadlineDialog
+        detail={detail}
+        open={open === 'extend'}
+        returnFocusTo={returnFocusTo}
+        onExtended={(form: ExtendForm) => {
+          void finish(withExtendedDeadline(detail, form), 'pl.rfqs.extend.done', {
+            deadline: formatInstantUtc(form.deadline),
+          });
+        }}
+        onClose={() => {
+          setOpen(null);
+        }}
+      />
+    </section>
   );
 }
 
@@ -153,7 +244,11 @@ function ResponsesSection({ detail }: { detail: RfqDetail }) {
           titleKey="pl.rfqs.detail.responses.empty.title"
           descriptionKey="pl.rfqs.detail.responses.empty.description"
           action={
-            <Link to="/" className={buttonVariants({ variant: 'secondary' })}>
+            <Link
+              to="/rfqs/$rfqId/assignment"
+              params={{ rfqId: detail.rfqId }}
+              className={buttonVariants({ variant: 'secondary' })}
+            >
               {translate('pl.rfqs.detail.responses.empty.action')}
             </Link>
           }
@@ -213,9 +308,24 @@ function LinesSection({ detail }: { detail: RfqDetail }) {
           cell: ({ getValue }) => formatNumber(getValue()),
           meta: { numeric: true },
         }),
+        lineHelper.accessor((line) => line.quantityBreaks.join(', '), {
+          id: 'quantityBreaks',
+          header: () => translate('pl.rfqs.detail.column.quantityBreaks'),
+          cell: ({ row }) =>
+            row.original.quantityBreaks.length === 0 ? (
+              <span className="text-muted">{translate('pl.rfqs.detail.noBreaks')}</span>
+            ) : (
+              <Mono>{row.original.quantityBreaks.map(formatNumber).join(', ')}</Mono>
+            ),
+        }),
         lineHelper.accessor('requiredBy', {
           header: () => translate('pl.rfqs.detail.column.requiredBy'),
           cell: ({ getValue }) => <Mono>{formatDate(getValue())}</Mono>,
+        }),
+        lineHelper.accessor((line) => (line.drift === null ? 0 : 1), {
+          id: 'drift',
+          header: () => translate('pl.rfqs.detail.column.drift'),
+          cell: ({ row }) => <DriftCell drift={row.original.drift} />,
         }),
       ]),
     [translate],
@@ -225,6 +335,9 @@ function LinesSection({ detail }: { detail: RfqDetail }) {
       <h2 id="lines-heading" className="text-lg font-semibold">
         {translate('pl.rfqs.detail.lines.title')}
       </h2>
+      {detail.lines.some((line) => line.drift !== null) ? (
+        <p className="max-w-prose text-sm text-muted">{translate('pl.rfqs.drift.notice')}</p>
+      ) : null}
       <DataGrid
         label={translate('pl.rfqs.detail.lines.gridLabel', { reference: detail.reference })}
         data={detail.lines}

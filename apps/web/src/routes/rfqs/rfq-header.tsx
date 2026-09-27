@@ -70,6 +70,11 @@ export function RfqHeader({
             </Link>
           </li>
           <li>
+            <Link to="/rfqs/$rfqId/assignment" params={{ rfqId }} className={navigationLinkClasses}>
+              {translate('pl.web.rfq.section.assignment')}
+            </Link>
+          </li>
+          <li>
             <Link to="/rfqs/$rfqId/comparison" params={{ rfqId }} className={navigationLinkClasses}>
               {translate('pl.web.rfq.section.comparison')}
             </Link>

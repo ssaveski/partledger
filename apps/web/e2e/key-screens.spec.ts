@@ -350,7 +350,7 @@ test.describe('RFQ detail', () => {
     await page.goto(detail(rfq.draftWithoutSuppliers));
     await expect(page.getByRole('heading', { level: 3, name: 'No suppliers invited yet' })).toBeVisible();
     await expect(page.getByRole('grid', { name: /Supplier responses/ })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Back to the overview' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Assign suppliers' })).toBeVisible();
   });
 });
 
@@ -363,7 +363,7 @@ test.describe('approval packet', () => {
     await expect(page.getByText('The gate is blocked. Blocking reasons: 1.')).toBeVisible();
     const blocked = page.locator('[data-gate-check="evidence"]');
     await expect(blocked).toContainText('Blocked');
-    await expect(blocked).toContainText("Kestrel Machining's quality certificate QC-4471 expired on 2026-09-24.");
+    await expect(blocked).toContainText("Kestrel Machining's quality certificate QC-4471 expired on Sep 24, 2026.");
 
     const approve = page.getByRole('button', { name: 'Approve and seal' });
     await expect(approve).toBeDisabled();

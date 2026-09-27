@@ -61,6 +61,26 @@ export function AppShell() {
                     {translate('pl.web.navigation.overview')}
                   </Link>
                 </li>
+                <li>
+                  <Link to="/rfqs" className={navigationLinkClasses}>
+                    {translate('pl.web.navigation.rfqs')}
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/parts" className={navigationLinkClasses}>
+                    {translate('pl.web.navigation.parts')}
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/suppliers" className={navigationLinkClasses}>
+                    {translate('pl.web.navigation.suppliers')}
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/evidence" className={navigationLinkClasses}>
+                    {translate('pl.web.navigation.evidence')}
+                  </Link>
+                </li>
               </ul>
             </nav>
           </div>

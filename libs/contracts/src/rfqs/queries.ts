@@ -4,6 +4,7 @@ import { defineQuery } from '../define';
 import { errorCode, errorParamsSchema, messageKeySchema } from '../errors';
 import { lifecycleRead } from '../lifecycle';
 import { currencyCodeSchema, decimalSchema, moneySchema } from '../money';
+import { listInputSchema, listReadErrors } from '../reads';
 
 /**
  * The reads behind the three key screens (U3): RFQ detail, quote comparison and approval packet.
@@ -11,11 +12,11 @@ import { currencyCodeSchema, decimalSchema, moneySchema } from '../money';
  * these shapes, so wiring a screen to the API swaps the adapter and keeps the components.
  */
 
-const staffReaders = { person: ['buyer', 'quality_engineer', 'approver', 'auditor'] } as const;
+export const staffReaders = { person: ['buyer', 'quality_engineer', 'approver', 'auditor'] } as const;
 
-const readErrors = [errorCode('NotFound', 'resource'), errorCode('Forbidden', 'notPermitted')] as const;
+export const readErrors = [errorCode('NotFound', 'resource'), errorCode('Forbidden', 'notPermitted')] as const;
 
-const rfqInputSchema = z
+export const rfqInputSchema = z
   .object({
     rfqId: z.uuid().describe('The RFQ to read.'),
   })
@@ -28,14 +29,14 @@ export const rfqStatusSchema = z.enum(rfqStatuses).describe('Where the RFQ is in
 
 export type RfqStatus = z.infer<typeof rfqStatusSchema>;
 
-const referenceSchema = z
+export const referenceSchema = z
   .string()
   .regex(/^RFQ-\d{4,}(-R\d+)?$/)
   .describe('The human-readable RFQ reference, with the round for a re-bid, such as RFQ-1031-R2.');
 
-const titleSchema = z.string().min(1).max(200).describe('The title the buyer gave the RFQ.');
+export const titleSchema = z.string().min(1).max(200).describe('The title the buyer gave the RFQ.');
 
-const partSchema = {
+export const partSchema = {
   lineNumber: z.number().int().positive().describe('The line number within the RFQ.'),
   partNumber: z.string().min(1).describe('The part number snapshotted at publish.'),
   revision: z.string().min(1).describe('The part revision snapshotted at publish.'),
@@ -68,14 +69,46 @@ export const supplierResponseStatusSchema = z
 
 export type SupplierResponseStatus = z.infer<typeof supplierResponseStatusSchema>;
 
+export const driftFields = ['revision', 'description', 'unit'] as const;
+
+export const partDriftSchema = z
+  .object({
+    detectedAt: z.iso.datetime().describe('When an import first changed the part after publish.'),
+    changes: z
+      .array(
+        z
+          .object({
+            field: z.enum(driftFields).describe('The part field that changed.'),
+            snapshot: z.string().describe('The value the line snapshotted at publish.'),
+            current: z.string().describe('The value the part has now.'),
+          })
+          .strict(),
+      )
+      .min(1)
+      .describe('Each field that differs from the snapshot.'),
+  })
+  .strict()
+  .describe('How the part changed since the line was published; the snapshot itself never changes (R8).');
+
+export type PartDrift = z.infer<typeof partDriftSchema>;
+
+export const quantityBreaksSchema = z
+  .array(z.number().int().positive())
+  .max(6)
+  .describe('Further quantities suppliers price, ascending; the requested quantity is always priced.');
+
 export const rfqDetailLineSchema = z
   .object({
     lineId: z.uuid().describe('The RFQ line.'),
     ...partSchema,
+    quantityBreaks: quantityBreaksSchema,
     requiredBy: z.iso.date().describe('The date the parts are needed by.'),
+    drift: partDriftSchema.nullable().describe('How the part changed since publish, on an open line, or null.'),
   })
   .strict()
   .describe('One line of the RFQ.');
+
+export type RfqDetailLine = z.infer<typeof rfqDetailLineSchema>;
 
 export const rfqDetailSchema = lifecycleRead(
   z
@@ -103,6 +136,53 @@ export const rfqDetailQuery = defineQuery({
   input: rfqInputSchema,
   output: rfqDetailSchema,
   errors: readErrors,
+  access: staffReaders,
+});
+
+// ---------------------------------------------------------------------------------------------
+// RFQ list
+
+export const rfqListRowSchema = z
+  .object({
+    rfqId: z.uuid().describe('The RFQ.'),
+    reference: referenceSchema,
+    title: titleSchema,
+    status: rfqStatusSchema,
+    deadline: z.iso.datetime().describe('The response deadline in UTC.'),
+    round: z.number().int().positive().describe('1 for a first round; a re-bid is the next round.'),
+    lineCount: z.number().int().nonnegative().describe('How many lines the RFQ has.'),
+    invitedCount: z.number().int().nonnegative().describe('How many suppliers are invited.'),
+    respondedCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('How many invited suppliers have responded; never what they answered (R40).'),
+    driftedLineCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe('How many open lines have a part that changed since publish (R8).'),
+  })
+  .strict()
+  .describe('One RFQ in the list.');
+
+export type RfqListRow = z.infer<typeof rfqListRowSchema>;
+
+export const rfqListSchema = z
+  .object({
+    rfqs: z.array(rfqListRowSchema).describe('Every RFQ the reader may see, newest reference first.'),
+  })
+  .strict()
+  .describe('The tenant RFQs.');
+
+export type RfqList = z.infer<typeof rfqListSchema>;
+
+export const rfqListQuery = defineQuery({
+  name: 'rfqs.list',
+  description: 'List the tenant RFQs with their status, deadline, response counts and drifted lines.',
+  input: listInputSchema,
+  output: rfqListSchema,
+  errors: listReadErrors,
   access: staffReaders,
 });
 

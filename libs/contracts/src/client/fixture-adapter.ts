@@ -1,4 +1,4 @@
-import type { z } from 'zod';
+import { z } from 'zod';
 
 import type { QueryDeclaration } from '../define';
 import { messageKeyOf, type ErrorCode } from '../errors';
@@ -11,21 +11,37 @@ export type FixtureResponse<Output> =
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'pending' };
 
+/**
+ * A state a reviewer can ask every read of a page to show, whatever it reads: `empty` serves
+ * lists without entries, the others fail every read the way the API or network would.
+ */
+export const previewStates = ['empty', 'slow', 'unavailable', 'forbidden'] as const;
+
+export const previewStateSchema = z.enum(previewStates);
+
+export type PreviewState = z.infer<typeof previewStateSchema>;
+
+/** What a handler serves: its synthetic data, or the same shape with every list empty. */
+export type FixtureView = 'populated' | 'empty';
+
 export interface FixtureHandler {
   readonly name: string;
-  respond(input: unknown): FixtureResponse<unknown> | { readonly kind: 'invalid' };
+  respond(input: unknown, view: FixtureView): FixtureResponse<unknown> | { readonly kind: 'invalid' };
 }
 
 /** Serves one declared query from synthetic data; the input is parsed exactly as the API would. */
 export function fixtureQuery<Declaration extends QueryDeclaration>(
   declaration: Declaration,
-  respond: (input: z.output<Declaration['input']>) => FixtureResponse<z.input<Declaration['output']>>,
+  respond: (
+    input: z.output<Declaration['input']>,
+    view: FixtureView,
+  ) => FixtureResponse<z.input<Declaration['output']>>,
 ): FixtureHandler {
   return {
     name: declaration.name,
-    respond(input) {
+    respond(input, view) {
       const parsed = parseInput<Declaration['input']>(declaration.input, input);
-      return parsed.success ? respond(parsed.data) : { kind: 'invalid' };
+      return parsed.success ? respond(parsed.data, view) : { kind: 'invalid' };
     },
   };
 }
@@ -37,6 +53,8 @@ function parseInput<Schema extends z.ZodType>(schema: Schema, value: unknown): z
 export interface FixtureAdapterOptions {
   /** Simulated network time before each response, so loading states show as they would against the API. */
   readonly latency?: () => Promise<void>;
+  /** The preview state asked for when a read is made, if any. */
+  readonly previewState?: () => PreviewState | null;
 }
 
 /**
@@ -45,7 +63,7 @@ export interface FixtureAdapterOptions {
  */
 export function createFixtureAdapter(
   handlers: readonly FixtureHandler[],
-  { latency = () => Promise.resolve() }: FixtureAdapterOptions = {},
+  { latency = () => Promise.resolve(), previewState = () => null }: FixtureAdapterOptions = {},
 ): ApiAdapter {
   const byName = new Map(handlers.map((handler) => [handler.name, handler]));
   return {
@@ -55,7 +73,8 @@ export function createFixtureAdapter(
       if (handler === undefined) {
         return refusedWith({ tag: 'NotFound', reason: 'route' });
       }
-      const response = handler.respond(input);
+      const state = previewState();
+      const response = forcedResponse(state) ?? handler.respond(input, state === 'empty' ? 'empty' : 'populated');
       switch (response.kind) {
         case 'output':
           return { ok: true, body: JSON.parse(JSON.stringify(response.output)) };
@@ -70,6 +89,20 @@ export function createFixtureAdapter(
       }
     },
   };
+}
+
+function forcedResponse(state: PreviewState | null): FixtureResponse<never> | null {
+  switch (state) {
+    case 'slow':
+      return { kind: 'pending' };
+    case 'unavailable':
+      return { kind: 'unavailable' };
+    case 'forbidden':
+      return { kind: 'refused', code: { tag: 'Forbidden', reason: 'notPermitted' } };
+    case 'empty':
+    case null:
+      return null;
+  }
 }
 
 function refusedWith(code: ErrorCode): { readonly ok: false; readonly failure: ClientFailure } {
