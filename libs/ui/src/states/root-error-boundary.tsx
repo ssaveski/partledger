@@ -5,6 +5,8 @@ import { ErrorState } from './states';
 interface RootErrorBoundaryProps {
   children: ReactNode;
   onError?: ((error: unknown, info: ErrorInfo) => void) | undefined;
+  /** The unexpected-error message; the supplier portal passes its own, which points to the buyer. */
+  messageKey?: string | undefined;
 }
 
 interface RootErrorBoundaryState {
@@ -40,7 +42,12 @@ export class RootErrorBoundary extends Component<RootErrorBoundaryProps, RootErr
     if (this.state.failed) {
       return (
         <main className="flex min-h-screen items-center justify-center bg-surface">
-          <ErrorState messageKey="pl.ui.state.error.unexpected" onRetry={this.retry} headingLevel={1} focusHeading />
+          <ErrorState
+            messageKey={this.props.messageKey ?? 'pl.ui.state.error.unexpected'}
+            onRetry={this.retry}
+            headingLevel={1}
+            focusHeading
+          />
         </main>
       );
     }

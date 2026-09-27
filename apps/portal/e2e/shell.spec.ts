@@ -30,6 +30,7 @@ test('a missing translation key shows the designed error state instead of a blan
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('contact the buyer who sent you the link');
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
 });
