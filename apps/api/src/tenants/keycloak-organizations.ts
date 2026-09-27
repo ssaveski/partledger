@@ -35,10 +35,12 @@ export function adminBaseUrl(issuer: string): string {
 }
 
 /**
- * Keycloak organizations through the API's service account (KTD20). The account holds
- * `manage-users`, `view-users` and `manage-realm` in the region's realm: Keycloak 26 guards
- * its organization endpoints with `manage-realm`. This adapter calls only the organization and
- * user endpoints below and never assigns a realm or client role.
+ * Keycloak organizations through the API's service account (KTD20). The shipped realm gives
+ * the account `manage-users` and `view-users`. Keycloak 26.4 also requires `manage-realm` for
+ * creating organizations and adding or removing their members; until the owner decides to
+ * grant it, those calls are refused and the commands answer as unavailable (see
+ * docs/runbooks/keycloak.md). This adapter calls only the organization and user endpoints
+ * below and never assigns a realm or client role.
  */
 export class KeycloakOrganizations implements IdentityOrganizations {
   private readonly logger = new Logger('KeycloakOrganizations');

@@ -17,10 +17,12 @@ import type { OperationRegistry } from '../src/commands/handlers';
 import { OperationExecutor } from '../src/commands/operation-executor';
 import { productionRegistry } from '../src/commands/query-registry';
 import type { AuthenticatedPrincipal } from '../src/principals/principal';
+import { KeycloakOrganizations } from '../src/tenants/keycloak-organizations';
 import { newIdempotencyKey, startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
 import { placeholderAuthEnvironment } from './support/auth-environment';
 import { internalTestRegistry } from './support/internal-test-module';
 import { clientId, realmName, startKeycloak, type StartedKeycloak } from './support/keycloak';
+import { createTestOrganizationAdmin, testOrganizationAdminClientId } from './support/organization-admin';
 import {
   createOperator,
   operatorIssuer,
@@ -71,13 +73,14 @@ describe('tenants, roles, users and the directory', () => {
 
   beforeAll(async () => {
     keycloak = await startKeycloak([operatorRealmFile]);
-    const adminSecret = await keycloak.admin.regenerateClientSecret('partledger-api-admin');
+    const adminSecret = await createTestOrganizationAdmin(keycloak);
     harness = await startApiHarness({
       roles: 'memberships',
       process: { registry, workers: true },
       authEnvironment: placeholderAuthEnvironment({
         KEYCLOAK_ISSUER: keycloak.issuer,
         KEYCLOAK_CLIENT_ID: clientId,
+        KEYCLOAK_ADMIN_CLIENT_ID: testOrganizationAdminClientId,
         KEYCLOAK_ADMIN_CLIENT_SECRET: adminSecret,
         OPERATOR_KEYCLOAK_ISSUER: operatorIssuer(keycloak),
         STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080',
@@ -273,6 +276,37 @@ describe('tenants, roles, users and the directory', () => {
         .parse(await keycloak.admin.json(`/${realmName}/users?email=other.admin@synthetic.test`));
       expect(users).toEqual([]);
     });
+  });
+
+  it('the shipped service account can manage users but not the realm until the owner decides', async () => {
+    const [client] = z
+      .array(z.object({ id: z.string() }))
+      .parse(await keycloak.admin.json(`/${realmName}/clients?clientId=partledger-api-admin`));
+    const [realmManagement] = z
+      .array(z.object({ id: z.string() }))
+      .parse(await keycloak.admin.json(`/${realmName}/clients?clientId=realm-management`));
+    const account = z
+      .object({ id: z.string() })
+      .parse(await keycloak.admin.json(`/${realmName}/clients/${client?.id ?? ''}/service-account-user`));
+    const roles = z
+      .array(z.object({ name: z.string() }))
+      .parse(
+        await keycloak.admin.json(
+          `/${realmName}/users/${account.id}/role-mappings/clients/${realmManagement?.id ?? ''}/composite`,
+        ),
+      )
+      .map((role) => role.name);
+    expect(roles).toEqual(expect.arrayContaining(['manage-users', 'view-users']));
+    expect(roles).not.toContain('manage-realm');
+    // Without it, Keycloak refuses organization changes, which the API reports as unavailable.
+    const shipped = new KeycloakOrganizations({
+      issuer: keycloak.issuer,
+      clientId: 'partledger-api-admin',
+      clientSecret: await keycloak.admin.regenerateClientSecret('partledger-api-admin'),
+    });
+    expect(
+      await shipped.createOrganization({ alias: 'synthetic-refused-org', name: 'Synthetic', tenantId: randomUUID() }),
+    ).toEqual({ ok: false, error: 'unavailable' });
   });
 
   describe('members and roles', () => {
