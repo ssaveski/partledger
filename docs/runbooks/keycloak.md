@@ -61,11 +61,13 @@ A lost second factor is reset only by the `auth.resetSecondFactor` command: a te
 
 The client `partledger-api-admin` is confidential, has only the service-account grant, and its scope holds exactly one role, `realm-management` `manage-users` (`fullScopeAllowed` is off; the role reaches the token through the client's scope mapping). The API uses it for the second-factor reset: it reads a user's organizations and credentials, deletes `otp` credentials and ends the user's Keycloak sessions. Regenerate its secret after an import, like the API client's, and put it in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
 
-**Residual scope (a KTD20 decision for the owner).** KTD20 has the service account manage membership only; Keycloak 26.4 cannot narrow it that far:
+**Residual scope (owner decision, 2026-09-27).** KTD20 has the service account manage membership only; Keycloak 26.4 cannot narrow it that far. The owner accepted the residual scope below and chose two accounts: this one keeps `manage-users` for the second-factor reset only, and a separate organizations account (U8) holds `manage-realm` for provisioning and membership only.
+
+Why the scope cannot be narrower:
 
 - Deleting a credential and ending a user's sessions need `manage` on that user, and Keycloak grants `manage` on users only whole: with `manage-users` the account can also set any user's password, change their e-mail, add federated identity links, send required-action e-mails, and create or delete users, in every tenant of the realm. `view-users` is not needed and is not granted.
 - Fine-grained admin permissions v2 (probed on 26.4 with `adminPermissionsEnabled`) give the same `manage` scope on users: a permission on all users allowed the same calls, a `manage`-only permission without `view` allowed none of them, and a negative permission on the `reset-password` scope denied the users entirely rather than that one call. Its target is a fixed list of users or group members, not an organization, so it cannot confine the account to one tenant either.
-- Adding organization members needs `manage-realm` (probed: no narrower role allows it; with `manage-users` the call answers 403). U8 must not grant it to this account without the owner's decision, since `manage-realm` can change the realm's flows, identity providers and settings.
+- Adding organization members needs `manage-realm` (probed: no narrower role allows it; with `manage-users` the call answers 403). This account never holds it, since `manage-realm` can change the realm's flows, identity providers and settings; U8's separate organizations account does.
 
 What the account cannot do, checked by `step-up.integration.spec.ts`: change the realm or read its flows, clients or identity providers, create roles, create organizations or add their members, or impersonate anyone. The API calls only the endpoints above, and the admin events Keycloak records show every call the account makes.
 
