@@ -19,6 +19,11 @@ export interface TableAccess {
   >;
   /** Audit tables: no UPDATE or DELETE grants, guard triggers, nothing cascades into them. */
   readonly insertOnly?: boolean;
+  /**
+   * Like `insertOnly`, except that column-level UPDATE grants are allowed: the guard trigger
+   * lets through only an erasure (the commitment store, R39). No table-level UPDATE or DELETE.
+   */
+  readonly eraseOnly?: boolean;
 }
 
 export function defineTableAccess(access: TableAccess): TableAccess {

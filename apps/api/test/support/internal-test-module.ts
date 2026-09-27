@@ -7,13 +7,14 @@ import {
   lifecycleRead,
   type InputOf,
 } from '@partledger/contracts';
-import { refuse, success, versionConflict } from '@partledger/domain';
+import { defineTransitions, refuse, success, versionConflict } from '@partledger/domain';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
   registerCommand,
   registerQuery,
+  type CommandContext,
   type CommandHandler,
   type HandlerResult,
   type OperationContext,
@@ -21,6 +22,8 @@ import {
   type QueryHandler,
 } from '../../src/commands/handlers';
 import { actorIdOf } from '../../src/principals/principal';
+import { applyTransition } from '../../src/transitions/apply-transition';
+import { auditId } from '../../src/audit/audit-payload';
 
 /**
  * A test-only module that exercises the command and query layer before any business module
@@ -112,7 +115,11 @@ export const approveNote = defineCommand({
   purpose: 'business',
   input: z.object({ noteId, expectedVersion: expectedVersionSchema }).describe('The approval.'),
   output: z.object({ noteId, version: noteVersion }).describe('The approved note.'),
-  errors: [errorCode('NotFound', 'resource'), errorCode('Conflict', 'versionMismatch')],
+  errors: [
+    errorCode('NotFound', 'resource'),
+    errorCode('Conflict', 'versionMismatch'),
+    errorCode('Conflict', 'transitionNotAllowed'),
+  ],
   access: { person: ['approver'] },
   stepUp: true,
   impact: 'approval',
@@ -150,6 +157,13 @@ export const setRetention = defineCommand({
 });
 
 export const noteTransitions = ['rename', 'approve'] as const;
+
+/** The note's lifecycle, applied through `applyTransition` (KTD13). */
+export const noteLifecycle = defineTransitions({
+  aggregate: 'note',
+  statuses: ['draft', 'approved'],
+  transitions: { approve: { from: ['draft'], to: 'approved' } },
+});
 
 export const getNote = defineQuery({
   name: 'internalTest.getNote',
@@ -195,11 +209,14 @@ async function findNote(context: OperationContext, id: string) {
 
 @Injectable()
 export class CreateNoteHandler implements CommandHandler<typeof createNote> {
-  async execute(
-    input: InputOf<typeof createNote>,
-    context: OperationContext,
-  ): Promise<HandlerResult<typeof createNote>> {
+  async execute(input: InputOf<typeof createNote>, context: CommandContext): Promise<HandlerResult<typeof createNote>> {
     const note = await insertNote(context, input.title);
+    // The title is free text, so the audit entry carries only its commitment.
+    context.audit.record({
+      kind: 'noteCreated',
+      noteId: auditId(note.id),
+      title: await context.audit.commit(input.title),
+    });
     if (input.delayMilliseconds > 0) {
       await context.database.execute(sql`select pg_sleep(${input.delayMilliseconds / 1000})`);
     }
@@ -243,7 +260,7 @@ export class RenameNoteHandler implements CommandHandler<typeof renameNote> {
 export class ApproveNoteHandler implements CommandHandler<typeof approveNote> {
   async execute(
     input: InputOf<typeof approveNote>,
-    context: OperationContext,
+    context: CommandContext,
   ): Promise<HandlerResult<typeof approveNote>> {
     const note = await findNote(context, input.noteId);
     if (note === undefined) {
@@ -253,10 +270,17 @@ export class ApproveNoteHandler implements CommandHandler<typeof approveNote> {
     if (conflict !== null) {
       return { ok: false, error: conflict };
     }
-    await context.database.execute(
-      sql`update internal_test_notes set status = 'approved', version = version + 1 where id = ${note.id}`,
-    );
-    return success({ noteId: note.id, version: note.version + 1 });
+    const applied = await applyTransition(context, noteLifecycle, {
+      table: 'internal_test_notes',
+      id: note.id,
+      transition: 'approve',
+      from: note.status,
+      versioned: true,
+    });
+    if (!applied.ok) {
+      return applied;
+    }
+    return success({ noteId: note.id, version: applied.value.version ?? note.version + 1 });
   }
 }
 

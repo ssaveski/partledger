@@ -410,7 +410,7 @@ export async function checkCatalog(
     checkPolicies(access, policies, report);
     checkGrants(access, grants, columnGrants, report);
 
-    if (access.insertOnly === true) {
+    if (isGuarded(access)) {
       checkInsertOnlyTriggers(access.table, triggers, report);
     }
 
@@ -431,9 +431,7 @@ export async function checkCatalog(
   }
 
   // Foreign keys: composite between tenant-owned tables, never cascading into insert-only tables.
-  const insertOnlyTables = new Set(
-    expectations.tables.filter((access) => access.insertOnly === true).map((access) => access.table),
-  );
+  const insertOnlyTables = new Set(expectations.tables.filter(isGuarded).map((access) => access.table));
   for (const key of foreignKeys) {
     const object = `${key.table}.${key.name}`;
     if (!restrictingActions.has(key.updateAction)) {
@@ -603,13 +601,20 @@ function checkGrants(
   );
   compareSets(expectedColumns, actualColumns, access.table, 'missing_column_grant', 'unexpected_column_grant', report);
 
-  if (access.insertOnly === true) {
-    for (const entry of [...actual, ...actualColumns]) {
+  if (isGuarded(access)) {
+    // An erase-only table may grant column-level UPDATE; its guard trigger allows only an erasure.
+    const writable = access.insertOnly === true ? [...actual, ...actualColumns] : [...actual];
+    for (const entry of writable) {
       if (/:(UPDATE|DELETE)$/.test(entry)) {
         report('insert_only_table_writable', access.table, entry);
       }
     }
   }
+}
+
+/** Audit tables: insert-only, or erase-only like the commitment store. */
+function isGuarded(access: TableAccess): boolean {
+  return access.insertOnly === true || access.eraseOnly === true;
 }
 
 function compareSets(

@@ -10,7 +10,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {},
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "zod": "^4.6.5"
+  },
   "nx": {
     "tags": [
       "scope:chain",
