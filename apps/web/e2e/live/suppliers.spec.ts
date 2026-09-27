@@ -66,9 +66,18 @@ async function command(page: Page, name: string, input: unknown): Promise<unknow
   return JSON.parse(response.text);
 }
 
+/**
+ * Checks both themes on the rendered page. Switching the scheme makes controls with
+ * `transition-colors` blend between the two themes' colours for a moment; axe checks the
+ * colours they settle on, so it runs once the theme is applied and every transition has ended.
+ */
 async function expectNoAxeViolations(page: Page): Promise<void> {
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', colorScheme);
+    await page.evaluate(async () => {
+      await Promise.all(document.getAnimations().map((animation) => animation.finished));
+    });
     expect((await new AxeBuilder({ page }).analyze()).violations, colorScheme).toEqual([]);
   }
 }
@@ -76,6 +85,8 @@ async function expectNoAxeViolations(page: Page): Promise<void> {
 test('the parts and supplier screens show the tenant’s own data, with loading, empty and error states', async ({
   page,
 }) => {
+  // One journey through both screens, with twelve axe scans: it needs more than the default 30 seconds.
+  test.slow();
   await signIn(page);
 
   for (const screen of screens) {
