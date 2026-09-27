@@ -106,6 +106,17 @@ async function insertStaffSession(client: pg.Client, tenantId: string, credentia
   );
 }
 
+/** An upload recorded under a credential of its tenant, waiting for its scan (U14). */
+async function insertUpload(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
+  await client.query(
+    `insert into uploads (tenant_id, purpose, media_type, file_name, size_bytes, content_hash, attestation,
+                          uploader_type, credential_id, uploaded_at, scan_status)
+     values ($1, 'evidence', 'application/pdf', 'synthetic-certificate.pdf', 1024, $2, 'noControlledTechnicalData.v1',
+             'person', $3, now(), 'pending')`,
+    [tenantId, hashCredentialSecret(randomUUID()).toString('hex'), credentialId],
+  );
+}
+
 /** A member holding one role, and the tenant's directory entry. */
 async function insertMembershipRows(client: pg.Client, tenantId: string, slug: string): Promise<string> {
   const userId = randomUUID();
@@ -209,6 +220,7 @@ describe('row-level security as pl_app', () => {
       await insertJobRows(superuser, tenant);
       await insertNotificationRows(superuser, tenant);
       await insertAiRows(superuser, tenant);
+      await insertUpload(superuser, tenant, credential.id);
       memberOf.set(tenant, await insertMembershipRows(superuser, tenant, slug));
     }
   });
@@ -329,6 +341,11 @@ describe('row-level security as pl_app', () => {
 
   it('a staff session referencing another tenant credential fails its composite foreign key', async () => {
     const code = await errorCodeOf(insertStaffSession(superuser, tenantA, credentialOf.get(tenantB) ?? ''));
+    expect(code).toBe('23503');
+  });
+
+  it('an upload recorded under another tenant credential fails its composite foreign key', async () => {
+    const code = await errorCodeOf(insertUpload(superuser, tenantA, credentialOf.get(tenantB) ?? ''));
     expect(code).toBe('23503');
   });
 
