@@ -16,15 +16,25 @@ export const apiBasePath = '/api/v1';
 export const operationNamePattern = /^[a-z][a-zA-Z0-9]*\.[a-z][a-zA-Z0-9]*$/;
 
 /**
+ * What a `system` principal acted under: a background job, or an ERP export drop pushed with a
+ * drop credential over HTTP. They are allowed separately, so a stolen drop credential never
+ * reaches job-only commands.
+ */
+export const systemGrants = ['job', 'drop_credential'] as const;
+
+export type SystemGrant = (typeof systemGrants)[number];
+
+/**
  * Who may call an operation. `person` lists the tenant roles of which a person needs at least
- * one; the other principal types are allowed outright when present, and their scope (which
- * supplier, which grant) is checked by the handler.
+ * one; `system` lists the grants a system principal may act under; the other principal types
+ * are allowed outright when present, and their scope (which supplier, which grant) is checked
+ * by the handler.
  */
 export interface AccessRule {
   readonly person?: readonly [TenantRole, ...TenantRole[]];
   readonly supplier_token?: true;
   readonly ai_agent?: true;
-  readonly system?: true;
+  readonly system?: readonly [SystemGrant, ...SystemGrant[]];
   readonly platform_operator?: true;
 }
 

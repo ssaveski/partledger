@@ -1,3 +1,5 @@
+import { ServerResponse } from 'node:http';
+
 import {
   Catch,
   HttpException,
@@ -9,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import {
+  correlationIdHeader,
   internalErrorMessageKey,
   messageKeyOf,
   unauthenticatedMessageKey,
@@ -17,6 +20,7 @@ import {
   type ValidationErrorBody,
 } from '@partledger/contracts';
 import type { DomainError } from '@partledger/domain';
+import { z } from 'zod';
 
 import { DomainFailure, RequestValidationFailure, UnauthenticatedFailure } from './failures';
 
@@ -92,6 +96,34 @@ export function httpErrorResponseFor(exception: unknown): HttpErrorResponse {
   return { status: HttpStatus.INTERNAL_SERVER_ERROR, body: internalErrorBody };
 }
 
+const causeWithCode = z.object({ name: z.string().optional(), code: z.string() });
+
+/**
+ * The log line for an unexpected failure. Query errors carry their bind values after
+ * `params:` (Drizzle) and database errors may quote values in their message or detail, so the
+ * line holds the correlation id, the error's class, the database error code, the message up to
+ * any `params:` section and the stack frames, never the values.
+ */
+export function describeUnexpectedFailure(exception: unknown, correlationId: string | null): string {
+  const correlation = `correlation ${correlationId ?? 'none'}`;
+  if (!(exception instanceof Error)) {
+    return `Unexpected failure (${correlation}): a thrown ${typeof exception}`;
+  }
+  const own = causeWithCode.safeParse(exception);
+  const cause = causeWithCode.safeParse(exception.cause);
+  // A database error's own message can quote the offending value, so only its code is logged.
+  const [message = ''] = own.success ? [''] : exception.message.split(/\n?params:/);
+  const code = own.success
+    ? ` [${own.data.code}]`
+    : cause.success
+      ? ` [${cause.data.name ?? 'cause'} ${cause.data.code}]`
+      : '';
+  const frames = (exception.stack ?? '').split('\n').filter((line) => /^\s+at /.test(line));
+  return [`Unexpected failure (${correlation}): ${exception.constructor.name}${code}: ${message}`, ...frames].join(
+    '\n',
+  );
+}
+
 /** Maps every exception that reaches Nest to a status and a body of message keys, never prose. */
 @Catch()
 export class DomainErrorFilter implements ExceptionFilter {
@@ -101,9 +133,11 @@ export class DomainErrorFilter implements ExceptionFilter {
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const { status, body } = httpErrorResponseFor(exception);
+    const response = host.switchToHttp().getResponse<unknown>();
     if (status >= 500) {
-      this.logger.error(exception instanceof Error ? (exception.stack ?? exception.message) : String(exception));
+      const correlationId = response instanceof ServerResponse ? response.getHeader(correlationIdHeader) : undefined;
+      this.logger.error(describeUnexpectedFailure(exception, typeof correlationId === 'string' ? correlationId : null));
     }
-    this.adapterHost.httpAdapter.reply(host.switchToHttp().getResponse<unknown>(), body, status);
+    this.adapterHost.httpAdapter.reply(response, body, status);
   }
 }

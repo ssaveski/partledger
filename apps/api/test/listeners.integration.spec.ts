@@ -117,6 +117,21 @@ describe('listeners, principals and access', () => {
     });
   });
 
+  it('refuses a job-only command to a drop credential, although both act as system', async () => {
+    const drop = await harness.issue('drop_credential', harness.tenantA);
+    const response = await harness.command(
+      'drop',
+      'internalTest.recordJobRun',
+      { title: 'Drop-forged synthetic job run' },
+      { token: drop.token },
+    );
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({ error: 'Forbidden', message: 'pl.error.forbidden.notPermitted', params: {} });
+    expect(await harness.count(`select 1 from internal_test_notes where title = 'Drop-forged synthetic job run'`)).toBe(
+      0,
+    );
+  });
+
   it('refuses a person without an allowed role with 403 and a message key', async () => {
     for (const roles of [['auditor'], [], ['tenant_admin']] as const) {
       const person = await harness.issue('staff_session', harness.tenantA, { roles });

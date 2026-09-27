@@ -1,24 +1,44 @@
-import { tenantRoles, type TenantRole } from '@partledger/contracts';
+import { tenantRoles, type CommandImpact, type CommandPurpose, type TenantRole } from '@partledger/contracts';
 
 import type { Principal } from '../../src/principals/principal';
 
 /**
  * The principals every command and query is checked against (KTD38): a person holding each
- * single tenant role, a person holding none, and each non-person principal type.
+ * single tenant role, a person holding none, and each non-person principal type, with a
+ * system principal once as a background job and once as an ERP drop credential.
  */
 export const matrixPrincipals = [
   ...tenantRoles,
   'person_without_roles',
   'supplier_token',
-  'system',
+  'system_job',
+  'system_drop_credential',
   'ai_agent',
   'platform_operator',
 ] as const;
 
 export type MatrixPrincipal = (typeof matrixPrincipals)[number];
 
-/** Per module: each operation name with the principals allowed to call it; every other principal is denied. */
-export type ModulePermissions = Readonly<Record<string, readonly MatrixPrincipal[]>>;
+/**
+ * A command's reviewed expectation. Besides who may call it, it pins the properties the
+ * declaration's author could otherwise set to dodge the registry rules: its purpose (the
+ * tenant-admin rule), its KTD20 impact and its step-up flag.
+ */
+export interface CommandExpectation {
+  readonly kind: 'command';
+  readonly allow: readonly MatrixPrincipal[];
+  readonly purpose: CommandPurpose;
+  readonly impact: CommandImpact;
+  readonly stepUp: boolean;
+}
+
+export interface QueryExpectation {
+  readonly kind: 'query';
+  readonly allow: readonly MatrixPrincipal[];
+}
+
+/** Per module: each operation name with its expectation; every principal not allowed is denied. */
+export type ModulePermissions = Readonly<Record<string, CommandExpectation | QueryExpectation>>;
 
 export function definePermissions(permissions: ModulePermissions): ModulePermissions {
   return permissions;
@@ -56,8 +76,15 @@ export function principalFor(principal: MatrixPrincipal): Principal {
         actedUnder: { grant: 'supplier_link', credentialId },
         adapter: 'portal',
       };
-    case 'system':
+    case 'system_job':
       return { ...base, type: 'system', actedUnder: { grant: 'job', jobId: actorId }, adapter: 'jobs' };
+    case 'system_drop_credential':
+      return {
+        ...base,
+        type: 'system',
+        actedUnder: { grant: 'drop_credential', credentialId },
+        adapter: 'drop',
+      };
     case 'ai_agent':
       return {
         ...base,

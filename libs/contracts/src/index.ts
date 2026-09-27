@@ -10,6 +10,7 @@ export {
   idempotentReplayHeader,
   operationNamePattern,
   queryPath,
+  systemGrants,
   type AccessRule,
   type CommandDeclaration,
   type CommandPurpose,
@@ -18,6 +19,7 @@ export {
   type OperationDeclaration,
   type OutputOf,
   type QueryDeclaration,
+  type SystemGrant,
 } from './define';
 export {
   allErrorCodes,

@@ -1,4 +1,4 @@
-import type { AccessRule, TenantRole } from '@partledger/contracts';
+import type { AccessRule, SystemGrant, TenantRole } from '@partledger/contracts';
 
 import type { Principal } from './principal';
 
@@ -17,8 +17,10 @@ export function isAllowed(access: AccessRule, principal: Principal): boolean {
       return access.supplier_token === true;
     case 'ai_agent':
       return access.ai_agent === true;
-    case 'system':
-      return access.system === true;
+    case 'system': {
+      const allowedGrants: readonly SystemGrant[] = access.system ?? [];
+      return allowedGrants.includes(principal.actedUnder.grant);
+    }
     case 'platform_operator':
       return access.platform_operator === true;
   }

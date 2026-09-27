@@ -42,6 +42,10 @@ export interface SupplierTokenPrincipal extends PrincipalBase {
 
 export interface SystemPrincipal extends PrincipalBase {
   readonly type: 'system';
+  /** A background job, or an export drop pushed with a drop credential. */
+  readonly actedUnder:
+    | { readonly grant: 'drop_credential'; readonly credentialId: string }
+    | { readonly grant: 'job'; readonly jobId: string };
 }
 
 export interface AiAgentPrincipal extends PrincipalBase {

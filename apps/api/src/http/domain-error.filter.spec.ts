@@ -1,9 +1,22 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { IncomingMessage, ServerResponse } from 'node:http';
+import { Socket } from 'node:net';
+
+import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import { HttpAdapterHost } from '@nestjs/core';
+import { ExecutionContextHost } from '@nestjs/core/helpers/execution-context-host';
+import { ExpressAdapter } from '@nestjs/platform-express';
 import { domainErrorTags, errorBodySchema, validationErrorBodySchema } from '@partledger/contracts';
 import { domainError, type DomainError } from '@partledger/domain';
-import { describe, expect, it } from 'vitest';
+import { DrizzleQueryError } from 'drizzle-orm';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { domainErrorBody, httpErrorResponseFor, httpStatusOf } from './domain-error.filter';
+import {
+  describeUnexpectedFailure,
+  DomainErrorFilter,
+  domainErrorBody,
+  httpErrorResponseFor,
+  httpStatusOf,
+} from './domain-error.filter';
 import { DomainFailure, RequestValidationFailure, UnauthenticatedFailure } from './failures';
 
 describe('the domain error filter', () => {
@@ -78,5 +91,62 @@ describe('the domain error filter', () => {
       status: 500,
       body: { error: 'Internal', message: 'pl.error.internal.unexpected', params: {} },
     });
+  });
+});
+
+describe('the log line of an unexpected failure', () => {
+  const personalValue = 'buyer.person@example.test';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function queryError(): DrizzleQueryError {
+    const cause = Object.assign(new Error(`invalid input syntax for type uuid: "${personalValue}"`), {
+      code: '22P02',
+    });
+    return new DrizzleQueryError(
+      'select id from notes where owner = $1 and title = $2',
+      [personalValue, 'Line\nparams: two'],
+      cause,
+    );
+  }
+
+  it('never passes a failed query params to the logger, and names the correlation id and error code', () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const httpAdapter = new ExpressAdapter();
+    const replied = vi.spyOn(httpAdapter, 'reply').mockImplementation(() => undefined);
+    const adapterHost = new HttpAdapterHost();
+    adapterHost.httpAdapter = httpAdapter;
+    const response = new ServerResponse(new IncomingMessage(new Socket()));
+    response.setHeader('x-correlation-id', '6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d');
+
+    new DomainErrorFilter(adapterHost).catch(queryError(), new ExecutionContextHost([{}, response]));
+
+    expect(replied).toHaveBeenCalledWith(
+      response,
+      { error: 'Internal', message: 'pl.error.internal.unexpected', params: {} },
+      500,
+    );
+    expect(logged).toHaveBeenCalledTimes(1);
+    const line = logged.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+    expect(line).not.toContain(personalValue);
+    expect(line).not.toContain('params:');
+    expect(line).toContain('correlation 6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d');
+    expect(line).toContain('DrizzleQueryError [Error 22P02]: Failed query: select id from notes where owner = $1');
+    expect(line).toMatch(/\n\s+at /);
+  });
+
+  it('logs only the code of a database error, whose message may quote a value', () => {
+    const databaseError = Object.assign(new Error(`duplicate key value (${personalValue})`), { code: '23505' });
+    const line = describeUnexpectedFailure(databaseError, null);
+    expect(line).not.toContain(personalValue);
+    expect(line).toContain('Error [23505]');
+  });
+
+  it('logs only the type of a thrown value that is not an error', () => {
+    expect(describeUnexpectedFailure(personalValue, null)).toBe(
+      'Unexpected failure (correlation none): a thrown string',
+    );
   });
 });

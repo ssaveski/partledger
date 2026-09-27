@@ -63,7 +63,7 @@ export const createNote = defineCommand({
     .describe('A new note.'),
   output: z.object({ noteId, version: noteVersion }).describe('The created note.'),
   errors: [],
-  access: { person: ['buyer', 'quality_engineer'], supplier_token: true, system: true },
+  access: { person: ['buyer', 'quality_engineer'], supplier_token: true, system: ['drop_credential'] },
   stepUp: false,
   impact: 'standard',
   idempotencyKey: 'required',
@@ -118,6 +118,21 @@ export const approveNote = defineCommand({
   impact: 'approval',
   idempotencyKey: 'required',
   expectedVersion: true,
+});
+
+/** Only background jobs may call it; a drop credential, also a system principal, may not. */
+export const recordJobRun = defineCommand({
+  name: 'internalTest.recordJobRun',
+  description: 'Records a note as a background job would.',
+  purpose: 'business',
+  input: z.object({ title: z.string().min(1).max(200).describe('The note title.') }).describe('The job run.'),
+  output: z.object({ noteId }).describe('The recorded note.'),
+  errors: [],
+  access: { system: ['job'] },
+  stepUp: false,
+  impact: 'standard',
+  idempotencyKey: 'optional',
+  expectedVersion: false,
 });
 
 export const setRetention = defineCommand({
@@ -246,6 +261,17 @@ export class ApproveNoteHandler implements CommandHandler<typeof approveNote> {
 }
 
 @Injectable()
+export class RecordJobRunHandler implements CommandHandler<typeof recordJobRun> {
+  async execute(
+    input: InputOf<typeof recordJobRun>,
+    context: OperationContext,
+  ): Promise<HandlerResult<typeof recordJobRun>> {
+    const note = await insertNote(context, input.title);
+    return success({ noteId: note.id });
+  }
+}
+
+@Injectable()
 export class SetRetentionHandler implements CommandHandler<typeof setRetention> {
   execute(input: InputOf<typeof setRetention>): Promise<HandlerResult<typeof setRetention>> {
     return Promise.resolve(success({ days: input.days }));
@@ -310,6 +336,7 @@ export const internalTestRegistry: OperationRegistry = {
     registerCommand(renameNote, RenameNoteHandler),
     registerCommand(approveNote, ApproveNoteHandler),
     registerCommand(setRetention, SetRetentionHandler),
+    registerCommand(recordJobRun, RecordJobRunHandler),
   ],
   queries: [registerQuery(getNote, GetNoteHandler), registerQuery(touchNoteInQuery, TouchNoteInQueryHandler)],
 };

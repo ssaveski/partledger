@@ -52,7 +52,7 @@ function principalFor(
     case 'supplier_link':
       return { ...base, type: 'supplier_token', supplierId: credential.subjectId };
     case 'drop_credential':
-      return { ...base, type: 'system' };
+      return { ...base, type: 'system', actedUnder: { grant: 'drop_credential', credentialId: credential.id } };
     case 'platform_operator':
       // The credential is an active break-glass grant; its tenant is the tenant that approved it.
       return credential.subjectId === null
