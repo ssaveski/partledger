@@ -30,6 +30,14 @@ const productionKeysAndAi = {
   OVH_KMS_CLIENT_KEY_FILE: '/run/secrets/kms-client.key',
   AI_PLATFORM_PROVIDER: 'none',
   AI_WORKER_DATABASE_URL: 'postgres://pl_ai_worker:placeholder@127.0.0.1:5432/partledger',
+/** Object storage and the malware scanner as production must name them (U14). */
+const productionUploads = {
+  STORAGE_ADAPTER: 's3',
+  S3_ENDPOINT: 'https://s3.bhs.example.test',
+  S3_ACCESS_KEY_ID: 'placeholder-access-key',
+  S3_SECRET_ACCESS_KEY: 'placeholder-secret-key',
+  MALWARE_SCANNER: 'clamd',
+  CLAMD_HOST: 'clamd',
 };
 
 function fieldsRefusedIn(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
@@ -81,6 +89,18 @@ describe('API configuration', () => {
       OPERATOR_KEYCLOAK_AUDIENCE: 'partledger-operator-api',
       AI_WORKER_DATABASE_POOL_SIZE: 2,
       AI_CALL_TIMEOUT_SECONDS: 120,
+      STORAGE_LOCAL_DIRECTORY: 'local-dev/object-storage',
+      STORAGE_QUARANTINE_BUCKET: 'partledger-quarantine',
+      STORAGE_EVIDENCE_BUCKET: 'partledger-evidence',
+      STORAGE_IMPORTS_BUCKET: 'partledger-imports',
+      S3_REGION: 'bhs',
+      S3_FORCE_PATH_STYLE: 'off',
+      CLAMD_PORT: 3310,
+      CLAMD_TIMEOUT_SECONDS: 60,
+      UPLOAD_LINK_QUOTA_FILES: 25,
+      UPLOAD_LINK_QUOTA_BYTES: 250 * 1024 * 1024,
+      UPLOAD_TENANT_DAILY_QUOTA_FILES: 2_000,
+      UPLOAD_TENANT_DAILY_QUOTA_BYTES: 4 * 1024 * 1024 * 1024,
     });
   });
 
@@ -210,6 +230,8 @@ describe('API configuration', () => {
       'KEY_SERVICE_ADAPTER',
       'AI_PLATFORM_PROVIDER',
       'AI_WORKER_DATABASE_URL',
+      'STORAGE_ADAPTER',
+      'MALWARE_SCANNER',
     ]);
     expect(
       fieldsRefusedIn({
@@ -223,6 +245,7 @@ describe('API configuration', () => {
         KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
         OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
         OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
+        ...productionUploads,
       }),
       // Only a sending adapter is missing: U24 adds the production provider's.
     ).toEqual(['EMAIL_ADAPTER']);
@@ -240,6 +263,7 @@ describe('API configuration', () => {
       KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
       OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
       OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
+      ...productionUploads,
     };
     expect(fieldsRefusedIn({ ...production, EMAIL_ADAPTER: 'local' })).toEqual(['EMAIL_ADAPTER']);
     expect(fieldsRefusedIn({ ...production, NODE_ENV: 'development', EMAIL_ADAPTER: 'local' })).toEqual([]);
@@ -247,6 +271,7 @@ describe('API configuration', () => {
   });
 
   it('refuses the local key service and the local AI adapter in production, and requires the AI worker connection', () => {
+  it('refuses local object storage and the local malware scanner in production, even when named explicitly', () => {
     const production = {
       NODE_ENV: 'production',
       ...ports,
@@ -301,5 +326,39 @@ describe('API configuration', () => {
       'AI_PLATFORM_ENDPOINT_REGION',
     ]);
     expect(fieldsRefusedIn({ ...base, AI_PLATFORM_PROVIDER: 'none' })).toEqual([]);
+      ...productionUploads,
+    };
+    expect(fieldsRefusedIn({ ...production, STORAGE_ADAPTER: 'local', MALWARE_SCANNER: 'local' })).toEqual([
+      'EMAIL_ADAPTER',
+      'STORAGE_ADAPTER',
+      'MALWARE_SCANNER',
+    ]);
+    expect(fieldsRefusedIn({ ...production, S3_ENDPOINT: 'http://s3.bhs.example.test' })).toEqual([
+      'EMAIL_ADAPTER',
+      'S3_ENDPOINT',
+    ]);
+    expect(
+      fieldsRefusedIn({ ...production, NODE_ENV: 'development', STORAGE_ADAPTER: 'local', MALWARE_SCANNER: 'local' }),
+    ).toEqual([]);
+  });
+
+  it('requires the endpoint and credentials for S3 storage and the host for clamd', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(fieldsRefusedIn({ ...base, STORAGE_ADAPTER: 's3' })).toEqual([
+      'S3_ENDPOINT',
+      'S3_ACCESS_KEY_ID',
+      'S3_SECRET_ACCESS_KEY',
+    ]);
+    expect(fieldsRefusedIn({ ...base, MALWARE_SCANNER: 'clamd' })).toEqual(['CLAMD_HOST']);
+  });
+
+  it('refuses one bucket for two roles and a bucket name S3 would not accept', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(fieldsRefusedIn({ ...base, STORAGE_IMPORTS_BUCKET: 'partledger-quarantine' })).toEqual([
+      'STORAGE_QUARANTINE_BUCKET',
+    ]);
+    expect(fieldsRefusedIn({ ...base, STORAGE_EVIDENCE_BUCKET: 'Evidence_Bucket' })).toEqual([
+      'STORAGE_EVIDENCE_BUCKET',
+    ]);
   });
 });

@@ -1,0 +1,10 @@
+{
+  "pl.uploads.attestation.statement": "I confirm that this file holds no controlled technical data, such as export-controlled drawings, specifications or technical data under the Controlled Goods Program or ITAR.",
+  "pl.uploads.scanStatus.pending": "Waiting for the malware scan",
+  "pl.uploads.scanStatus.clean": "Scanned",
+  "pl.uploads.scanStatus.flagged": "Kept back by the malware scan",
+  "pl.uploads.finding.malware": "The scan found malware.",
+  "pl.uploads.finding.scanLimitExceeded": "The file is too complex to scan completely, so it is not served.",
+  "pl.uploads.finding.pdfActiveContent": "The PDF contains active content, such as scripts or embedded files, so it is not served.",
+  "pl.uploads.finding.contentChanged": "The stored file no longer matches the file that was uploaded, so it is not served."
+}

@@ -10,7 +10,7 @@ import { defineJob, defineSchedule, registerJob } from './job.types';
 import { jobQueueConstructionSql } from './queue-schema';
 
 describe('the job registry', () => {
-  it('registers the nightly chain verification, the tenant enrolment job, the notification jobs, the second-factor reset and the organization clean-up after a removal', () => {
+  it('registers the nightly chain verification, the tenant enrolment job, the notification jobs, the second-factor reset, the organization clean-up after a removal and the upload scans', () => {
     expect(productionJobs.jobs.map((registration) => registration.declaration.name).sort()).toEqual([
       'audit.verifyChain',
       'auth.resetSecondFactor',
@@ -18,6 +18,9 @@ describe('the job registry', () => {
       'members.leaveOrganization',
       'notifications.deliverOperationalAlerts',
       'notifications.send',
+      'uploads.releaseQuarantine',
+      'uploads.rescanPending',
+      'uploads.scan',
     ]);
     expect(
       productionJobs.schedules
@@ -26,6 +29,7 @@ describe('the job registry', () => {
     ).toEqual([
       ['audit.nightlyChainVerification', 'audit.verifyChain', '17 3 * * *'],
       ['notifications.operationalAlertDelivery', 'notifications.deliverOperationalAlerts', '*/5 * * * *'],
+      ['uploads.pendingScanSweep', 'uploads.rescanPending', '*/10 * * * *'],
     ]);
   });
 

@@ -27,6 +27,7 @@ import type { IdentityOrganizations } from './tenants/identity-organizations';
 import { membershipDirectory } from './tenants/membership-directory';
 import { TenantsModule } from './tenants/tenants.module';
 import { systemClock, type Clock } from './time/clock';
+import { UploadsModule } from './uploads/uploads.module';
 
 /** Replaceable parts, for tests only; production always uses the defaults. */
 export interface AppOverrides {
@@ -98,6 +99,7 @@ export class AppModule {
           roleDirectory: roles,
         }),
         TenantsModule.register({ config, clock: time, identityOrganizations: overrides.identityOrganizations }),
+        UploadsModule.register({ config, clock: time, roleDirectory: roles }),
         OperationsModule.register({
           registry: overrides.registry ?? productionRegistry,
           roleDirectory: roles,
