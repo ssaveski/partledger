@@ -47,6 +47,9 @@ describe('API configuration', () => {
       JOBS_DATABASE_URL: jobsDatabaseUrl,
       JOBS_DATABASE_POOL_SIZE: 5,
       JOBS_WORKERS: 'on',
+      PORTAL_APP_ORIGIN: 'http://127.0.0.1:5174',
+      EMAIL_LOCAL_INBOX_DIRECTORY: 'local-dev/email-inbox',
+      EMAIL_FROM_ADDRESS: 'notifications@partledger.invalid',
     });
   });
 
@@ -128,10 +131,13 @@ describe('API configuration', () => {
     ).toEqual(['KEYCLOAK_CLIENT_SECRET']);
   });
 
-  it('requires https for the staff app and Keycloak in production', () => {
+  it('requires https for the staff app, the supplier portal and Keycloak in production', () => {
     expect(fieldsRefusedIn({ NODE_ENV: 'production', ...ports, DATABASE_URL: databaseUrl, ...auth })).toEqual([
       'STAFF_APP_ORIGIN',
+      'PORTAL_APP_ORIGIN',
       'KEYCLOAK_ISSUER',
+      'EMAIL_ADAPTER',
+      'OPERATIONAL_ALERT_FALLBACK_EMAIL',
     ]);
     expect(
       fieldsRefusedIn({
@@ -140,8 +146,27 @@ describe('API configuration', () => {
         DATABASE_URL: databaseUrl,
         ...auth,
         STAFF_APP_ORIGIN: 'https://app.example',
+        PORTAL_APP_ORIGIN: 'https://suppliers.example',
         KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+        OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
       }),
-    ).toEqual([]);
+      // Only a sending adapter is missing: U24 adds the production provider's.
+    ).toEqual(['EMAIL_ADAPTER']);
+  });
+
+  it('refuses the local email adapter in production, even when named explicitly, and accepts it elsewhere', () => {
+    const production = {
+      NODE_ENV: 'production',
+      ...ports,
+      DATABASE_URL: databaseUrl,
+      ...auth,
+      STAFF_APP_ORIGIN: 'https://app.example',
+      PORTAL_APP_ORIGIN: 'https://suppliers.example',
+      KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+      OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
+    };
+    expect(fieldsRefusedIn({ ...production, EMAIL_ADAPTER: 'local' })).toEqual(['EMAIL_ADAPTER']);
+    expect(fieldsRefusedIn({ ...production, NODE_ENV: 'development', EMAIL_ADAPTER: 'local' })).toEqual([]);
+    expect(fieldsRefusedIn({ ...production, NODE_ENV: 'development' })).toEqual([]);
   });
 });

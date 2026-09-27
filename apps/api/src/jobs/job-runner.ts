@@ -10,6 +10,7 @@ import { TenantTransactions, type AppDatabase } from '../db/tenant-transaction';
 import { describeUnexpectedFailure } from '../http/domain-error.filter';
 import type { SystemPrincipal } from '../principals/principal';
 import { clock, type Clock } from '../time/clock';
+import { JobFollowUps, JobQueue } from './enqueue';
 import { claimItem, recordItemFailure } from './item-outcomes';
 import {
   jobEnvelopeSchema,
@@ -118,6 +119,7 @@ export class JobRunner {
     @Inject(TenantTransactions) private readonly transactions: TenantTransactions,
     @Inject(ModuleRef) private readonly moduleRef: ModuleRef,
     @Inject(clock) private readonly time: Clock,
+    @Inject(JobQueue) private readonly queue: JobQueue,
   ) {
     this.registrations = new Map(catalog.jobs.map((registration) => [registration.declaration.name, registration]));
   }
@@ -165,13 +167,16 @@ export class JobRunner {
       const reference = { tenantId: principal.tenantId, job: declaration.name, itemKey: item, jobId, now };
       try {
         const done = await this.transactions.run(principal.tenantId, async (database) => {
-          if (!(await claimItem(database, reference))) {
+          const attempt = await claimItem(database, reference);
+          if (attempt === null) {
             return false;
           }
           const context: JobContext = { jobId, principal, database, now };
           const result = await handler.apply(item, payload, {
             ...context,
             audit: new ItemAudit(database, principal, this.time),
+            attempt,
+            jobs: new JobFollowUps(this.queue, database, principal),
           });
           if (!result.ok) {
             throw new ItemRefused(result.error);

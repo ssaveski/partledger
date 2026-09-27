@@ -21,6 +21,8 @@ import type { OperationRegistry } from '../../src/commands/handlers';
 import { parseConfig } from '../../src/config/env.schema';
 import type { ModuleJobs } from '../../src/jobs/job.types';
 import type { HttpEntryAdapter } from '../../src/listeners/entry-adapters';
+import type { EmailPort } from '../../src/notifications/email.port';
+import type { RecipientDirectory } from '../../src/notifications/recipient-directory';
 import { formatCredentialToken } from '../../src/principals/credential-token';
 import type { RoleDirectory } from '../../src/principals/role-directory';
 import type { Clock } from '../../src/time/clock';
@@ -82,6 +84,10 @@ export interface ApiProcessOptions {
   readonly workers?: boolean;
   /** Test tables that exist when this API boots, for its catalog check. */
   readonly catalogTables?: readonly TableAccess[];
+  /** Replaces the local email adapter, to see or fail sends. */
+  readonly emailPort?: EmailPort;
+  /** Replaces the shipped recipient directory, to reach recipients of later units. */
+  readonly recipientDirectory?: RecipientDirectory;
 }
 
 export interface ApiHarnessOptions {
@@ -94,6 +100,8 @@ export interface ApiHarnessOptions {
   readonly identityProvider?: 'keycloak' | IdentityProvider;
   /** The first API process. */
   readonly process?: ApiProcessOptions;
+  /** Further settings for every API process, such as the operator's alert fallback address. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -131,6 +139,7 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         JOBS_WORKERS: apiProcess.workers === true ? 'on' : 'off',
         // Tests move the clock by up to a day; sessions they issue must outlast that.
         ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
+        ...options.environment,
       }),
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
       {
@@ -141,6 +150,8 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
           options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
         jobPollingIntervalSeconds: 0.5,
         ...(apiProcess.jobs === undefined ? {} : { jobs: apiProcess.jobs }),
+        ...(apiProcess.emailPort === undefined ? {} : { emailPort: apiProcess.emailPort }),
+        ...(apiProcess.recipientDirectory === undefined ? {} : { recipientDirectory: apiProcess.recipientDirectory }),
         ...(apiProcess.catalogTables === undefined
           ? {}
           : {

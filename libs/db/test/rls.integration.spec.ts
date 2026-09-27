@@ -74,6 +74,22 @@ async function insertJobRows(client: pg.Client, tenantId: string): Promise<void>
   );
 }
 
+/** A notification delivering an operational alert to an alert recipient, both of the tenant. */
+async function insertNotificationRows(client: pg.Client, tenantId: string): Promise<void> {
+  const recipient = await client.query(
+    `insert into alert_recipients (tenant_id, email_address, added_at)
+     values ($1, 'ops@example.test', now()) returning id`,
+    [tenantId],
+  );
+  await client.query(
+    `insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, alert_recipient_id,
+                                params, operational_alert_id, status, created_at)
+     select $1, 'email', 'alertFixture', 'alertRecipient', $2, $2, '{}', id, 'pending', now()
+       from operational_alerts where tenant_id = $1`,
+    [tenantId, z.tuple([z.object({ id: z.uuid() })]).parse(recipient.rows)[0].id],
+  );
+}
+
 async function insertIdempotencyKey(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
   await client.query(
     `insert into idempotency_keys (tenant_id, credential_id, command, key, fingerprint, result, created_at, expires_at)
@@ -150,6 +166,7 @@ describe('row-level security as pl_app', () => {
       await insertAuditRows(superuser, tenant);
       await insertStaffSession(superuser, tenant, credential.id);
       await insertJobRows(superuser, tenant);
+      await insertNotificationRows(superuser, tenant);
     }
   });
 
@@ -222,6 +239,44 @@ describe('row-level security as pl_app', () => {
       const visible = countRows.parse((await migrator.query(`select count(*) from ${table}`)).rows);
       expect(visible[0].count, table).toBe(0);
     }
+  });
+
+  it("a notification delivering another tenant's operational alert fails its composite foreign key", async () => {
+    const code = await errorCodeOf(
+      superuser.query(
+        `insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, params,
+                                    operational_alert_id, status, created_at)
+         select $1, 'email', 'alertFixture', 'person', gen_random_uuid(), '{}', id, 'pending', now()
+           from operational_alerts where tenant_id = $2`,
+        [tenantA, tenantB],
+      ),
+    );
+    expect(code).toBe('23503');
+  });
+
+  it('a notification to an alert recipient that does not exist, or belongs to another tenant, fails its composite foreign key', async () => {
+    const insert = (recipientId: string) =>
+      superuser.query(
+        `insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, alert_recipient_id,
+                                    params, status, created_at)
+         values ($1, 'email', 'alertFixture', 'alertRecipient', $2, $2, '{}', 'pending', now())`,
+        [tenantA, recipientId],
+      );
+    expect(await errorCodeOf(insert(randomUUID()))).toBe('23503');
+    const ofB = await superuser.query('select id from alert_recipients where tenant_id = $1', [tenantB]);
+    expect(await errorCodeOf(insert(z.array(z.object({ id: z.uuid() })).parse(ofB.rows)[0]?.id ?? ''))).toBe('23503');
+  });
+
+  it('a notification to an alert recipient must name it in the checked column', async () => {
+    const code = await errorCodeOf(
+      superuser.query(
+        `insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, params, status, created_at)
+         select tenant_id, 'email', 'alertFixture', 'alertRecipient', id, '{}', 'pending', now()
+           from alert_recipients where tenant_id = $1`,
+        [tenantA],
+      ),
+    );
+    expect(code).toBe('23514');
   });
 
   it('an idempotency key referencing another tenant credential fails its composite foreign key', async () => {

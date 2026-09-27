@@ -182,9 +182,11 @@ describe('background jobs', () => {
     return entryRows.parse(result.rows);
   }
 
+  /** A tenant's chain verification schedules; other modules' schedules are their tests' concern. */
   async function schedulesOf(tenantId: string) {
     const result = await harness.superuser.query(
-      `select name, key, cron, timezone, data from pl_jobs.schedule where data ->> 'tenantId' = $1 order by key`,
+      `select name, key, cron, timezone, data from pl_jobs.schedule
+        where data ->> 'tenantId' = $1 and name = 'audit.verifyChain' order by key`,
       [tenantId],
     );
     return scheduleRows.parse(result.rows);

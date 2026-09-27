@@ -124,8 +124,20 @@ export interface JobAudit {
   record<const Data extends JsonObject>(event: AuditToken, data: AuditPayload<Data>): Promise<void>;
 }
 
+/** Enqueues follow-up work in the transaction at hand, so it commits or rolls back with it (KTD16). */
+export interface JobEnqueuer {
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+  ): Promise<string>;
+}
+
 export interface JobItemContext extends JobContext {
   readonly audit: JobAudit;
+  /** Which run of this item this is: 1 the first time, one more for each retry after a failure. */
+  readonly attempt: number;
+  /** Enqueues follow-up jobs in the item's transaction, acting under what enqueued this job. */
+  readonly jobs: JobEnqueuer;
 }
 
 /**

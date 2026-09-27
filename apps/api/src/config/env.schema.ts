@@ -7,6 +7,9 @@ const origin = z
   .url({ protocol: /^https?$/, abort: true })
   .refine((value) => new URL(value).origin === value, 'must be an origin with no path or trailing slash');
 
+/** Adapters that send nothing, which production refuses. */
+const nonSendingEmailAdapters: ReadonlySet<string> = new Set(['local']);
+
 const listenerPorts = ['STAFF_PORT', 'PORTAL_PORT', 'DROP_PORT', 'OPERATOR_PORT'] as const;
 
 export const envSchema = z
@@ -53,6 +56,25 @@ export const envSchema = z
     JOBS_DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(5),
     /** `on` runs job handlers and fires schedules in this process; `off` only enqueues. */
     JOBS_WORKERS: z.enum(['on', 'off']).default('on'),
+    /** The supplier portal's origin, which links in supplier emails open (KTD30, KTD33). */
+    PORTAL_APP_ORIGIN: origin.default('http://127.0.0.1:5174'),
+    /**
+     * The email port's adapter (KTD36). `local` writes each email as a file to a dev inbox and
+     * sends nothing, so production refuses it and must name its adapter; the production
+     * provider's adapter, processing in the tenant's region, arrives with U24. Unset means
+     * `local` outside production.
+     */
+    EMAIL_ADAPTER: z.enum(['local']).optional(),
+    /** Where the local adapter writes emails, one JSON file per notification. */
+    EMAIL_LOCAL_INBOX_DIRECTORY: z.string().min(1).default('local-dev/email-inbox'),
+    /** The sender of every notification email. */
+    EMAIL_FROM_ADDRESS: z.email().default('notifications@partledger.invalid'),
+    /**
+     * The platform operator's address that receives a tenant's operational alerts while the
+     * tenant has configured no alert recipient, so an alert always reaches a person (KTD41).
+     * Required in production.
+     */
+    OPERATIONAL_ALERT_FALLBACK_EMAIL: z.email().optional(),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -63,10 +85,24 @@ export const envSchema = z
       seen.add(config[name]);
     }
     if (config.NODE_ENV === 'production') {
-      for (const name of ['STAFF_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
+      for (const name of ['STAFF_APP_ORIGIN', 'PORTAL_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
         if (!config[name].startsWith('https://')) {
           context.addIssue({ code: 'custom', path: [name], message: 'must use https in production' });
         }
+      }
+      if (config.EMAIL_ADAPTER === undefined || nonSendingEmailAdapters.has(config.EMAIL_ADAPTER)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['EMAIL_ADAPTER'],
+          message: 'must name a sending adapter in production; local sends nothing',
+        });
+      }
+      if (config.OPERATIONAL_ALERT_FALLBACK_EMAIL === undefined) {
+        context.addIssue({
+          code: 'custom',
+          path: ['OPERATIONAL_ALERT_FALLBACK_EMAIL'],
+          message: 'is required in production',
+        });
       }
     }
   });

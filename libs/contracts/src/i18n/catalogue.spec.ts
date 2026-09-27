@@ -6,6 +6,7 @@ import {
   englishModuleCatalogues,
   formatMessage,
   modulesFromFiles,
+  pluralMessageKey,
   translate,
 } from './catalogue';
 
@@ -57,5 +58,21 @@ describe('translation catalogues', () => {
   it('fails loudly on a placeholder named after an inherited object property', () => {
     const catalogue = buildCatalogue({ parts: { 'pl.parts.owner': 'Made by {constructor}' } });
     expect(() => formatMessage('pl.parts.owner', {}, catalogue)).toThrow(/Missing param constructor/);
+  });
+
+  it('chooses the zero, one or other form of a counted message, falling back to other', () => {
+    const catalogue = buildCatalogue({
+      parts: {
+        'pl.parts.left.zero': 'None left',
+        'pl.parts.left.one': 'One left',
+        'pl.parts.left.other': '{count} left',
+        'pl.parts.seen.other': 'Seen {count} times',
+      },
+    });
+    expect(pluralMessageKey('pl.parts.left', 0, catalogue)).toBe('pl.parts.left.zero');
+    expect(pluralMessageKey('pl.parts.left', 1, catalogue)).toBe('pl.parts.left.one');
+    expect(pluralMessageKey('pl.parts.left', 7, catalogue)).toBe('pl.parts.left.other');
+    expect(pluralMessageKey('pl.parts.seen', 0, catalogue)).toBe('pl.parts.seen.other');
+    expect(pluralMessageKey('pl.parts.seen', 1, catalogue)).toBe('pl.parts.seen.other');
   });
 });
