@@ -46,22 +46,21 @@ export function signInFailureMessageKey(search: string): 'pl.auth.signInFailed' 
 }
 
 export async function readSession(fetcher: Fetcher = fetch): Promise<SessionState> {
-  let response: Response;
+  const unavailable: SessionState = { kind: 'unavailable', messageKey: 'pl.auth.sessionUnavailable' };
   try {
-    response = await fetcher(staffAuthPaths.session, { credentials: 'same-origin', cache: 'no-store' });
+    const response = await fetcher(staffAuthPaths.session, { credentials: 'same-origin', cache: 'no-store' });
+    if (response.status === 401) {
+      return { kind: 'signedOut', messageKey: 'pl.auth.sessionEnded' };
+    }
+    // A 503 means the identity provider could not be reached: the session may well stand.
+    if (!response.ok) {
+      return unavailable;
+    }
+    const session = staffSessionSchema.safeParse(await response.json());
+    return session.success ? { kind: 'signedIn', session: session.data } : unavailable;
   } catch {
-    return { kind: 'unavailable', messageKey: 'pl.auth.sessionUnavailable' };
+    return unavailable;
   }
-  if (response.status === 401) {
-    return { kind: 'signedOut', messageKey: 'pl.auth.sessionEnded' };
-  }
-  if (!response.ok) {
-    return { kind: 'unavailable', messageKey: 'pl.auth.sessionUnavailable' };
-  }
-  const session = staffSessionSchema.safeParse(await response.json());
-  return session.success
-    ? { kind: 'signedIn', session: session.data }
-    : { kind: 'unavailable', messageKey: 'pl.auth.sessionUnavailable' };
 }
 
 /** Ends the session; `unavailable` when the API could not be reached and the session may still stand. */

@@ -134,7 +134,8 @@ export class DomainErrorFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const { status, body } = httpErrorResponseFor(exception);
     const response = host.switchToHttp().getResponse<unknown>();
-    if (status >= 500) {
+    // A declared failure such as Unavailable is expected; only the unexpected are logged as failures.
+    if (status >= 500 && !(exception instanceof DomainFailure)) {
       const correlationId = response instanceof ServerResponse ? response.getHeader(correlationIdHeader) : undefined;
       this.logger.error(describeUnexpectedFailure(exception, typeof correlationId === 'string' ? correlationId : null));
     }

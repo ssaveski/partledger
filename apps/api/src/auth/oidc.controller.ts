@@ -3,10 +3,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Controller, Get, HttpCode, Inject, Logger, NotFoundException, Post, Query, Req, Res } from '@nestjs/common';
 import { signInFailedParameter, signInQuerySchema, staffAuthPaths, type StaffSession } from '@partledger/contracts';
 import type { ResolvedCredential } from '@partledger/db';
+import { domainError } from '@partledger/domain';
 import { z } from 'zod';
 
 import { CredentialResolver } from '../db/db.module';
-import { UnauthenticatedFailure } from '../http/failures';
+import { DomainFailure, UnauthenticatedFailure } from '../http/failures';
 import { entryAdapterOf } from '../listeners/listeners';
 import { clock, type Clock } from '../time/clock';
 import { identityProvider, type IdentityProvider } from './identity-provider';
@@ -26,7 +27,7 @@ import {
   sealSignInState,
   signInStateLifetimeSeconds,
 } from './sign-in-state';
-import { StaffSessions, type ActiveSession } from './staff-sessions';
+import { StaffSessions, type ResumedSession } from './staff-sessions';
 import { TokenCipher } from './token-cipher';
 
 export const staffAppOrigin = Symbol('StaffAppOrigin');
@@ -138,11 +139,16 @@ export class OidcController {
     response.setHeader('cache-control', 'no-store');
     const now = this.time.now();
     const credential = await this.presentedCredential(request, now);
-    const session: ActiveSession | null = credential === null ? null : await this.sessions.resume(credential, now);
-    if (session === null) {
-      throw new UnauthenticatedFailure();
+    const resumed: ResumedSession =
+      credential === null ? { kind: 'ended' } : await this.sessions.resume(credential, now);
+    switch (resumed.kind) {
+      case 'active':
+        return this.sessions.describe(resumed.session);
+      case 'unavailable':
+        throw new DomainFailure(domainError('Unavailable', 'dependencyUnavailable'));
+      case 'ended':
+        throw new UnauthenticatedFailure();
     }
-    return this.sessions.describe(session);
   }
 
   @Post('sign-out')

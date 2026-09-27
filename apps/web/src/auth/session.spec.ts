@@ -70,6 +70,24 @@ describe('staff session helpers', () => {
     expect(translate('pl.auth.sessionUnavailable')).not.toBe('');
   });
 
+  it('read a 200 whose body is not JSON, such as a proxy error page, as unavailable', async () => {
+    const htmlPage: Fetcher = () =>
+      Promise.resolve(new Response('<html>proxy</html>', { status: 200, headers: { 'content-type': 'text/html' } }));
+    expect(await readSession(htmlPage)).toEqual({ kind: 'unavailable', messageKey: 'pl.auth.sessionUnavailable' });
+  });
+
+  it('read a 503 from an identity provider outage as unavailable, not signed out', async () => {
+    const outage = answering(503, {
+      error: 'Unavailable',
+      message: 'pl.error.unavailable.dependencyUnavailable',
+      params: {},
+    });
+    expect(await readSession(outage.fetcher)).toEqual({
+      kind: 'unavailable',
+      messageKey: 'pl.auth.sessionUnavailable',
+    });
+  });
+
   it('sign out with the staff request header', async () => {
     const { fetcher, calls } = answering(204);
     expect(await signOut(fetcher)).toBe('signedOut');

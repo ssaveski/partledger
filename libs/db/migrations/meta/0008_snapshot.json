@@ -87,12 +87,8 @@
           "name": "audit_entries_tenant_id_fkey",
           "tableFrom": "audit_entries",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -100,20 +96,14 @@
       "compositePrimaryKeys": {
         "audit_entries_pkey": {
           "name": "audit_entries_pkey",
-          "columns": [
-            "tenant_id",
-            "seq"
-          ]
+          "columns": ["tenant_id", "seq"]
         }
       },
       "uniqueConstraints": {
         "audit_entries_tenant_id_prev_hash_key": {
           "name": "audit_entries_tenant_id_prev_hash_key",
           "nullsNotDistinct": false,
-          "columns": [
-            "tenant_id",
-            "prev_hash"
-          ]
+          "columns": ["tenant_id", "prev_hash"]
         }
       },
       "policies": {},
@@ -188,12 +178,8 @@
           "name": "commitments_tenant_id_fkey",
           "tableFrom": "commitments",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -201,10 +187,7 @@
       "compositePrimaryKeys": {
         "commitments_pkey": {
           "name": "commitments_pkey",
-          "columns": [
-            "tenant_id",
-            "commitment"
-          ]
+          "columns": ["tenant_id", "commitment"]
         }
       },
       "uniqueConstraints": {},
@@ -286,12 +269,8 @@
           "name": "credentials_tenant_id_fkey",
           "tableFrom": "credentials",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -301,10 +280,7 @@
         "credentials_tenant_id_id_key": {
           "name": "credentials_tenant_id_id_key",
           "nullsNotDistinct": false,
-          "columns": [
-            "tenant_id",
-            "id"
-          ]
+          "columns": ["tenant_id", "id"]
         }
       },
       "policies": {},
@@ -412,12 +388,8 @@
           "name": "idempotency_keys_tenant_id_fkey",
           "tableFrom": "idempotency_keys",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -425,14 +397,8 @@
           "name": "idempotency_keys_credential_fkey",
           "tableFrom": "idempotency_keys",
           "tableTo": "credentials",
-          "columnsFrom": [
-            "tenant_id",
-            "credential_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
-            "id"
-          ],
+          "columnsFrom": ["tenant_id", "credential_id"],
+          "columnsTo": ["tenant_id", "id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -442,12 +408,7 @@
         "idempotency_keys_tenant_id_credential_id_command_key_key": {
           "name": "idempotency_keys_tenant_id_credential_id_command_key_key",
           "nullsNotDistinct": false,
-          "columns": [
-            "tenant_id",
-            "credential_id",
-            "command",
-            "key"
-          ]
+          "columns": ["tenant_id", "credential_id", "command", "key"]
         }
       },
       "policies": {},
@@ -558,12 +519,8 @@
           "name": "staff_sessions_tenant_id_fkey",
           "tableFrom": "staff_sessions",
           "tableTo": "tenants",
-          "columnsFrom": [
-            "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tenant_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -571,14 +528,8 @@
           "name": "staff_sessions_credential_fkey",
           "tableFrom": "staff_sessions",
           "tableTo": "credentials",
-          "columnsFrom": [
-            "tenant_id",
-            "credential_id"
-          ],
-          "columnsTo": [
-            "tenant_id",
-            "id"
-          ],
+          "columnsFrom": ["tenant_id", "credential_id"],
+          "columnsTo": ["tenant_id", "id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -586,10 +537,7 @@
       "compositePrimaryKeys": {
         "staff_sessions_pkey": {
           "name": "staff_sessions_pkey",
-          "columns": [
-            "tenant_id",
-            "credential_id"
-          ]
+          "columns": ["tenant_id", "credential_id"]
         }
       },
       "uniqueConstraints": {},
@@ -654,9 +602,7 @@
         "tenants_slug_key": {
           "name": "tenants_slug_key",
           "nullsNotDistinct": false,
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "policies": {},

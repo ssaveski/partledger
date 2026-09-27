@@ -238,6 +238,41 @@ describe('row-level security as pl_app', () => {
     }
   });
 
+  it('an ended staff session cannot be reopened or changed, by pl_app or by the owner', async () => {
+    const credential = await issueCredential(drizzle({ client: superuser }), {
+      tenantId: tenantA,
+      kind: 'staff_session',
+      subjectId: null,
+      expiresAt: inOneHour(),
+    });
+    await insertStaffSession(superuser, tenantA, credential.id);
+    await withTenant(
+      app,
+      tenantA,
+      () =>
+        app.query(`update staff_sessions set ended_at = now(), end_reason = 'signed_out' where credential_id = $1`, [
+          credential.id,
+        ]),
+      'commit',
+    );
+    for (const statement of [
+      `update staff_sessions set ended_at = null, end_reason = null where credential_id = '${credential.id}'`,
+      `update staff_sessions set last_seen_at = now() where credential_id = '${credential.id}'`,
+      `update staff_sessions set end_reason = 'idle_timeout' where credential_id = '${credential.id}'`,
+    ]) {
+      const code = await withTenant(app, tenantA, () => errorCodeOf(app.query(statement)));
+      expect(code, statement).toBe('42501');
+    }
+    const asOwner = await withTenant(migrator, tenantA, () =>
+      errorCodeOf(
+        migrator.query(`update staff_sessions set ended_at = null, end_reason = null where credential_id = $1`, [
+          credential.id,
+        ]),
+      ),
+    );
+    expect(asOwner).toBe('42501');
+  });
+
   it('a row referencing another tenant parent row fails its composite foreign key', async () => {
     const parentOfB = z
       .tuple([z.object({ id: z.uuid() })])

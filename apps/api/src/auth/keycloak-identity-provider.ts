@@ -98,7 +98,7 @@ export class KeycloakIdentityProvider implements IdentityProvider {
     }
     const identity = await this.validate(endpoints, now, accessToken, idToken, exchange.nonce);
     if (!identity.ok) {
-      return identity;
+      return failure(identity.error === 'keys_unavailable' ? 'unavailable' : identity.error);
     }
     if (refreshToken === undefined) {
       return failure('no_refresh_token');
@@ -121,7 +121,10 @@ export class KeycloakIdentityProvider implements IdentityProvider {
     const tokens = response.value;
     const identity = await this.validate(endpoints, now, tokens.access_token, tokens.id_token, undefined);
     if (!identity.ok) {
-      return { kind: 'refused', reason: identity.error };
+      // Without the realm's keys nothing is known about the new tokens; the session stands.
+      return identity.error === 'keys_unavailable'
+        ? { kind: 'unavailable' }
+        : { kind: 'refused', reason: identity.error };
     }
     return { kind: 'refreshed', identity: identity.value, refreshToken: tokens.refresh_token ?? refreshToken };
   }

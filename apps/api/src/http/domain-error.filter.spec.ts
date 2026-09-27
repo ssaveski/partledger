@@ -144,6 +144,27 @@ describe('the log line of an unexpected failure', () => {
     expect(line).toContain('Error [23505]');
   });
 
+  it('answers a declared Unavailable failure with 503 without logging it as unexpected', () => {
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const httpAdapter = new ExpressAdapter();
+    const replied = vi.spyOn(httpAdapter, 'reply').mockImplementation(() => undefined);
+    const adapterHost = new HttpAdapterHost();
+    adapterHost.httpAdapter = httpAdapter;
+    const response = new ServerResponse(new IncomingMessage(new Socket()));
+
+    new DomainErrorFilter(adapterHost).catch(
+      new DomainFailure(domainError('Unavailable', 'dependencyUnavailable')),
+      new ExecutionContextHost([{}, response]),
+    );
+
+    expect(replied).toHaveBeenCalledWith(
+      response,
+      { error: 'Unavailable', message: 'pl.error.unavailable.dependencyUnavailable', params: {} },
+      503,
+    );
+    expect(logged).not.toHaveBeenCalled();
+  });
+
   it('logs only the type of a thrown value that is not an error', () => {
     expect(describeUnexpectedFailure(personalValue, null)).toBe(
       'Unexpected failure (correlation none): a thrown string',

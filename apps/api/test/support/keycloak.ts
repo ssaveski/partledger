@@ -13,7 +13,9 @@ import { z } from 'zod';
  * This module runs under Vitest and, for the Playwright stack, directly under Node, so it
  * uses only erasable TypeScript and explicit `.ts` extensions.
  */
-export const keycloakImage = 'quay.io/keycloak/keycloak:26.4';
+/** Pinned by digest (KTD41); the same build as docs/runbooks/keycloak.md. */
+export const keycloakImage =
+  'quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007';
 
 export const realmName = 'partledger';
 

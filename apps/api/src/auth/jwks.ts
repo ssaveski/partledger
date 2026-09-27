@@ -1,5 +1,5 @@
 import { failure, success, type Result } from '@partledger/domain';
-import { createRemoteJWKSet, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
+import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 
 /**
@@ -52,6 +52,8 @@ export interface StaffIdentity {
 
 export type TokenRefusal =
   | 'invalid_token'
+  /** The realm's signing keys could not be fetched; nothing is known about the token. */
+  | 'keys_unavailable'
   | 'wrong_token_type'
   | 'wrong_authorized_party'
   | 'nonce_mismatch'
@@ -91,8 +93,8 @@ export async function verifyStaffToken(
       clockTolerance: 5,
       requiredClaims: ['exp', 'iat', 'sub'],
     }));
-  } catch {
-    return failure('invalid_token');
+  } catch (error) {
+    return failure(keySetUnreachable(error) ? 'keys_unavailable' : 'invalid_token');
   }
   const claims = staffClaimsSchema.safeParse(payload);
   if (!claims.success) {
@@ -119,6 +121,21 @@ export async function verifyStaffToken(
     tenantId: organization.value.tenant_id[0],
     organizationId: organization.value.id,
   });
+}
+
+/**
+ * Whether verification failed because the realm's key set could not be fetched, rather than
+ * because of the token: a timeout, a network failure (a non-JOSE error from `fetch`), a
+ * non-200 answer or an unreadable body (both generic JOSE errors), or a malformed key set.
+ * These say nothing about the session, so they must not end it.
+ */
+function keySetUnreachable(error: unknown): boolean {
+  if (!(error instanceof errors.JOSEError)) {
+    return true;
+  }
+  return (
+    error instanceof errors.JWKSTimeout || error instanceof errors.JWKSInvalid || error.code === errors.JOSEError.code
+  );
 }
 
 function singleOrganization(claim: unknown): Result<z.infer<typeof organizationSchema>, TokenRefusal> {

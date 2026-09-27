@@ -26,7 +26,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 docker pull postgres:18
 # Keycloak for the staff sign-in tests (docs/runbooks/keycloak.md).
-docker pull quay.io/keycloak/keycloak:26.4
+docker pull quay.io/keycloak/keycloak:26.4@sha256:9409c59bdfb65dbffa20b11e6f18b8abb9281d480c7ca402f51ed3d5977e6007
 ```
 
 If the image already has Node 24 installed but not first on `PATH`, prefix commands with `PATH=/usr/local/n/versions/node/24.<minor>.<patch>/bin:$PATH`.

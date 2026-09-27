@@ -8,6 +8,7 @@ import type { IdentityProvider, RefreshOutcome } from '../src/auth/identity-prov
 import { sessionCookieName } from '../src/auth/session-cookie';
 import {
   credentialHeaders,
+  newIdempotencyKey,
   startApiHarness,
   stubIdentity,
   stubIdentityProvider,
@@ -17,6 +18,7 @@ import { placeholderAuthEnvironment } from './support/auth-environment';
 
 const idleMinutes = 30;
 const refreshSeconds = 60;
+const unavailable503 = { error: 'Unavailable', message: 'pl.error.unavailable.dependencyUnavailable', params: {} };
 const uniform401 = { error: 'Unauthenticated', message: 'pl.error.unauthenticated.credential', params: {} };
 const endReasons = z.array(z.object({ end_reason: z.string().nullable() }));
 
@@ -137,12 +139,24 @@ describe('staff session lifetimes', () => {
     expect((await readSession(person.token)).status).toBe(401);
   });
 
-  it('an unreachable identity provider refuses the request but keeps the session', async () => {
-    const person = await harness.issue('staff_session', harness.tenantA);
+  it('an unreachable identity provider answers 503 on the session, command and query routes and keeps the session', async () => {
+    const person = await harness.issue('staff_session', harness.tenantA, { roles: ['buyer'] });
     harness.clock.advance(refreshSeconds * 1000);
     nextRefresh = 'unavailable';
     try {
-      expect((await readSession(person.token)).status).toBe(401);
+      const session = await readSession(person.token);
+      expect(session.status).toBe(503);
+      expect(await session.json()).toEqual(unavailable503);
+      const command = await harness.command(
+        'staff',
+        'internalTest.createNote',
+        { title: 'Outage synthetic note' },
+        { token: person.token, idempotencyKey: newIdempotencyKey() },
+      );
+      expect(command.status).toBe(503);
+      expect(command.body).toEqual(unavailable503);
+      const query = await harness.query('staff', 'internalTest.getNote', { noteId: randomUUID() }, person.token);
+      expect(query.status).toBe(503);
     } finally {
       nextRefresh = 'refreshed';
     }

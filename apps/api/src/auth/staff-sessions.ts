@@ -31,6 +31,19 @@ export interface ActiveSession {
 }
 
 /**
+ * Resuming a session: `ended` is final and answered with the uniform 401; `unavailable` means
+ * the identity provider could not be reached for a due refresh, so the session is kept and the
+ * request is answered as a dependency outage.
+ */
+export type ResumedSession =
+  | { readonly kind: 'active'; readonly session: ActiveSession }
+  | { readonly kind: 'ended' }
+  | { readonly kind: 'unavailable' };
+
+const ended: ResumedSession = { kind: 'ended' };
+const unavailable: ResumedSession = { kind: 'unavailable' };
+
+/**
  * Staff sessions (KTD20): started after a validated sign-in, resumed on every request. A
  * session ends when it is signed out, when no request arrives within the idle timeout, when
  * its credential reaches the absolute timeout, or when a refresh against the identity
@@ -75,10 +88,9 @@ export class StaffSessions {
 
   /**
    * Resumes the session behind a verified `staff_session` credential, refreshing its tokens
-   * when the refresh interval has passed; `null` when the session has ended or cannot be
-   * confirmed right now.
+   * when the refresh interval has passed.
    */
-  async resume(credential: ResolvedCredential, now: Date): Promise<ActiveSession | null> {
+  async resume(credential: ResolvedCredential, now: Date): Promise<ResumedSession> {
     const key = { tenantId: credential.tenantId, credentialId: credential.id };
     const checked = await this.transactions.run(credential.tenantId, async (database) => {
       const stored = await sessionStore.find(database, key);
@@ -98,7 +110,7 @@ export class StaffSessions {
     });
     switch (checked.kind) {
       case 'ended':
-        return null;
+        return ended;
       case 'active':
         return this.activeSession(credential, checked.subjectId, now);
       case 'refresh_due':
@@ -137,7 +149,7 @@ export class StaffSessions {
     subjectId: string,
     ciphertext: Buffer,
     now: Date,
-  ): Promise<ActiveSession | null> {
+  ): Promise<ResumedSession> {
     const key = { tenantId: credential.tenantId, credentialId: credential.id };
     const refreshToken = this.cipher.decrypt(ciphertext, credential.id);
     const outcome =
@@ -145,15 +157,15 @@ export class StaffSessions {
         ? ({ kind: 'refused', reason: 'invalid_token' } as const)
         : await this.provider.refresh(refreshToken, now);
     if (outcome.kind === 'unavailable') {
-      this.logger.warn('A staff session refresh could not reach the identity provider; the request is refused');
-      return null;
+      this.logger.warn('A staff session refresh could not reach the identity provider; the session is kept');
+      return unavailable;
     }
     if (outcome.kind === 'refused') {
       this.logger.log(`A staff session ended because its refresh was refused (${outcome.reason})`);
       await this.transactions.run(credential.tenantId, (database) =>
         sessionStore.end(database, key, 'refresh_failed', now),
       );
-      return null;
+      return ended;
     }
     const { identity } = outcome;
     if (identity.subject !== subjectId || identity.tenantId !== credential.tenantId) {
@@ -162,21 +174,24 @@ export class StaffSessions {
         sessionStore.end(database, key, 'identity_changed', now),
       );
       await this.provider.endSession(outcome.refreshToken);
-      return null;
+      return ended;
     }
     const recorded = await this.transactions.run(credential.tenantId, (database) =>
       sessionStore.recordRefresh(database, key, this.cipher.encrypt(outcome.refreshToken, credential.id), now),
     );
-    return recorded ? this.activeSession(credential, subjectId, now) : null;
+    return recorded ? this.activeSession(credential, subjectId, now) : ended;
   }
 
-  private activeSession(credential: ResolvedCredential, subjectId: string, now: Date): ActiveSession {
+  private activeSession(credential: ResolvedCredential, subjectId: string, now: Date): ResumedSession {
     return {
-      credentialId: credential.id,
-      tenantId: credential.tenantId,
-      subjectId,
-      expiresAt: credential.expiresAt,
-      lastSeenAt: now,
+      kind: 'active',
+      session: {
+        credentialId: credential.id,
+        tenantId: credential.tenantId,
+        subjectId,
+        expiresAt: credential.expiresAt,
+        lastSeenAt: now,
+      },
     };
   }
 }
