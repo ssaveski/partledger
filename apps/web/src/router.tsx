@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 import { z } from 'zod';
 
+import { MembersScreen } from './routes/admin/members';
 import { DashboardPage } from './routes/dashboard';
 import { EvidenceReviewScreen } from './routes/evidence/review';
 import { PartListScreen } from './routes/parts/list';
@@ -17,8 +18,22 @@ import { supplierListSearchSchema } from './routes/suppliers/supplier-filters';
 import { AppShell } from './shell/app-shell';
 import { NotFoundPage } from './shell/not-found';
 import { ScreenError, ShellError } from './shell/route-error';
+import { SessionProvider } from './shell/session-provider';
 
-const rootRoute = createRootRoute({ component: AppShell, errorComponent: ShellError, notFoundComponent: NotFoundPage });
+/** Every screen needs a signed-in member, so the session wraps the whole shell. */
+function SignedInShell() {
+  return (
+    <SessionProvider>
+      <AppShell />
+    </SessionProvider>
+  );
+}
+
+const rootRoute = createRootRoute({
+  component: SignedInShell,
+  errorComponent: ShellError,
+  notFoundComponent: NotFoundPage,
+});
 
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
 
@@ -82,8 +97,11 @@ const assignmentRoute = createRoute({
   component: AssignmentScreen,
 });
 
+const membersRoute = createRoute({ getParentRoute: () => rootRoute, path: '/admin/members', component: MembersScreen });
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
+  membersRoute,
   rfqListRoute,
   newRfqRoute,
   partListRoute,

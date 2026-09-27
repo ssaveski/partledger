@@ -382,6 +382,37 @@ describe('the catalog check', () => {
     expect(codesOf(result)).toEqual(['missing_backup_policy credentials']);
   });
 
+  it('fails when the global directory gains a policy, loosens its insert check or loses row-level security', async () => {
+    const result = await checkAfter(`
+      create policy directory_entries_anyone on directory_entries for update to pl_app using (true);
+      alter policy directory_entries_register on directory_entries with check (true);
+      alter table directory_entries no force row level security;
+    `);
+    expect(codesOf(result).sort()).toEqual([
+      'global_policy_mismatch directory_entries',
+      'global_policy_mismatch directory_entries',
+      'global_policy_mismatch directory_entries',
+      'row_security_not_forced public.directory_entries',
+    ]);
+  });
+
+  it('a table declared global that is not the directory, or that carries tenant_id, fails the catalog check', async () => {
+    const globalFixture = `
+      create table fixture_global (code text primary key, tenant_id uuid);
+      alter table fixture_global enable row level security;
+      alter table fixture_global force row level security;
+      create policy fixture_global_backup_read on fixture_global for select to pl_backup using (true);
+      grant select on fixture_global to pl_backup;
+    `;
+    const result = await checkAfter(`set local role pl_migrator; ${globalFixture}`, {
+      tables: [...withFixtures.tables, defineTableAccess({ table: 'fixture_global', tenantKey: 'none', grants: {} })],
+    });
+    expect(codesOf(result).sort()).toEqual([
+      'global_table_has_tenant_column fixture_global',
+      'global_table_not_allowed fixture_global',
+    ]);
+  });
+
   it('fails when a table has no tenant policy', async () => {
     const result = await checkAfter('drop policy fixture_children_tenant_isolation on fixture_children');
     expect(codesOf(result)).toEqual(['missing_tenant_policy fixture_children']);

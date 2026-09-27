@@ -16,7 +16,10 @@ import type { ModuleJobs } from './jobs/job.types';
 import type { EmailPort } from './notifications/email.port';
 import { NotificationsModule } from './notifications/notifications.module';
 import type { RecipientDirectory } from './notifications/recipient-directory';
-import { noRoleAssignments, type RoleDirectory } from './principals/role-directory';
+import type { RoleDirectory } from './principals/role-directory';
+import type { IdentityOrganizations } from './tenants/identity-organizations';
+import { membershipDirectory } from './tenants/membership-directory';
+import { TenantsModule } from './tenants/tenants.module';
 import { systemClock, type Clock } from './time/clock';
 
 /** Replaceable parts, for tests only; production always uses the defaults. */
@@ -26,6 +29,7 @@ export interface AppOverrides {
   readonly clock?: Clock;
   readonly identityProvider?: IdentityProvider;
   readonly identityAdministration?: IdentityAdministration;
+  readonly identityOrganizations?: IdentityOrganizations;
   readonly jobs?: ModuleJobs;
   readonly jobPollingIntervalSeconds?: number;
   /** Tables a test created beside the shipped schema, which the boot-time catalog check must know. */
@@ -38,6 +42,7 @@ export interface AppOverrides {
 export class AppModule {
   static register(config: AppConfig, overrides: AppOverrides = {}): DynamicModule {
     const time = overrides.clock ?? systemClock;
+    const roles = overrides.roleDirectory ?? membershipDirectory;
     return {
       module: AppModule,
       imports: [
@@ -69,10 +74,12 @@ export class AppModule {
           clock: time,
           identityProvider: overrides.identityProvider,
           identityAdministration: overrides.identityAdministration,
+          roleDirectory: roles,
         }),
+        TenantsModule.register({ config, clock: time, identityOrganizations: overrides.identityOrganizations }),
         OperationsModule.register({
           registry: overrides.registry ?? productionRegistry,
-          roleDirectory: overrides.roleDirectory ?? noRoleAssignments,
+          roleDirectory: roles,
           clock: time,
         }),
       ],

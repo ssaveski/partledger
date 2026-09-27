@@ -10,9 +10,9 @@ import { messageKeyPattern } from './i18n/catalogue';
  */
 export const domainErrorReasons = {
   NotFound: ['resource', 'route'],
-  Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists'],
+  Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists', 'lastTenantAdmin'],
   Invalid: ['request', 'idempotencyKeyRequired'],
-  Unprocessable: ['idempotencyKeyReused'],
+  Unprocessable: ['idempotencyKeyReused', 'regionNotServed'],
   Forbidden: ['notPermitted', 'crossSiteRequest'],
   Unavailable: ['dependencyUnavailable'],
   StepUpRequired: ['recentAuthentication'],

@@ -4,7 +4,7 @@ import { defineTransitions } from '@partledger/domain';
 import { insertTenant, startTestDatabase, type TestDatabase } from '@partledger/db/testing';
 import { sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type pg from 'pg';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
@@ -107,17 +107,40 @@ describe('the audit chain', () => {
   let verifierPool: pg.Pool;
   let migratorPool: pg.Pool;
 
+  let tearingDown = false;
+  const connectionErrors: Error[] = [];
+
+  /**
+   * An idle pooled connection reports the server going away as an `error` event, which would
+   * otherwise be uncaught. While the container stops, PostgreSQL terminates every connection
+   * with 57P01; that is expected then and nothing else is.
+   */
+  function onConnectionError(error: Error): void {
+    if (tearingDown && error instanceof pg.DatabaseError && error.code === '57P01') {
+      return;
+    }
+    connectionErrors.push(error);
+  }
+
+  function watchedPool(pool: pg.Pool): pg.Pool {
+    pool.on('error', onConnectionError);
+    return pool;
+  }
+
   beforeAll(async () => {
     database = await startTestDatabase();
     superuser = await database.connect('superuser');
-    appPool = database.pool('pl_app', { max: 6 });
-    portalPool = database.pool('pl_portal', { max: 2 });
-    aiWorkerPool = database.pool('pl_ai_worker', { max: 2 });
-    verifierPool = database.pool('pl_verifier', { max: 2 });
-    migratorPool = database.pool('pl_migrator', { max: 2 });
+    superuser.on('error', onConnectionError);
+    appPool = watchedPool(database.pool('pl_app', { max: 6 }));
+    portalPool = watchedPool(database.pool('pl_portal', { max: 2 }));
+    aiWorkerPool = watchedPool(database.pool('pl_ai_worker', { max: 2 }));
+    verifierPool = watchedPool(database.pool('pl_verifier', { max: 2 }));
+    migratorPool = watchedPool(database.pool('pl_migrator', { max: 2 }));
   });
 
   afterAll(async () => {
+    expect(connectionErrors).toEqual([]);
+    tearingDown = true;
     await Promise.all([appPool.end(), portalPool.end(), aiWorkerPool.end(), verifierPool.end(), migratorPool.end()]);
     await superuser.end();
     await database.stop();

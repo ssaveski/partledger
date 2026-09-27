@@ -1,6 +1,6 @@
-import type { QueryDeclaration } from '@partledger/contracts';
+import { currentMemberQuery, type QueryDeclaration } from '@partledger/contracts';
 import { createApiClient, createFixtureAdapter, createHttpAdapter, type ApiClient } from '@partledger/contracts/client';
-import { fixtureHandlers } from '@partledger/contracts/fixtures';
+import { createTenantFixtures, fixtureHandlers } from '@partledger/contracts/fixtures';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createContext, useCallback, useContext, type ReactNode } from 'react';
 import { z } from 'zod';
@@ -24,12 +24,17 @@ export function createClient(kind: AdapterKind, preview: PreviewStore | null = n
   if (kind === 'http') {
     return createApiClient(createHttpAdapter({ fetch: (url, init) => window.fetch(url, init) }));
   }
-  const fixtures = createFixtureAdapter(fixtureHandlers, {
+  const tenant = createTenantFixtures();
+  const fixtures = createFixtureAdapter([...fixtureHandlers, ...tenant.queries], {
     latency: () =>
       new Promise((resolve) => {
         window.setTimeout(resolve, fixtureLatencyMs);
       }),
     previewState: () => previewStateFrom(window.location.search),
+    commands: tenant.commands,
+    session: tenant.session,
+    // The shell needs the signed-in member whatever state a screen previews.
+    unforcedQueries: [currentMemberQuery.name],
   });
   return createApiClient(preview === null ? fixtures : withPreviewStore(fixtures, preview));
 }
@@ -55,7 +60,7 @@ function useApiContext(): ApiContextValue {
   return context;
 }
 
-/** The typed client, for a screen that reads once outside a rendered query, such as before a preview write. */
+/** The typed client, for commands, the session, and a read outside a rendered query such as before a preview write. */
 export function useApiClient(): ApiClient {
   return useApiContext().client;
 }

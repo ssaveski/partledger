@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { insertTenant, startTestDatabase } from '@partledger/db/testing';
+import { insertMember, insertTenant, startTestDatabase } from '@partledger/db/testing';
 
 import { e2eStaffUserFile, e2eStaffUserSchema, staffStackPorts } from './staff-stack-contract.ts';
 import { adminClientId, clientId, startKeycloak, syntheticPassword } from '../support/keycloak.ts';
@@ -36,16 +36,26 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 try {
   const superuser = await database.connect('superuser');
   const tenantId = await insertTenant(superuser, 'synthetic-e2e');
-  await superuser.end();
   const organizationId = await keycloak.admin.createOrganization('synthetic-e2e', tenantId);
   const user = e2eStaffUserSchema.parse({
     username: 'synthetic.e2e.buyer',
     email: 'synthetic.e2e.buyer@synthetic.test',
     password: syntheticPassword(),
     tenantId,
+    tenantDisplayName: 'Synthetic synthetic-e2e',
+    displayName: 'Synthetic E2E Buyer',
   });
   const userId = await keycloak.admin.createUser(user);
   await keycloak.admin.addMember(organizationId, userId);
+  // The tenant's own rows make the person a member with roles; Keycloak only knows the organization.
+  await insertMember(superuser, {
+    tenantId,
+    userId,
+    roles: ['tenant_admin', 'buyer'],
+    email: user.email,
+    displayName: user.displayName,
+  });
+  await superuser.end();
   await writeFile(e2eStaffUserFile, JSON.stringify(user), { mode: 0o600 });
 
   api = spawn(process.execPath, ['--enable-source-maps', entryPoint], {
@@ -65,6 +75,11 @@ try {
       KEYCLOAK_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(clientId),
       KEYCLOAK_ADMIN_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(adminClientId),
       SESSION_TOKEN_KEY: randomBytes(32).toString('base64'),
+      CELL_REGION: 'ca',
+      DIRECTORY_REGION_URLS: 'ca=http://127.0.0.1:5173',
+      KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret('partledger-api-organizations'),
+      // No operator signs in during the staff end-to-end tests; the operator realm is not started.
+      OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger-operators',
     },
     stdio: 'inherit',
   });

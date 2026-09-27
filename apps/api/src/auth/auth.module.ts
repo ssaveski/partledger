@@ -3,6 +3,7 @@ import { APP_GUARD } from '@nestjs/core';
 
 import type { AppConfig } from '../config/env.schema';
 import { stepUpPolicy, type StepUpPolicy } from '../principals/step-up';
+import { roleDirectory, type RoleDirectory } from '../principals/role-directory';
 import { clock, type Clock } from '../time/clock';
 import { CsrfGuard } from './csrf.guard';
 import { identityAdministration, type IdentityAdministration } from './identity-administration';
@@ -19,6 +20,8 @@ export interface AuthOptions {
   /** Tests that issue sessions without Keycloak replace it; production always uses Keycloak. */
   readonly identityProvider?: IdentityProvider;
   readonly identityAdministration?: IdentityAdministration;
+  /** Sign-in is refused to anyone who is not a current member of the tenant. */
+  readonly roleDirectory: RoleDirectory;
 }
 
 export function sessionSettingsFrom(config: AppConfig): SessionSettings {
@@ -68,6 +71,7 @@ export class AuthModule {
         { provide: sessionSettings, useValue: sessionSettingsFrom(config) },
         { provide: staffAppOrigin, useValue: config.STAFF_APP_ORIGIN },
         { provide: clock, useValue: options.clock },
+        { provide: roleDirectory, useValue: options.roleDirectory },
         { provide: APP_GUARD, useClass: CsrfGuard },
         StaffSessions,
       ],

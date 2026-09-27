@@ -12,6 +12,29 @@ const nonSendingEmailAdapters: ReadonlySet<string> = new Set(['local']);
 
 const listenerPorts = ['STAFF_PORT', 'PORTAL_PORT', 'DROP_PORT', 'OPERATOR_PORT'] as const;
 
+const regions = ['ca', 'eu'] as const;
+
+const issuer = z.url({ protocol: /^https?$/ }).transform((value) => value.replace(/\/+$/, ''));
+
+/** `ca=https://ca.example,eu=https://eu.example`: each region's staff app, for the directory. */
+const regionUrls = z
+  .string()
+  .min(1)
+  .transform((value, context) => {
+    const entries: Partial<Record<(typeof regions)[number], string>> = {};
+    for (const pair of value.split(',')) {
+      const separator = pair.indexOf('=');
+      const region = z.enum(regions).safeParse(pair.slice(0, separator).trim());
+      const url = origin.safeParse(pair.slice(separator + 1).trim());
+      if (separator === -1 || !region.success || !url.success || entries[region.data] !== undefined) {
+        context.addIssue({ code: 'custom', message: 'must be region=origin pairs, such as ca=https://ca.example' });
+        return z.NEVER;
+      }
+      entries[region.data] = url.data;
+    }
+    return entries;
+  });
+
 export const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -33,7 +56,7 @@ export const envSchema = z
      */
     STAFF_APP_ORIGIN: origin,
     /** The region's Keycloak realm, such as `https://id.example/realms/partledger` (KTD20). */
-    KEYCLOAK_ISSUER: z.url({ protocol: /^https?$/ }).transform((issuer) => issuer.replace(/\/+$/, '')),
+    KEYCLOAK_ISSUER: issuer,
     KEYCLOAK_CLIENT_ID: z.string().min(1).default('partledger-api'),
     /** The confidential client's secret; set per environment from the secret store. */
     KEYCLOAK_CLIENT_SECRET: z.string().min(16),
@@ -64,6 +87,24 @@ export const envSchema = z
     STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS: z.coerce.number().int().min(1).max(168).default(10),
     /** How often a session's tokens are refreshed against Keycloak; a failed refresh ends the session. */
     STAFF_SESSION_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(60),
+    /** The region this deployment serves (R1); provisioning refuses a tenant of another region. */
+    CELL_REGION: z.enum(regions),
+    /** Each region's staff app origin, which the directory hands out; it must name this region. */
+    DIRECTORY_REGION_URLS: regionUrls,
+    /**
+     * The API's organizations service account (KTD20, owner decision 2026-09-27): it creates a
+     * tenant's organization at provisioning and adds and removes members, and nothing else uses
+     * it. It holds `manage-realm`, which Keycloak requires for organizations; see
+     * docs/runbooks/keycloak.md for its accepted scope.
+     */
+    KEYCLOAK_ORGANIZATIONS_CLIENT_ID: z.string().min(1).default('partledger-api-organizations'),
+    KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: z.string().min(16),
+    /** The separate realm operators sign in through, with a required second factor (KTD20, R4). */
+    OPERATOR_KEYCLOAK_ISSUER: issuer,
+    /** The client operators sign in with; operator access tokens must be issued to it. */
+    OPERATOR_KEYCLOAK_CLIENT_ID: z.string().min(1).default('partledger-operator-console'),
+    /** The audience operator access tokens must carry. */
+    OPERATOR_KEYCLOAK_AUDIENCE: z.string().min(1).default('partledger-operator-api'),
     /** pg-boss connects as `pl_job_runner`, which reaches the job queue schema and nothing else (KTD16). */
     JOBS_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     JOBS_DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(5),
@@ -97,8 +138,16 @@ export const envSchema = z
       }
       seen.add(config[name]);
     }
+    if (config.DIRECTORY_REGION_URLS[config.CELL_REGION] === undefined) {
+      context.addIssue({ code: 'custom', path: ['DIRECTORY_REGION_URLS'], message: 'must name CELL_REGION' });
+    }
     if (config.NODE_ENV === 'production') {
-      for (const name of ['STAFF_APP_ORIGIN', 'PORTAL_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
+      for (const name of [
+        'STAFF_APP_ORIGIN',
+        'PORTAL_APP_ORIGIN',
+        'KEYCLOAK_ISSUER',
+        'OPERATOR_KEYCLOAK_ISSUER',
+      ] as const) {
         if (!config[name].startsWith('https://')) {
           context.addIssue({ code: 'custom', path: [name], message: 'must use https in production' });
         }
@@ -116,6 +165,9 @@ export const envSchema = z
           path: ['OPERATIONAL_ALERT_FALLBACK_EMAIL'],
           message: 'is required in production',
         });
+      }
+      if (Object.values(config.DIRECTORY_REGION_URLS).some((url) => !url.startsWith('https://'))) {
+        context.addIssue({ code: 'custom', path: ['DIRECTORY_REGION_URLS'], message: 'must use https in production' });
       }
     }
   });

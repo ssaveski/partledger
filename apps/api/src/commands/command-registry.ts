@@ -2,6 +2,7 @@ import { addAlertRecipientCommand, removeAlertRecipientCommand, resetSecondFacto
 
 import { ResetSecondFactorHandler } from '../auth/factor-reset.command';
 import { AddAlertRecipientHandler, RemoveAlertRecipientHandler } from '../notifications/alert-recipients.commands';
+import { tenantCommands } from '../tenants/tenant-operations';
 import { registerCommand, type CommandRegistration } from './handlers';
 
 /**
@@ -13,4 +14,5 @@ export const productionCommands: readonly CommandRegistration[] = [
   registerCommand(addAlertRecipientCommand, AddAlertRecipientHandler),
   registerCommand(removeAlertRecipientCommand, RemoveAlertRecipientHandler),
   registerCommand(resetSecondFactor, ResetSecondFactorHandler),
+  ...tenantCommands,
 ];

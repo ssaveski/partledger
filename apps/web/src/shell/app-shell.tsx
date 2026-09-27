@@ -1,10 +1,12 @@
-import { cn, focusRing, useTranslate } from '@partledger/ui';
+import { Button, cn, focusRing, useTranslate } from '@partledger/ui';
 import { Link, Outlet, useRouterState } from '@tanstack/react-router';
-import { FlaskConicalIcon } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { FlaskConicalIcon, LogOutIcon } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useAdapterKind } from '../api/api-client';
 import { AlertsMenu } from './alerts';
+import { useSession } from './session-provider';
+import { holdsRole } from './session-view';
 import { ThemeSwitcher } from './theme-switcher';
 
 export const navigationLinkClasses = cn(
@@ -21,6 +23,7 @@ export const navigationLinkClasses = cn(
 export function AppShell() {
   const translate = useTranslate();
   const adapterKind = useAdapterKind();
+  const { signedIn } = useSession();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const main = useRef<HTMLElement>(null);
   const previousPathname = useRef(pathname);
@@ -81,12 +84,27 @@ export function AppShell() {
                     {translate('pl.web.navigation.evidence')}
                   </Link>
                 </li>
+                {holdsRole(signedIn, 'tenant_admin') ? (
+                  <li>
+                    <Link to="/admin/members" className={navigationLinkClasses}>
+                      {translate('pl.tenants.shell.navigation.members')}
+                    </Link>
+                  </li>
+                ) : null}
               </ul>
             </nav>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-muted">
+              <span className="sr-only">{translate('pl.tenants.shell.tenantLabel')}: </span>
+              {translate('pl.tenants.shell.regionNotice', {
+                tenant: signedIn.tenant.displayName,
+                region: translate(`pl.tenants.region.${signedIn.tenant.region}`),
+              })}
+            </p>
             <AlertsMenu />
             <ThemeSwitcher />
+            <SignOut />
           </div>
         </div>
         {adapterKind === 'fixture' ? (
@@ -104,6 +122,40 @@ export function AppShell() {
       >
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+function SignOut() {
+  const translate = useTranslate();
+  const { signedIn, signOut } = useSession();
+  const [state, setState] = useState<'idle' | 'working' | 'failed'>('idle');
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted">
+        {translate('pl.tenants.shell.signedInAs', { name: signedIn.member.displayName })}
+      </span>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={state === 'working'}
+        onClick={() => {
+          setState('working');
+          void signOut().then((outcome) => {
+            if (outcome === 'failed') {
+              setState('failed');
+            }
+          });
+        }}
+      >
+        <LogOutIcon aria-hidden />
+        {translate(state === 'working' ? 'pl.tenants.shell.signingOut' : 'pl.tenants.shell.signOut')}
+      </Button>
+      {state === 'failed' ? (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {translate('pl.tenants.shell.signOutFailed')}
+        </p>
+      ) : null}
     </div>
   );
 }

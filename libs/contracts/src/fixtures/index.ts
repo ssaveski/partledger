@@ -27,6 +27,8 @@ export {
   type FixtureSupplier,
 } from './suppliers';
 
+export { createTenantFixtures, fixtureSignedInUserId, fixtureTenantId, type TenantFixtures } from './tenants';
+
 /** Every synthetic query the fixture adapter serves. */
 export const fixtureHandlers: readonly FixtureHandler[] = [
   ...rfqFixtureHandlers,

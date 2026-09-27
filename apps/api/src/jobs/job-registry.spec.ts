@@ -10,11 +10,12 @@ import { defineJob, defineSchedule, registerJob } from './job.types';
 import { jobQueueConstructionSql } from './queue-schema';
 
 describe('the job registry', () => {
-  it('registers the nightly chain verification, the tenant enrolment job, the notification jobs and the second-factor reset', () => {
+  it('registers the nightly chain verification, the tenant enrolment job, the notification jobs, the second-factor reset and the organization clean-up after a removal', () => {
     expect(productionJobs.jobs.map((registration) => registration.declaration.name).sort()).toEqual([
       'audit.verifyChain',
       'auth.resetSecondFactor',
       'jobs.enrollTenant',
+      'members.leaveOrganization',
       'notifications.deliverOperationalAlerts',
       'notifications.send',
     ]);

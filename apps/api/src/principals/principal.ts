@@ -20,8 +20,14 @@ export type JobGrant = {
   readonly source: string;
 };
 
-/** The grant a principal acted under: a credential, or the job that ran it. */
-export type ActedUnder = { readonly grant: CredentialKind; readonly credentialId: string } | JobGrant;
+/**
+ * An operator's own sign-in through the operator realm, with no break-glass grant (R4). Only
+ * tenant provisioning acts under it; everything else an operator does needs a grant (U30).
+ */
+export type OperatorSignIn = { readonly grant: 'operator_sign_in' };
+
+/** The grant a principal acted under: a credential, the job that ran it, or an operator's sign-in. */
+export type ActedUnder = { readonly grant: CredentialKind; readonly credentialId: string } | JobGrant | OperatorSignIn;
 
 interface PrincipalBase {
   readonly type: PrincipalType;

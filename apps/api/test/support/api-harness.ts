@@ -8,7 +8,7 @@ import {
   type TenantRole,
 } from '@partledger/contracts';
 import { issueCredential, shippedExpectations, type CredentialKind, type TableAccess } from '@partledger/db';
-import { insertTenant, startTestDatabase, type TestDatabase } from '@partledger/db/testing';
+import { insertMember, insertTenant, startTestDatabase, type TestDatabase } from '@partledger/db/testing';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { z } from 'zod';
@@ -26,6 +26,7 @@ import type { EmailPort } from '../../src/notifications/email.port';
 import type { RecipientDirectory } from '../../src/notifications/recipient-directory';
 import { formatCredentialToken } from '../../src/principals/credential-token';
 import type { RoleDirectory } from '../../src/principals/role-directory';
+import type { IdentityOrganizations } from '../../src/tenants/identity-organizations';
 import type { Clock } from '../../src/time/clock';
 import { placeholderAuthEnvironment } from './auth-environment';
 import { internalTestNotesTable, internalTestRegistry } from './internal-test-module';
@@ -70,6 +71,8 @@ export interface ApiHarness {
       readonly roles?: readonly TenantRole[];
       readonly expiresInMilliseconds?: number;
       readonly steppedUpAt?: Date;
+      /** A given person rather than a new one; with memberships, their rows stay as they are unless `roles` is given. */
+      readonly subjectId?: string;
     },
   ): Promise<IssuedToken>;
   command(
@@ -81,6 +84,8 @@ export interface ApiHarness {
   query(adapter: HttpEntryAdapter, name: string, input: unknown, token?: string): Promise<ApiResponse>;
   /** Gives a person, such as one signed in through Keycloak, roles in the stand-in directory. */
   grantRoles(userId: string, roles: readonly TenantRole[]): void;
+  /** With `roles: 'memberships'`: makes a person a current member of a tenant holding exactly `roles`. */
+  makeMember(tenantId: string, userId: string, roles: readonly TenantRole[]): Promise<void>;
   count(sql: string, values?: unknown[]): Promise<number>;
   /** Another API process on the same database, sharing the clock and role directory; the caller closes it. */
   startAnotherApi(options?: ApiProcessOptions): Promise<RunningApi>;
@@ -115,6 +120,13 @@ export interface ApiHarnessOptions {
   readonly environment?: Readonly<Record<string, string>>;
   /** The admin API adapter; by default Keycloak at the configured realm. */
   readonly identityAdministration?: IdentityAdministration;
+  /**
+   * Where people's roles come from: an in-memory stand-in (the default), or the tenant's
+   * membership rows as in production, which `issue` and `makeMember` then write.
+   */
+  readonly roles?: 'stand-in' | 'memberships';
+  /** Replaces Keycloak's organizations; by default an unreachable placeholder realm. */
+  readonly identityOrganizations?: IdentityOrganizations;
 }
 
 /**
@@ -128,9 +140,13 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
   const tenantA = await insertTenant(superuser, 'tenant-a');
   const tenantB = await insertTenant(superuser, 'tenant-b');
   const rolesByUser = new Map<string, readonly TenantRole[]>();
-  const roleDirectory: RoleDirectory = {
-    rolesOf: (person) => Promise.resolve(rolesByUser.get(person.userId) ?? []),
-  };
+  const membershipRoles = options.roles === 'memberships';
+  const roleDirectory: RoleDirectory | undefined = membershipRoles
+    ? undefined
+    : {
+        rolesOf: (person) => Promise.resolve(rolesByUser.get(person.userId) ?? []),
+        isActiveMember: () => Promise.resolve(true),
+      };
   let offset = 0;
   const clock: MovableClock = {
     now: () => new Date(Date.now() + offset),
@@ -157,7 +173,10 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
       {
         registry: apiProcess.registry ?? internalTestRegistry,
-        roleDirectory,
+        ...(roleDirectory === undefined ? {} : { roleDirectory }),
+        ...(options.identityOrganizations === undefined
+          ? {}
+          : { identityOrganizations: options.identityOrganizations }),
         clock,
         identityProvider:
           options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
@@ -206,8 +225,15 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
     tenantA,
     tenantB,
     async issue(kind, tenantId, options = {}) {
-      const subjectId = randomUUID();
+      const subjectId = options.subjectId ?? randomUUID();
       rolesByUser.set(subjectId, options.roles ?? []);
+      if (
+        membershipRoles &&
+        kind === 'staff_session' &&
+        (options.roles !== undefined || options.subjectId === undefined)
+      ) {
+        await insertMember(superuser, { tenantId, userId: subjectId, roles: options.roles ?? [] });
+      }
       const expiresAt = new Date(clock.now().getTime() + (options.expiresInMilliseconds ?? 3_600_000));
       if (kind === 'staff_session') {
         // Staff sessions start the way a sign-in starts them, with a stand-in refresh token.
@@ -252,6 +278,9 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
     },
     grantRoles(userId, roles) {
       rolesByUser.set(userId, roles);
+    },
+    async makeMember(tenantId, userId, roles) {
+      await insertMember(superuser, { tenantId, userId, roles });
     },
     async count(text, values = []) {
       const result = await superuser.query(`select count(*)::int as count from (${text}) as counted`, values);

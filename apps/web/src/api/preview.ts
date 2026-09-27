@@ -42,6 +42,7 @@ export function createPreviewStore(): PreviewStore {
 /** Reads what the preview wrote before asking the fixtures. */
 export function withPreviewStore(adapter: ApiAdapter, store: PreviewStore): ApiAdapter {
   return {
+    ...adapter,
     query(name, input): Promise<AdapterResult> {
       const written = store.read(name, input);
       return written.found ? Promise.resolve({ ok: true, body: written.body }) : adapter.query(name, input);

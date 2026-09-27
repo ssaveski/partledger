@@ -40,7 +40,7 @@ const app = await createApp(
   {
     registry: jobsTestRegistry,
     jobs: jobsTestJobs,
-    roleDirectory: { rolesOf: () => Promise.resolve(['buyer']) },
+    roleDirectory: { rolesOf: () => Promise.resolve(['buyer']), isActiveMember: () => Promise.resolve(true) },
     catalogExpectations: { ...shippedExpectations, tables: [...shippedExpectations.tables, ...jobsTestCatalogTables] },
   },
 );

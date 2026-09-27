@@ -11,8 +11,13 @@ export type ColumnPrivilege = 'SELECT' | 'INSERT' | 'UPDATE';
  */
 export interface TableAccess {
   readonly table: string;
-  /** `tenant_id` for tenant-owned tables; `id` for the tenants table itself. */
-  readonly tenantKey: 'tenant_id' | 'id';
+  /**
+   * `tenant_id` for tenant-owned tables; `id` for the tenants table itself; `none` for a global
+   * table that holds no tenant's data (the directory), whose policies are listed in `policies`.
+   */
+  readonly tenantKey: 'tenant_id' | 'id' | 'none';
+  /** A global table's policies besides `pl_backup`'s read-all, compared exactly. */
+  readonly policies?: readonly GlobalPolicy[];
   readonly grants: Readonly<Partial<Record<GrantableRole, readonly TablePrivilege[]>>>;
   readonly columnGrants?: Readonly<
     Partial<Record<GrantableRole, Readonly<Record<string, readonly ColumnPrivilege[]>>>>
@@ -24,6 +29,15 @@ export interface TableAccess {
    * lets through only an erasure (the commitment store, R39). No table-level UPDATE or DELETE.
    */
   readonly eraseOnly?: boolean;
+}
+
+/** A policy on a global table as `pg_policy` deparses it; the command is `r`, `a`, `w`, `d` or `*`. */
+export interface GlobalPolicy {
+  readonly name: string;
+  readonly command: 'r' | 'a' | 'w' | 'd' | '*';
+  readonly role: GrantableRole;
+  readonly using: string | null;
+  readonly check: string | null;
 }
 
 export function defineTableAccess(access: TableAccess): TableAccess {

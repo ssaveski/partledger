@@ -10,15 +10,32 @@ export default defineConfig({
   // Three cold dev servers share the CI runner, so the first render of a page can exceed 5 seconds.
   expect: { timeout: 10_000 },
   projects: [
-    { name: 'web', testDir: 'apps/web/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5173' } },
+    // The staff app previewing synthetic data through the fixture adapter.
+    {
+      name: 'web',
+      testDir: 'apps/web/e2e',
+      testIgnore: 'live/**',
+      use: { ...chromium, baseURL: 'http://127.0.0.1:5176' },
+    },
+    // The staff app on the HTTP adapter against the staff stack, signing in through Keycloak.
+    { name: 'web-live', testDir: 'apps/web/e2e/live', use: { ...chromium, baseURL: 'http://127.0.0.1:5173' } },
     { name: 'portal', testDir: 'apps/portal/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5174' } },
     { name: 'ui', testDir: 'libs/ui/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5175' } },
   ],
   webServer: [
     {
+      command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5176',
+      cwd: 'apps/web',
+      url: 'http://127.0.0.1:5176',
+      reuseExistingServer: false,
+      stdout: 'pipe',
+    },
+    {
+      // The origin the staff stack's Keycloak client and the API's STAFF_APP_ORIGIN name.
       command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1',
       cwd: 'apps/web',
       url: 'http://127.0.0.1:5173',
+      env: { VITE_API_ADAPTER: 'http' },
       reuseExistingServer: false,
       stdout: 'pipe',
     },
