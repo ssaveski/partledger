@@ -11,6 +11,7 @@ import { keyService, type KeyService } from '../src/keys/key-service.port';
 import {
   aiTestJobs,
   aiTestRegistry,
+  betweenReadAndApply,
   StandInProviderNetwork,
   suggestTitleJob,
   testSuggestionTargets,
@@ -46,11 +47,19 @@ const idRows = z.tuple([z.object({ id: z.uuid() })]);
 const outcomeRows = z.array(z.object({ status: z.string(), failure: z.string().nullable() }));
 
 async function errorCodeOf(work: Promise<unknown>): Promise<string | undefined> {
+  return (await databaseErrorOf(work))?.code;
+}
+
+async function databaseErrorOf(
+  work: Promise<unknown>,
+): Promise<{ readonly code: string; readonly message: string } | undefined> {
   try {
     await work;
     return undefined;
   } catch (error) {
-    return error instanceof pg.DatabaseError ? error.code : String(error);
+    return error instanceof pg.DatabaseError
+      ? { code: error.code ?? '', message: error.message }
+      : { code: String(error), message: String(error) };
   }
 }
 
@@ -218,6 +227,99 @@ describe('the AI provider layer and suggestion store', () => {
     });
   });
 
+  describe('the suggestion and key guards', () => {
+    async function inTenant<T>(client: pg.Client, tenantId: string, work: () => Promise<T>): Promise<T> {
+      await client.query('begin');
+      try {
+        await client.query(`select set_config('app.tenant_id', $1, true)`, [tenantId]);
+        return await work();
+      } finally {
+        await client.query('rollback');
+      }
+    }
+
+    it('refuses to change the status of a decided suggestion, even for the app role', async () => {
+      const { suggestionId } = await pendingSuggestion();
+      await harness.command('staff', 'ai.rejectSuggestion', { suggestionId }, { token: buyerA.token });
+      const app = await harness.database.connect('pl_app');
+      try {
+        const refused = await databaseErrorOf(
+          inTenant(app, harness.tenantA, () =>
+            app.query(`update ai_suggestions set status = 'accepted', decided_at = now() where id = $1`, [
+              suggestionId,
+            ]),
+          ),
+        );
+        expect(refused?.code).toBe('42501');
+        expect(refused?.message).toContain('pl.ai.suggestion_decided_once');
+      } finally {
+        await app.end();
+      }
+    });
+
+    it('refuses to change what a pending suggestion suggests, for the app role and the owner alike', async () => {
+      const { suggestionId } = await pendingSuggestion();
+      const app = await harness.database.connect('pl_app');
+      const owner = await harness.database.connect('pl_migrator');
+      try {
+        // The app role holds no UPDATE on the value at all.
+        expect(
+          await errorCodeOf(
+            inTenant(app, harness.tenantA, () =>
+              app.query(`update ai_suggestions set suggested_value = '"Changed"' where id = $1`, [suggestionId]),
+            ),
+          ),
+        ).toBe('42501');
+        // The app role may decide, but not change the value while deciding.
+        const whileDeciding = await databaseErrorOf(
+          inTenant(app, harness.tenantA, () =>
+            app.query(
+              `update ai_suggestions set status = 'accepted', decided_at = now(), decided_by = $2,
+                      base_version = base_version + 1 where id = $1`,
+              [suggestionId, buyerA.subjectId],
+            ),
+          ),
+        );
+        expect(whileDeciding?.code).toBe('42501');
+        const byOwner = await databaseErrorOf(
+          inTenant(owner, harness.tenantA, () =>
+            owner.query(`update ai_suggestions set suggested_value = '"Changed"' where id = $1`, [suggestionId]),
+          ),
+        );
+        expect(byOwner?.code).toBe('42501');
+        expect(byOwner?.message).toContain('pl.ai.suggestion_decided_once');
+      } finally {
+        await app.end();
+        await owner.end();
+      }
+    });
+
+    it('refuses any change to a stored tenant key, even for the table owner', async () => {
+      const tenant = await insertTenant(`key-fixed-${randomUUID().slice(0, 8)}`, 'ca', false);
+      const sealed = await keys.encrypt(Buffer.from(tenantKey), encryptionContextOf(tenant, 'ai-key/fixed'));
+      if (!sealed.ok) {
+        throw new Error('sealing failed');
+      }
+      await harness.superuser.query(
+        `insert into tenant_ai_keys (tenant_id, key_reference, provider, model, key_service_key_id, wrapped_data_key, sealed_secret, created_at)
+         values ($1, 'ai-key/fixed', 'anthropic', 'claude-sonnet-4-5', $2, $3, $4, now())`,
+        [tenant, sealed.value.keyId, sealed.value.wrappedDataKey, sealed.value.ciphertext],
+      );
+      const owner = await harness.database.connect('pl_migrator');
+      try {
+        const refused = await databaseErrorOf(
+          inTenant(owner, tenant, () =>
+            owner.query(`update tenant_ai_keys set model = 'claude-opus-4' where tenant_id = $1`, [tenant]),
+          ),
+        );
+        expect(refused?.code).toBe('42501');
+        expect(refused?.message).toContain('pl.ai.key_fixed');
+      } finally {
+        await owner.end();
+      }
+    });
+  });
+
   describe('storing suggestions', () => {
     it('stores a suggestion with an ai_agent audit entry, and never its value in the chain', async () => {
       const noteId = await insertNote(harness.tenantA);
@@ -302,6 +404,24 @@ describe('the AI provider layer and suggestion store', () => {
     });
   });
 
+  describe('reading suggestions', () => {
+    it("shows a target's suggestions only to the roles of that target", async () => {
+      const noteId = await insertNote(harness.tenantA);
+      const read = (entity: string, token: string) =>
+        harness.query('staff', 'ai.suggestions', { targetEntity: entity, targetId: noteId }, token);
+      expect((await read('internalTestNote', buyerA.token)).status).toBe(200);
+      expect((await read('internalTestNoteReview', qualityA.token)).status).toBe(200);
+      expect(await read('internalTestNoteReview', buyerA.token)).toMatchObject({
+        status: 403,
+        body: { message: 'pl.error.forbidden.notPermitted' },
+      });
+      expect(await read('unknownEntity', buyerA.token)).toMatchObject({
+        status: 404,
+        body: { message: 'pl.error.notFound.resource' },
+      });
+    });
+  });
+
   describe('deciding suggestions', () => {
     it('applies an accepted suggestion and writes a person entry', async () => {
       const { noteId, suggestionId } = await pendingSuggestion();
@@ -343,6 +463,24 @@ describe('the AI provider layer and suggestion store', () => {
         body: { message: 'pl.error.conflict.versionMismatch', params: { expectedVersion: 1, actualVersion: 2 } },
       });
       expect(await noteOf(noteId)).toEqual({ title: 'Edited by a person', version: 2 });
+      expect((await suggestionsFor(noteId))[0]?.status).toBe('pending');
+    });
+
+    it('returns Conflict when the record changes while a suggestion is being accepted', async () => {
+      const { noteId, suggestionId } = await pendingSuggestion();
+      betweenReadAndApply.run = async (id) => {
+        await harness.superuser.query(
+          `update internal_test_notes set title = 'Edited meanwhile', version = version + 1 where id = $1`,
+          [id],
+        );
+      };
+      const response = await harness.command('staff', 'ai.acceptSuggestion', { suggestionId }, { token: buyerA.token });
+      expect(betweenReadAndApply.run).toBeNull();
+      expect(response).toMatchObject({
+        status: 409,
+        body: { message: 'pl.error.conflict.versionMismatch', params: { expectedVersion: 1, actualVersion: 2 } },
+      });
+      expect(await noteOf(noteId)).toEqual({ title: 'Edited meanwhile', version: 2 });
       expect((await suggestionsFor(noteId))[0]?.status).toBe('pending');
     });
 
@@ -491,6 +629,32 @@ describe('the AI provider layer and suggestion store', () => {
         provider: 'local',
         configuration_source: 'platform',
       });
+      expect(network.requests.length).toBe(requestsBefore);
+    });
+
+    it("never falls back to the platform when a tenant's stored key cannot be decrypted", async () => {
+      const tenant = await insertTenant(`undecryptable-${randomUUID().slice(0, 8)}`, 'ca', false);
+      const reference = 'ai-key/undecryptable';
+      // Sealed for another reference, so the key service cannot open it for this one.
+      const sealed = await keys.encrypt(Buffer.from(tenantKey), encryptionContextOf(tenant, 'ai-key/elsewhere'));
+      if (!sealed.ok) {
+        throw new Error('sealing failed');
+      }
+      await harness.superuser.query(
+        `insert into tenant_ai_keys (tenant_id, key_reference, provider, model, key_service_key_id, wrapped_data_key, sealed_secret, created_at)
+         values ($1, $2, 'anthropic', 'claude-sonnet-4-5', $3, $4, $5, now())`,
+        [tenant, reference, sealed.value.keyId, sealed.value.wrappedDataKey, sealed.value.ciphertext],
+      );
+      await harness.superuser.query(
+        `update tenants set ai_provider = 'anthropic', ai_key_reference = $2 where id = $1`,
+        [tenant, reference],
+      );
+      const noteId = await insertNote(tenant);
+      const requestsBefore = network.requests.length;
+      await expect(runner.run(deliveredSuggestion(tenant, noteId))).rejects.toMatchObject({
+        failure: 'Unavailable.dependencyUnavailable',
+      });
+      expect(await suggestionsFor(noteId)).toEqual([]);
       expect(network.requests.length).toBe(requestsBefore);
     });
 

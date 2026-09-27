@@ -19,10 +19,17 @@ export interface SuggestionTarget {
   readonly roles: readonly [TenantRole, ...TenantRole[]];
   /** The schema of a field's value, or `null` for a field that takes no suggestions. */
   valueSchema(field: string): z.ZodType | null;
-  /** The record's current version, or `null` when it does not exist in the tenant. */
+  /**
+   * The record's current version, or `null` when it does not exist in the tenant. It should lock
+   * the row (`select … for update`), so the record cannot change between this read and `apply`.
+   */
   currentVersion(database: AppDatabase, tenantId: string, id: string): Promise<number | null>;
-  /** Applies an accepted value to a record still at `baseVersion`; returns the record's new version. */
-  apply(database: AppDatabase, change: TargetChange): Promise<number>;
+  /**
+   * Applies an accepted value to a record still at `baseVersion`, with a conditional update, and
+   * returns the record's new version; `null` when the record is no longer at `baseVersion`, which
+   * the accepting command refuses as a version conflict.
+   */
+  apply(database: AppDatabase, change: TargetChange): Promise<number | null>;
 }
 
 export interface TargetChange {
@@ -58,6 +65,11 @@ export class SuggestionTargets {
 
   find(type: string, entity: string): SuggestionTarget | undefined {
     return this.byKey.get(`${type}/${entity}`);
+  }
+
+  /** The targets of an entity, whatever their type. */
+  ofEntity(entity: string): readonly SuggestionTarget[] {
+    return [...this.byKey.values()].filter((target) => target.entity === entity);
   }
 }
 

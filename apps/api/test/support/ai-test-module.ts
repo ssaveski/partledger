@@ -62,15 +62,38 @@ export const noteTitleTarget: SuggestionTarget = {
         )
       ).rows,
     );
-    const [updated] = rows;
-    if (updated === undefined) {
-      throw new Error('The note changed under an accepted suggestion');
-    }
-    return updated.version;
+    return rows[0]?.version ?? null;
   },
 };
 
-export const testSuggestionTargets = new SuggestionTargets([noteTitleTarget]);
+/**
+ * Runs between the target's version read and its update, standing in for another person's
+ * edit that commits in that gap. Tests set it and clear it.
+ */
+export const betweenReadAndApply: { run: ((noteId: string) => Promise<void>) | null } = { run: null };
+
+/** The notes target, with the concurrent edit of `betweenReadAndApply` after each version read. */
+const racingNoteTitleTarget: SuggestionTarget = {
+  ...noteTitleTarget,
+  async currentVersion(database, tenantId, id) {
+    const version = await noteTitleTarget.currentVersion(database, tenantId, id);
+    const edit = betweenReadAndApply.run;
+    if (edit !== null) {
+      betweenReadAndApply.run = null;
+      await edit(id);
+    }
+    return version;
+  },
+};
+
+/** The same notes, as a target only quality engineers may decide. */
+export const noteReviewTarget: SuggestionTarget = {
+  ...noteTitleTarget,
+  entity: 'internalTestNoteReview',
+  roles: ['quality_engineer'],
+};
+
+export const testSuggestionTargets = new SuggestionTargets([racingNoteTitleTarget, noteReviewTarget]);
 
 export const suggestTitleJob = defineJob({
   name: 'aiTest.suggestTitle',

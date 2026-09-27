@@ -46,6 +46,8 @@ export interface OvhKmsOptions {
   readonly transport: KmsTransport;
 }
 
+const refusedStatuses: ReadonlySet<number> = new Set([400, 404, 422]);
+
 const base64 = z.string().regex(/^[A-Za-z0-9+/_-]+=*$/);
 const dataKeyResponse = z.object({ key: z.string().min(1).max(4096), plaintext: base64 });
 const plaintextResponse = z.object({ plaintext: base64 });
@@ -76,7 +78,9 @@ export class OvhKmsAdapter implements KeyService {
     } catch {
       return failure('unavailable');
     }
-    if (response.status >= 400 && response.status < 500) {
+    // Only a refusal of the request itself is final. A refused client certificate (401, 403), a
+    // timeout (408) or throttling (429) is an outage: the value may well decrypt later.
+    if (refusedStatuses.has(response.status)) {
       return failure('refused');
     }
     const parsed = schema.safeParse(response.body);

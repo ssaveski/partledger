@@ -8,7 +8,7 @@ import {
   type Suggestion,
 } from '@partledger/contracts';
 import { schema } from '@partledger/db';
-import { refuse, success, versionConflict, failure } from '@partledger/domain';
+import { domainError, failure, refuse, success, versionConflict } from '@partledger/domain';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -123,6 +123,16 @@ export class AcceptSuggestionHandler implements CommandHandler<typeof acceptSugg
       baseVersion: suggestion.baseVersion,
       now,
     });
+    if (targetVersion === null) {
+      // The record changed after it was read: refuse, and roll back, as the version check would have.
+      const actualVersion = await target.currentVersion(database, suggestion.tenantId, suggestion.targetId);
+      return failure(
+        domainError('Conflict', 'versionMismatch', {
+          expectedVersion: suggestion.baseVersion,
+          actualVersion: actualVersion ?? -1,
+        }),
+      );
+    }
     await recordDecision(database, suggestion, 'accepted', principal.type === 'person' ? principal.userId : null, now);
     audit.record({
       suggestion: auditId(suggestion.id),
@@ -164,12 +174,23 @@ export class RejectSuggestionHandler implements CommandHandler<typeof rejectSugg
 
 const sourceLocationSchema = z.record(z.string(), z.union([z.string(), z.number()])).nullable();
 
+/** A record's suggestions are shown only to the people who could decide them. */
 @Injectable()
 export class SuggestionsHandler implements QueryHandler<typeof suggestionsQuery> {
+  constructor(@Inject(suggestionTargets) private readonly targets: SuggestionTargets) {}
+
   async execute(
     input: InputOf<typeof suggestionsQuery>,
     { principal, database }: OperationContext,
   ): Promise<HandlerResult<typeof suggestionsQuery>> {
+    const targets = this.targets.ofEntity(input.targetEntity);
+    if (targets.length === 0) {
+      return refuse('NotFound', 'resource');
+    }
+    const roles = principal.type === 'person' ? principal.roles : [];
+    if (!targets.some((target) => roles.some((role) => target.roles.includes(role)))) {
+      return refuse('Forbidden', 'notPermitted');
+    }
     const rows = await database
       .select()
       .from(aiSuggestions)

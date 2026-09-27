@@ -6,15 +6,15 @@ The AI layer lives in `apps/api/src/ai/`, and the key service in `apps/api/src/k
 
 - A configuration is a closed union: `anthropic`, `openai` (with `us` or `eu` residency), `azure_openai` (with a resource name and its Azure region) or `mistral`, plus `local` for development. Names are checked against patterns, and no field takes a URL.
 - Each provider has one fixed endpoint in `provider-factory.ts`. The model is built for each call, and always gets an explicit key and base URL. So the SDK's environment fallbacks, such as `ANTHROPIC_BASE_URL` or `OPENAI_API_KEY`, are never read. A bare model-id string is refused, because the AI SDK would route it through Vercel's gateway.
-- Every request goes through the egress allowlist (`egress-allowlist.ts`). It allows HTTPS on port 443 to that provider's host only, with no redirects. Every address the host resolves to must be public, so private, loopback, link-local and metadata addresses are all refused.
-- Documents are sent as data between `<document>` delimiters, and the call offers no tools. The answer is parsed with the caller's zod schema. The schema uses `.nullable()`, never `.optional()`, and `assertStrictOutputSchema` enforces this. An answer that fails the schema fails the job item, and nothing is stored.
+- Every request goes through the egress allowlist (`egress-allowlist.ts`). It allows HTTPS on port 443 to that provider's host only, with no redirects. Every address the host resolves to must be public, so private, loopback, link-local and metadata addresses, and IPv6 addresses that embed an IPv4 address, are all refused. The connection then goes only to the addresses that were checked: its dispatcher never resolves the name again.
+- Documents are sent as data between delimiters named afresh for each call (`<document-<uuid>>`), so a document cannot close its own block. The call offers no tools. The answer is parsed with the caller's zod schema. The schema uses `.nullable()`, never `.optional()`, and `assertStrictOutputSchema` enforces this. An answer that fails the schema fails the job item, and nothing is stored.
 
 ## Which configuration a tenant uses
 
 - `tenants.ai_provider = platform_default` means the tenant uses the platform configuration (`AI_PLATFORM_*`). `AI_PLATFORM_PROVIDER=none` switches AI off.
 - A tenant admin sets the tenant's own key with `ai.configureProvider`. This needs a recent step-up. The key is envelope-encrypted through the key service into `tenant_ai_keys`, under a new reference. It is never returned, logged or put in the audit chain.
-- The tenant's own configuration is used only when it is complete. That means a stored key exists under the tenant's reference, for the tenant's provider, it decrypts, and the whole configuration passes the closed union. Otherwise the platform default is used in full. The two are never mixed field by field.
-- If the key service is unreachable, the call fails as unavailable. It does not fall back to the platform, so an outage never sends the tenant's documents to another provider.
+- The tenant's own configuration is used when it is complete. That means a stored key exists under the tenant's reference, for the tenant's provider, and the whole configuration passes the closed union. Otherwise the platform default is used in full. The two are never mixed field by field.
+- If a complete configuration's key does not decrypt, the call fails as unavailable. This covers an unreachable, refusing or throttling key service, and an envelope it cannot open. The call never falls back to the platform, so the tenant's documents never go to a provider it did not choose. The KMS adapter treats only 400, 404 and 422 as a refusal of the envelope; 401, 403, 408, 429 and every 5xx are outages.
 - With `ai_region_restricted`, the call must be processed in the tenant's region, or it is refused with `Unprocessable.aiRegionNotAllowed`. Where each provider processes calls:
   - Anthropic: `us`.
   - Mistral: `eu`.

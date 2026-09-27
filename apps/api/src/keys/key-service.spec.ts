@@ -133,6 +133,26 @@ describe('the OVHcloud KMS key service adapter', () => {
     expect(await keys.sign(secret)).toEqual({ ok: false, error: 'unavailable' });
   });
 
+  it('reports a KMS that refuses the client (401, 403) or throttles it (429) as unavailable', async () => {
+    const sealed = await new OvhKmsAdapter({ ...kmsOptions, transport: fakeKms() }).encrypt(secret, context);
+    if (!sealed.ok) {
+      throw new Error('sealing failed');
+    }
+    for (const status of [401, 403, 408, 429, 500, 503]) {
+      const answering: KmsTransport = { send: () => Promise.resolve({ status, body: { error: 'synthetic' } }) };
+      const keys = new OvhKmsAdapter({ ...kmsOptions, transport: answering });
+      expect(await keys.decrypt(sealed.value, context)).toEqual({ ok: false, error: 'unavailable' });
+      expect(await keys.encrypt(secret, context)).toEqual({ ok: false, error: 'unavailable' });
+    }
+    for (const status of [400, 404, 422]) {
+      const refusing: KmsTransport = { send: () => Promise.resolve({ status, body: { error: 'synthetic' } }) };
+      expect(await new OvhKmsAdapter({ ...kmsOptions, transport: refusing }).decrypt(sealed.value, context)).toEqual({
+        ok: false,
+        error: 'undecryptable',
+      });
+    }
+  });
+
   it('signs through the KMS, verifiable with the key the KMS publishes', async () => {
     const keys = new OvhKmsAdapter({ ...kmsOptions, transport: fakeKms() });
     const message = Buffer.from('partledger/checkpoint/synthetic', 'utf8');

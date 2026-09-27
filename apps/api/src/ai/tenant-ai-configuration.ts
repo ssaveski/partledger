@@ -65,10 +65,11 @@ function candidateOf(row: KeyRow, apiKey: ApiKey): unknown {
 
 /**
  * Which configuration a tenant's AI calls use (R30, KTD25). The tenant's own configuration is
- * used only when it is complete: a stored key under the tenant's reference, of the tenant's
- * provider, that decrypts and passes the closed union as a whole. Otherwise the platform
- * default is used entirely; the two are never mixed field by field. Reads run in the caller's
- * tenant transaction; the key is decrypted only here, and only for the call being made.
+ * used when it is complete: a stored key under the tenant's reference, of the tenant's provider,
+ * that passes the closed union as a whole. Otherwise the platform default is used entirely; the
+ * two are never mixed field by field. A complete configuration whose key does not decrypt fails
+ * the call as unavailable and never falls back. Reads run in the caller's tenant transaction;
+ * the key is decrypted only here, and only for the call being made.
  */
 @Injectable()
 export class AiConfigurations {
@@ -125,16 +126,15 @@ export class AiConfigurations {
       encryptionContextOf(tenantId, key.keyReference),
     );
     if (!decrypted.ok) {
-      // An outage must not quietly send the tenant's documents to the platform's provider instead.
-      return decrypted.error === 'unavailable' ? failure('unavailable') : this.platformResolution(tenant);
+      // The tenant chose its own provider: a key that does not decrypt, for whatever reason, must
+      // never send the tenant's documents to the platform's provider instead.
+      return failure('unavailable');
     }
     const parsed = providerConfigurationSchema.safeParse(
       candidateOf(key, new ApiKey(decrypted.value.toString('utf8'))),
     );
     decrypted.value.fill(0);
-    return parsed.success
-      ? success({ configuration: parsed.data, source: 'tenant', tenant })
-      : this.platformResolution(tenant);
+    return parsed.success ? success({ configuration: parsed.data, source: 'tenant', tenant }) : failure('unavailable');
   }
 
   /** The stored settings and which configuration calls would use, without decrypting anything. */

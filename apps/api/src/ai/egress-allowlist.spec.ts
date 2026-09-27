@@ -1,3 +1,5 @@
+import { createServer } from 'node:net';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -5,6 +7,9 @@ import {
   EgressBlockedError,
   guardedFetch,
   isPublicAddress,
+  pinnedLookup,
+  systemEgressNetwork,
+  type ResolvedAddress,
   type EgressNetwork,
   type Resolver,
 } from './egress-allowlist';
@@ -107,7 +112,7 @@ describe('the AI egress allowlist', () => {
     const network: EgressNetwork = {
       resolve: resolvingTo('169.254.169.254'),
       fetch: (_input, init) => {
-        sent.push(init ?? {});
+        sent.push(init);
         return Promise.resolve(new Response('{}'));
       },
     };
@@ -119,5 +124,72 @@ describe('the AI egress allowlist', () => {
       method: 'POST',
     });
     expect(sent).toEqual([{ method: 'POST', redirect: 'error' }]);
+  });
+
+  it('treats IPv6 ranges that embed an IPv4 address as non-public', () => {
+    for (const address of [
+      '2002:a9fe:a9fe::1',
+      '2001:0:4136:e378:8000:63bf:3fff:fdd2',
+      '::a9fe:a9fe',
+      '::',
+      '::ffff:a9fe:a9fe',
+      '::ffff:0:a9fe:a9fe',
+      '64:ff9b::a9fe:a9fe',
+    ]) {
+      expect(isPublicAddress(address), address).toBe(false);
+    }
+    expect(isPublicAddress('2607:6bc0::10')).toBe(true);
+  });
+
+  it('connects only to the addresses checked at resolution, never to a later DNS answer', async () => {
+    const answers: (readonly ResolvedAddress[])[] = [
+      [{ address: '160.79.104.10', family: 4 }],
+      [{ address: '169.254.169.254', family: 4 }],
+    ];
+    let resolutions = 0;
+    const connectedTo: string[] = [];
+    const network: EgressNetwork = {
+      resolve: () => Promise.resolve(answers[Math.min(resolutions++, answers.length - 1)] ?? []),
+      fetch: (_input, _init, addresses) => {
+        const lookup = pinnedLookup(addresses);
+        lookup('api.anthropic.com', {}, (_error, address) => {
+          connectedTo.push(typeof address === 'string' ? address : address.map((entry) => entry.address).join(','));
+        });
+        lookup('api.anthropic.com', { all: true }, (_error, address) => {
+          connectedTo.push(typeof address === 'string' ? address : address.map((entry) => entry.address).join(','));
+        });
+        return Promise.resolve(new Response('{}'));
+      },
+    };
+    await guardedFetch(allowed, network)('https://api.anthropic.com/v1/messages');
+    expect(resolutions).toBe(1);
+    expect(connectedTo).toEqual(['160.79.104.10', '160.79.104.10']);
+  });
+
+  it('never connects when no checked address is public, even to a name that resolves locally', async () => {
+    let connections = 0;
+    const server = createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    try {
+      await expect(
+        systemEgressNetwork.fetch(`http://localhost:${port}/`, {}, [{ address: '127.0.0.1', family: 4 }]),
+      ).rejects.toThrow();
+      await expect(systemEgressNetwork.fetch(`http://localhost:${port}/`, {}, [])).rejects.toThrow();
+      expect(connections).toBe(0);
+      // The same request without the pinned dispatcher does reach the local server.
+      await fetch(`http://localhost:${port}/`).catch(() => undefined);
+      expect(connections).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
   });
 });

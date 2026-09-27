@@ -186,7 +186,7 @@ export const suggestionsQuery = defineQuery({
     .object({ suggestions: z.array(suggestionSchema).max(200).describe('Newest first.') })
     .strict()
     .describe('The record’s suggestions.'),
-  errors: [errorCode('Forbidden', 'notPermitted')],
+  errors: [errorCode('Forbidden', 'notPermitted'), errorCode('NotFound', 'resource')],
   access: { person: ['buyer', 'quality_engineer'] },
 });
 

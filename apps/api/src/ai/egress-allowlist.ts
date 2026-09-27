@@ -1,15 +1,17 @@
 import { lookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
 
 import { failure, success, type Result } from '@partledger/domain';
+import { Agent } from 'undici';
 
 /**
  * The egress allowlist for AI calls (KTD25). Every outbound request of a provider goes through
  * `guardedFetch`: HTTPS on the default port to one of the hosts this call's configuration
  * allows, with no credentials in the URL and no redirects, and only when every address the
- * host resolves to is public. A private, loopback, link-local or cloud-metadata address is
- * refused, so neither a configuration nor a DNS answer can turn an AI call into a request
- * inside the region's network.
+ * host resolves to is public. A private, loopback, link-local or cloud-metadata address, or an
+ * IPv6 address that embeds one, is refused. The connection is then made only to the addresses
+ * that were checked: the system network's dispatcher never resolves the name again, so a DNS
+ * answer that changes between the check and the connection is never used.
  */
 
 export type EgressRefusal =
@@ -34,12 +36,57 @@ export type FetchFunction = (input: string | URL | Request, init?: RequestInit) 
 /** What an AI call reaches the network with; tests replace both, so no call ever leaves the process. */
 export interface EgressNetwork {
   readonly resolve: Resolver;
-  readonly fetch: FetchFunction;
+  /** Sends a request that passed the allowlist, connecting only to `addresses`, which were checked. */
+  readonly fetch: (
+    input: string | URL | Request,
+    init: RequestInit,
+    addresses: readonly ResolvedAddress[],
+  ) => Promise<Response>;
+}
+
+export class NoPublicAddressError extends Error {
+  constructor() {
+    super('The AI call has no checked public address to connect to');
+    this.name = 'NoPublicAddressError';
+  }
+}
+
+/**
+ * The name lookup a connection uses: the addresses checked before the request, checked again,
+ * and never a fresh DNS answer.
+ */
+export function pinnedLookup(addresses: readonly ResolvedAddress[]): LookupFunction {
+  const pinned = addresses.filter((resolved) => isPublicAddress(resolved.address));
+  return (_hostname, options, callback) => {
+    const [first] = pinned;
+    if (first === undefined) {
+      callback(new NoPublicAddressError(), '', 0);
+      return;
+    }
+    if (options.all === true) {
+      callback(
+        null,
+        pinned.map((resolved) => ({ address: resolved.address, family: resolved.family })),
+      );
+      return;
+    }
+    callback(null, first.address, first.family);
+  };
 }
 
 export const systemEgressNetwork: EgressNetwork = {
   resolve: (hostname) => lookup(hostname, { all: true, verbatim: true }),
-  fetch: (input, init) => fetch(input, init),
+  fetch: (input, init, addresses) => {
+    // One dispatcher per request, whose connections close soon after it, so the pinned addresses
+    // never serve another request.
+    const dispatcher = new Agent({
+      connect: { lookup: pinnedLookup(addresses) },
+      keepAliveTimeout: 1_000,
+      keepAliveMaxTimeout: 1_000,
+    });
+    // The global fetch accepts the installed undici's dispatcher; the two type packages differ.
+    return fetch(input, Object.assign({ ...init }, { dispatcher }));
+  },
 };
 
 const nonPublic = new BlockList();
@@ -65,8 +112,15 @@ for (const [network, prefix] of [
   nonPublic.addSubnet(network, prefix, 'ipv4');
 }
 for (const [network, prefix] of [
-  ['::', 128],
+  // IPv4-compatible addresses, and the unspecified and loopback addresses with them.
+  ['::', 96],
   ['::1', 128],
+  // IPv4-translated addresses. IPv4-mapped ones (::ffff:0:0/96) are checked as the IPv4 address
+  // they carry, in `isPublicAddress`: a BlockList rule for them would match every IPv4 address.
+  ['::ffff:0:0:0', 96],
+  // Teredo and 6to4, which carry an IPv4 address inside.
+  ['2001::', 32],
+  ['2002::', 16],
   ['64:ff9b::', 96],
   ['64:ff9b:1::', 48],
   ['100::', 64],
@@ -105,7 +159,7 @@ export async function checkEgress(
   target: string,
   allowedHosts: ReadonlySet<string>,
   resolve: Resolver,
-): Promise<Result<URL, EgressRefusal>> {
+): Promise<Result<{ readonly url: URL; readonly addresses: readonly ResolvedAddress[] }, EgressRefusal>> {
   let url: URL;
   try {
     url = new URL(target);
@@ -140,7 +194,7 @@ export async function checkEgress(
   if (!addresses.every((resolved) => isPublicAddress(resolved.address))) {
     return failure('private_address');
   }
-  return success(url);
+  return success({ url, addresses });
 }
 
 export class EgressBlockedError extends Error {
@@ -167,6 +221,6 @@ export function guardedFetch(allowedHosts: ReadonlySet<string>, network: EgressN
     if (!checked.ok) {
       throw new EgressBlockedError(checked.error);
     }
-    return network.fetch(input, { ...init, redirect: 'error' });
+    return network.fetch(input, { ...init, redirect: 'error' }, checked.value.addresses);
   };
 }
