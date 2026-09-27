@@ -1,4 +1,4 @@
-import type { RfqStatus } from '@partledger/contracts';
+import type { ExchangeRate, RfqStatus } from '@partledger/contracts';
 import { Badge, Mono, useTranslate, type StateTone } from '@partledger/ui';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
@@ -92,4 +92,20 @@ export function Fact({ label, children }: { label: string; children: ReactNode }
       <dd>{children}</dd>
     </div>
   );
+}
+
+/** The rates totals were converted at (KTD39), as facts beside the RFQ heading. */
+export function ExchangeRateFacts({ rates, currency }: { rates: readonly ExchangeRate[]; currency: string }) {
+  const translate = useTranslate();
+  return rates.map((rate) => (
+    <Fact key={rate.currency} label={translate('pl.rfqs.comparison.rateLabel', { currency: rate.currency })}>
+      <Mono>
+        {translate(rate.source === 'manual' ? 'pl.rfqs.comparison.rateManual' : 'pl.rfqs.comparison.rateCentralBank', {
+          rate: rate.rate,
+          currency,
+          date: rate.capturedOn,
+        })}
+      </Mono>
+    </Fact>
+  ));
 }

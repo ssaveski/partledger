@@ -37,7 +37,7 @@ test('a synthetic buyer signs in through Keycloak and out through the API, after
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await page.waitForURL('http://127.0.0.1:5173/');
-  await expect(page.getByRole('heading', { level: 1, name: 'Partledger' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
   const [sessionCookie] = (await context.cookies()).filter((cookie) => cookie.name === '__Host-pl_session');
   expect(sessionCookie).toMatchObject({ path: '/', httpOnly: true, secure: true, sameSite: 'Strict' });
   expect(await page.evaluate(() => document.cookie)).not.toContain('pl_session');

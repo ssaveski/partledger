@@ -9,7 +9,9 @@ export interface WinnerOption {
   readonly name: string;
   readonly total: Money;
   readonly lowest: boolean;
-  readonly alternate: boolean;
+  /** The alternate part the supplier offered, or null for the requested part. */
+  readonly alternatePart: string | null;
+  readonly buyerRecorded: boolean;
 }
 
 /**
@@ -35,7 +37,8 @@ export function winnerOptions(line: ComparisonLine, suppliers: readonly Comparis
         name: supplier.name,
         total: cell.quote.normalisedTotal,
         lowest: line.lowestSupplierId === supplier.supplierId,
-        alternate: cell.state === 'alternate',
+        alternatePart: cell.state === 'alternate' ? (cell.alternate?.partNumber ?? null) : null,
+        buyerRecorded: cell.quote.buyerRecorded,
       },
     ];
   });

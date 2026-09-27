@@ -1,6 +1,6 @@
 import type { ComparisonCell, ComparisonLine, ComparisonSupplier } from '@partledger/contracts';
 import { Button, cn, createGridColumnHelper, DataGrid, Mono, StateBadge, useTranslate } from '@partledger/ui';
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 
 import { formatMoney, formatNumber } from '../../shell/format';
 import {
@@ -10,7 +10,7 @@ import {
   cellStates,
   evidenceStates,
 } from './comparison-states';
-import { canRecordOutsideQuote } from './outside-quote';
+import { canRecordOutsideQuote, type OutsideQuoteAction } from './outside-quote';
 
 export interface OutsideQuoteTarget {
   readonly line: ComparisonLine;
@@ -27,13 +27,16 @@ export function ComparisonGrid({
   label,
   lines,
   suppliers,
-  recordingAllowed,
+  outsideQuote,
+  unavailableReasonId,
   onRecordOutsideQuote,
 }: {
   label: string;
   lines: readonly ComparisonLine[];
   suppliers: readonly ComparisonSupplier[];
-  recordingAllowed: boolean;
+  outsideQuote: OutsideQuoteAction;
+  /** The element explaining why recording is unavailable, when it is. */
+  unavailableReasonId: string;
   onRecordOutsideQuote: (target: OutsideQuoteTarget) => void;
 }) {
   const translate = useTranslate();
@@ -77,8 +80,9 @@ export function ComparisonGrid({
                 <ComparisonCellView
                   cell={cell}
                   recordOutsideQuote={
-                    recordingAllowed && cell !== undefined && canRecordOutsideQuote(cell.state)
+                    outsideQuote.kind !== 'hidden' && cell !== undefined && canRecordOutsideQuote(cell.state)
                       ? {
+                          disabledReasonId: outsideQuote.kind === 'unavailable' ? unavailableReasonId : null,
                           label: translate('pl.rfqs.outsideQuote.recordFor', {
                             supplier: supplier.name,
                             line: line.lineNumber,
@@ -95,7 +99,7 @@ export function ComparisonGrid({
           }),
         ),
       ]),
-    [translate, suppliers, recordingAllowed, onRecordOutsideQuote],
+    [translate, suppliers, outsideQuote, unavailableReasonId, onRecordOutsideQuote],
   );
   return (
     <DataGrid
@@ -123,9 +127,10 @@ function ComparisonCellView({
   recordOutsideQuote,
 }: {
   cell: ComparisonCell | undefined;
-  recordOutsideQuote: { label: string; onClick: () => void } | null;
+  recordOutsideQuote: { label: string; disabledReasonId: string | null; onClick: () => void } | null;
 }) {
   const translate = useTranslate();
+  const stateId = useId();
   if (cell === undefined) {
     return <span className="text-xs text-muted">{translate('pl.rfqs.comparison.notInvited')}</span>;
   }
@@ -141,6 +146,10 @@ function ComparisonCellView({
     >
       <span className="flex items-center gap-1.5">
         <StateBadge state={cellStates[cell.state]} showLabel={quote === null} />
+        {/* The action takes focus in its cell, so it names the cell's state as its description. */}
+        <span id={stateId} hidden>
+          {translate(cellStates[cell.state].labelKey)}
+        </span>
         {quote === null ? null : (
           <Mono
             className={cn('text-sm', best && 'font-semibold text-success', cell.state === 'stale' && 'line-through')}
@@ -177,6 +186,11 @@ function ComparisonCellView({
           size="sm"
           className="mt-1 h-7 self-start px-2 text-xs"
           aria-label={recordOutsideQuote.label}
+          aria-describedby={
+            recordOutsideQuote.disabledReasonId === null ? stateId : `${stateId} ${recordOutsideQuote.disabledReasonId}`
+          }
+          disabled={recordOutsideQuote.disabledReasonId !== null}
+          focusableWhenDisabled
           onClick={recordOutsideQuote.onClick}
         >
           {translate('pl.rfqs.outsideQuote.record')}

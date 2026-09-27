@@ -1,5 +1,7 @@
 {
   "pl.web.documentTitle": "{page} · Partledger",
+  "pl.web.stateTitle.error": "Something went wrong: {screen}",
+  "pl.web.stateTitle.noPermission": "No access: {screen}",
   "pl.web.skipToContent": "Skip to main content",
   "pl.web.navigation.label": "Main",
   "pl.web.navigation.overview": "Overview",

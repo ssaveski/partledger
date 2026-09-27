@@ -5,6 +5,8 @@ import { rfqFixtureOutputs } from '../fixtures';
 import { englishCatalogue } from '../i18n/catalogue';
 import {
   approvalReadSchema,
+  awardDecisionSchema,
+  comparisonLineSchema,
   comparisonCellSchema,
   comparisonCellStates,
   comparisonReadSchema,
@@ -95,6 +97,55 @@ describe('the RFQ read contracts', () => {
       comparisonCellSchema.safeParse({ ...cell, state: 'alternate', alternate: null }).success,
       'an alternate cell names the alternate part',
     ).toBe(false);
+  });
+
+  it('tie the named lowest supplier to its best-price cell', () => {
+    const otherSupplier = '00000000-0000-4000-8000-000000002002';
+    const cell = (supplier: string, state: string) => ({
+      supplierId: supplier,
+      state,
+      quote,
+      alternate: null,
+      noQuoteReason: null,
+    });
+    const line = {
+      lineId: '00000000-0000-4000-8000-000000003001',
+      lineNumber: 1,
+      partNumber: 'PN-10432',
+      revision: 'C',
+      description: 'Pump housing, cast aluminium',
+      quantity: 200,
+      unit: 'each',
+      lowestSupplierId: supplierId,
+      cells: [cell(supplierId, 'bestPrice'), cell(otherSupplier, 'submitted')],
+    };
+    expect(comparisonLineSchema.safeParse(line).success).toBe(true);
+    expect(comparisonLineSchema.safeParse({ ...line, lowestSupplierId: otherSupplier }).success, 'mismatch').toBe(
+      false,
+    );
+    expect(
+      comparisonLineSchema.safeParse({
+        ...line,
+        cells: [cell(supplierId, 'bestPrice'), cell(otherSupplier, 'bestPrice')],
+      }).success,
+      'two best prices',
+    ).toBe(false);
+    expect(
+      comparisonLineSchema.safeParse({ ...line, lowestSupplierId: null }).success,
+      'best price without lowest',
+    ).toBe(false);
+    expect(
+      comparisonLineSchema.safeParse({ ...line, lowestSupplierId: null, cells: [cell(otherSupplier, 'submitted')] })
+        .success,
+    ).toBe(true);
+  });
+
+  it('let an approval decision name the alternate part its winner offered', () => {
+    const packet = rfqFixtureOutputs.approvals.find((output) => output.availability === 'submitted');
+    const decision = packet?.availability === 'submitted' ? packet.decisions[0] : undefined;
+    const alternate = { partNumber: 'PN-31006-N2', acceptedByQuality: true };
+    expect(awardDecisionSchema.safeParse({ ...decision, alternate }).success).toBe(true);
+    expect(awardDecisionSchema.safeParse({ ...decision, alternate: { ...alternate, note: 'x' } }).success).toBe(false);
   });
 
   it('hide the answers of an RFQ that has not closed', () => {

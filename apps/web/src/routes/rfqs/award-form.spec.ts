@@ -76,9 +76,17 @@ describe('the award form', () => {
     expect(names(2)).toEqual(['Northwind Castings']);
     expect(names(3)).toEqual(['Birchfield Precision', 'Arbor Fasteners']);
     expect(names(5)).toEqual(['Birchfield Precision', 'Arbor Fasteners']);
-    expect(winnerOptions(line(5), comparison.suppliers).find((option) => option.alternate)?.name).toBe(
-      'Arbor Fasteners',
-    );
+    expect(winnerOptions(line(5), comparison.suppliers).find((option) => option.alternatePart !== null)).toMatchObject({
+      name: 'Arbor Fasteners',
+      alternatePart: 'PN-31006-N2',
+    });
+  });
+
+  it('marks a quote a buyer recorded outside the portal among the winner options', () => {
+    expect(winnerOptions(line(4), comparison.suppliers).map((option) => [option.name, option.buyerRecorded])).toEqual([
+      ['Birchfield Precision', true],
+      ['Arbor Fasteners', false],
+    ]);
   });
 
   it('marks the lowest total among the winner options', () => {

@@ -15,6 +15,7 @@ import {
   Textarea,
   useTranslate,
   cn,
+  type Translate,
 } from '@partledger/ui';
 import { useId, useRef, useState } from 'react';
 import { Controller, useForm, useWatch, type Control, type UseFormRegister } from 'react-hook-form';
@@ -27,6 +28,7 @@ import {
   requiresJustification,
   winnerOptions,
   type AwardFormValues,
+  type WinnerOption,
 } from './award-form';
 
 /**
@@ -103,6 +105,21 @@ export function AwardDecisions({ comparison }: { comparison: QuoteComparison }) 
   );
 }
 
+/** Names everything an approver would ask about a winner: lowest, alternate part, recorded by a buyer. */
+export function winnerOptionLabel(translate: Translate, option: WinnerOption): string {
+  let label = translate(option.lowest ? 'pl.rfqs.award.optionLowest' : 'pl.rfqs.award.option', {
+    supplier: option.name,
+    total: formatMoney(option.total),
+  });
+  if (option.alternatePart !== null) {
+    label = translate('pl.rfqs.award.optionAlternate', { option: label, part: option.alternatePart });
+  }
+  if (option.buyerRecorded) {
+    label = translate('pl.rfqs.award.optionBuyerRecorded', { option: label });
+  }
+  return label;
+}
+
 function LineDecision({
   index,
   line,
@@ -124,13 +141,7 @@ function LineDecision({
   const options = winnerOptions(line, suppliers);
   const lowest = options.find((option) => option.lowest);
   const items = [
-    ...options.map((option) => ({
-      value: option.supplierId,
-      label: translate(option.lowest ? 'pl.rfqs.award.optionLowest' : 'pl.rfqs.award.option', {
-        supplier: option.name,
-        total: formatMoney(option.total),
-      }),
-    })),
+    ...options.map((option) => ({ value: option.supplierId, label: winnerOptionLabel(translate, option) })),
     { value: noAward, label: translate('pl.rfqs.award.noAward') },
   ];
   return (

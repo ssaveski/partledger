@@ -205,7 +205,10 @@ test.describe('quote comparison', () => {
     page,
   }) => {
     await page.goto(comparison(rfq.closed));
-    await page.getByRole('button', { name: 'Record outside quote from Kestrel Machining for line 4' }).click();
+    await expect(page.getByRole('main')).toContainText('Sep 24, 2026, 16:00 UTC');
+    const action = page.getByRole('button', { name: 'Record outside quote from Kestrel Machining for line 4' });
+    await expect(action).toHaveAccessibleDescription('Pending');
+    await action.click();
     const dialog = page.getByRole('dialog', { name: 'Record a quote received outside the portal' });
     await expect(dialog).toBeVisible();
 
@@ -217,16 +220,23 @@ test.describe('quote comparison', () => {
     await dialog.getByRole('textbox', { name: 'Unit price' }).fill('3.30');
     await dialog.getByRole('textbox', { name: 'Lead time in days' }).fill('20');
     await dialog.getByLabel('Valid until').fill('2026-12-31');
-    await dialog.getByLabel('Received on').fill('2026-09-23');
+    // RFQ-1038 closed early on 22 September; its deadline was 24 September, which is what counts.
+    await dialog.getByLabel('Received on').fill('2026-09-25');
+    await dialog.getByLabel("Supplier's quote document").setInputFiles({
+      name: 'kestrel-quote.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('synthetic'),
+    });
+    await dialog.getByRole('button', { name: 'Record quote' }).click();
+    await expect(dialog.getByText('This quote arrived after the deadline, so it cannot be recorded.')).toBeVisible();
+    await expect(dialog.getByText('Attach the quote as a PDF, PNG or JPEG file.')).toBeVisible();
+
     await dialog.getByLabel("Supplier's quote document").setInputFiles({
       name: 'kestrel-quote.pdf',
       mimeType: 'application/pdf',
       buffer: Buffer.from('%PDF-1.7 synthetic'),
     });
-    await dialog.getByRole('button', { name: 'Record quote' }).click();
-    await expect(dialog.getByText('This quote arrived after the deadline, so it cannot be recorded.')).toBeVisible();
-
-    await dialog.getByLabel('Received on').fill('2026-09-21');
+    await dialog.getByLabel('Received on').fill('2026-09-23');
     await dialog.getByRole('button', { name: 'Record quote' }).click();
     await expect(dialog).toBeHidden();
 
@@ -240,6 +250,39 @@ test.describe('quote comparison', () => {
     await expect(
       page.getByRole('button', { name: 'Record outside quote from Kestrel Machining for line 4' }),
     ).toHaveCount(0);
+    await decision(page, 4).getByRole('combobox', { name: 'Winner' }).click();
+    await expect(
+      page.getByRole('option', {
+        name: 'Kestrel Machining, $6,600.00 (lowest total), recorded by a buyer',
+        exact: true,
+      }),
+    ).toBeVisible();
+  });
+
+  test('the outside-quote action in a late cell names the state of that cell', async ({ page }) => {
+    await page.goto(comparison(rfq.closed));
+    await expect(
+      page.getByRole('button', { name: 'Record outside quote from Kestrel Machining for line 3' }),
+    ).toHaveAccessibleDescription('Late: refused after the deadline');
+    await expect(
+      page.getByRole('button', { name: 'Record outside quote from Northwind Castings for line 3' }),
+    ).toHaveAccessibleDescription('Stale: line changed since');
+  });
+
+  test('winner options name an alternate part and a quote recorded by a buyer', async ({ page }) => {
+    await page.goto(comparison(rfq.closed));
+    await decision(page, 4).getByRole('combobox', { name: 'Winner' }).click();
+    await expect(
+      page.getByRole('option', {
+        name: 'Birchfield Precision, $7,700.00 (lowest total), recorded by a buyer',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await page.keyboard.press('Escape');
+    await decision(page, 5).getByRole('combobox', { name: 'Winner' }).click();
+    await expect(
+      page.getByRole('option', { name: 'Arbor Fasteners, $2,100.00, alternate part PN-31006-N2', exact: true }),
+    ).toBeVisible();
   });
 
   test('cancelling the outside-quote dialog returns focus to the action that opened it', async ({ page }) => {
@@ -278,6 +321,7 @@ test.describe('RFQ detail', () => {
     await page.goto(detail(rfq.open));
     await expect(page.getByRole('heading', { level: 1, name: /RFQ detail/ })).toBeVisible();
     await expect(page.getByText('Answers stay sealed until the RFQ closes.')).toBeVisible();
+    await expect(page).toHaveTitle('RFQ-1042 detail · Partledger');
     const grid = page.getByRole('grid', { name: 'Supplier responses to RFQ-1042' });
     const expected = [
       ['Northwind Castings', 'Responded'],
@@ -349,13 +393,22 @@ test.describe('approval packet', () => {
     await expect(line2).toContainText('Active deviation');
     await expect(line2).toContainText('Covers the Forced-labour attestation until Nov 30, 2026.');
     await expect(line2).toContainText('Covered by deviation');
+    await expect(line2).toContainText('Offers PN-31006-N2');
+    await expect(line2).toContainText('Accepted by quality');
     const line3 = page.getByRole('listitem').filter({ has: page.getByRole('heading', { level: 3, name: /^Line 3/ }) });
     await expect(line3).toContainText('Recorded by a buyer');
     await expect(page.getByRole('region', { name: 'Previous round' })).toHaveCount(0);
     const approve = page.getByRole('button', { name: 'Approve and seal' });
     await expect(approve).toBeEnabled();
+    await expect(page.getByRole('main')).toContainText('1.3642 CAD, reference rate of 2026-09-22');
     await approve.click();
-    await expect(page.getByRole('status').filter({ hasText: 'nothing is approved or sealed' })).toBeVisible();
+    const outcome =
+      'In this preview nothing is approved or sealed. Approval will ask you to confirm your identity first.';
+    await expect(page.getByRole('status').filter({ hasText: outcome })).toBeVisible();
+    // One decision per packet: both actions close once it is made.
+    await expect(approve).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Reject' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Reject' })).toHaveAccessibleDescription(outcome);
   });
 
   test('an RFQ without a submitted award shows the empty state with its next action', async ({ page }) => {
@@ -368,15 +421,16 @@ test.describe('approval packet', () => {
 
 test.describe('designed states', () => {
   const screens = [
-    ['RFQ detail', detail, 'Loading the RFQ…'],
-    ['quote comparison', comparison, 'Loading the quotes…'],
-    ['approval packet', approval, 'Loading the approval packet…'],
+    ['RFQ detail', detail, 'Loading the RFQ…', 'RFQ detail'],
+    ['quote comparison', comparison, 'Loading the quotes…', 'Quote comparison'],
+    ['approval packet', approval, 'Loading the approval packet…', 'Approval packet'],
   ] as const;
 
-  for (const [name, path, loading] of screens) {
+  for (const [name, path, loading, title] of screens) {
     test(`the ${name} shows its loading state while the read is in flight`, async ({ page }) => {
       await page.goto(path(rfq.slow));
       await expect(page.getByRole('status').filter({ hasText: loading })).toBeVisible();
+      await expect(page).toHaveTitle(`${title} · Partledger`);
       await expectNoAxeViolations(page);
     });
 
@@ -384,6 +438,7 @@ test.describe('designed states', () => {
       await page.goto(path(rfq.unavailable));
       await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeVisible();
       await expect(page.getByRole('alert')).toContainText('A service this action needs is unavailable.');
+      await expect(page).toHaveTitle(`Something went wrong: ${title} · Partledger`);
       await page.getByRole('button', { name: 'Try again' }).click();
       await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeVisible();
     });
@@ -391,6 +446,7 @@ test.describe('designed states', () => {
     test(`the ${name} shows the no-permission state when the server refuses the reader`, async ({ page }) => {
       await page.goto(path(rfq.forbidden));
       await expect(page.getByRole('heading', { level: 1, name: 'You do not have access to this' })).toBeVisible();
+      await expect(page).toHaveTitle(`No access: ${title} · Partledger`);
     });
 
     test(`the ${name} of an RFQ that does not exist says it could not be found`, async ({ page }) => {
@@ -516,6 +572,7 @@ test.describe('keyboard only', () => {
     }
     const record = page.getByRole('button', { name: 'Record outside quote from Kestrel Machining for line 4' });
     await expect(record).toBeFocused();
+    await expect(record).toHaveAccessibleDescription('Pending');
     await page.keyboard.press('Enter');
 
     const dialog = page.getByRole('dialog', { name: 'Record a quote received outside the portal' });
@@ -547,7 +604,7 @@ test.describe('keyboard only', () => {
       [1, 'Northwind Castings, $11,650.00'],
       [2, 'No award for this line'],
       [3, 'Birchfield Precision, $10,980.00 (lowest total)'],
-      [4, 'Kestrel Machining, $6,600.00 (lowest total)'],
+      [4, 'Kestrel Machining, $6,600.00 (lowest total), recorded by a buyer'],
       [5, 'Birchfield Precision, $1,950.00 (lowest total)'],
     ];
     for (const [line, option] of winners) {

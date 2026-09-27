@@ -24,7 +24,13 @@ import { useId, type RefObject } from 'react';
 import { Controller, useForm, type FieldError as FormFieldError, type UseFormRegisterReturn } from 'react-hook-form';
 
 import type { OutsideQuoteTarget } from './comparison-grid';
-import { emptyOutsideQuote, outsideQuoteFormSchema, type OutsideQuote, type OutsideQuoteInput } from './outside-quote';
+import {
+  emptyOutsideQuote,
+  outsideQuoteDocumentTypes,
+  outsideQuoteFormSchema,
+  type OutsideQuote,
+  type OutsideQuoteInput,
+} from './outside-quote';
 
 /**
  * Records a quote a supplier sent outside the portal before the deadline (R42). The quote is
@@ -183,15 +189,15 @@ function OutsideQuoteForm({
         />
         <Controller
           control={form.control}
-          name="documentName"
+          name="document"
           render={({ field, fieldState }) => (
             <DocumentField
               name={field.name}
               inputRef={field.ref}
               error={fieldState.error}
               onBlur={field.onBlur}
-              onFileChosen={(fileName) => {
-                field.onChange(fileName);
+              onFileChosen={(file) => {
+                field.onChange(file === undefined ? null : { name: file.name, type: file.type, size: file.size });
               }}
             />
           )}
@@ -253,7 +259,7 @@ function DocumentField({
   inputRef: (element: HTMLInputElement | null) => void;
   error: FormFieldError | undefined;
   onBlur: () => void;
-  onFileChosen: (fileName: string) => void;
+  onFileChosen: (file: File | undefined) => void;
 }) {
   const translate = useTranslate();
   const inputId = useId();
@@ -270,12 +276,12 @@ function DocumentField({
         name={name}
         type="file"
         required
-        accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
+        accept={outsideQuoteDocumentTypes.join(',')}
         aria-describedby={error === undefined ? hintId : `${errorId} ${hintId}`}
         aria-invalid={error === undefined ? undefined : true}
         onBlur={onBlur}
         onChange={(event) => {
-          onFileChosen(event.currentTarget.files?.[0]?.name ?? '');
+          onFileChosen(event.currentTarget.files?.[0]);
         }}
         className={cn(
           'rounded-md text-sm text-primary file:mr-3 file:cursor-pointer file:rounded-md file:border file:border-line-strong file:bg-surface-raised file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary',

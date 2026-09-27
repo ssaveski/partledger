@@ -35,8 +35,8 @@ import { useApiQuery } from '../../api/api-client';
 import { useDocumentTitle } from '../../shell/document-title';
 import { formatDate, formatInstantUtc, formatMoney, formatNumber, messageParams, shortHash } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
-import { buyerRecordedMarker } from './comparison-states';
-import { Fact, RfqHeader } from './rfq-header';
+import { alternateAcceptedMarker, alternateAwaitingMarker, buyerRecordedMarker } from './comparison-states';
+import { ExchangeRateFacts, Fact, RfqHeader } from './rfq-header';
 
 const route = getRouteApi('/rfqs/$rfqId/approval');
 
@@ -137,6 +137,7 @@ function ApprovalView({ packet }: { packet: ApprovalPacket }) {
         <Fact label={translate('pl.rfqs.approval.awardedTotal')}>
           <Mono>{formatMoney(packet.awardedTotal)}</Mono>
         </Fact>
+        <ExchangeRateFacts rates={packet.exchangeRates} currency={packet.awardedTotal.currency} />
       </RfqHeader>
       <ApprovalActions packet={packet} />
       <GateChecklist packet={packet} />
@@ -164,6 +165,7 @@ function ApprovalView({ packet }: { packet: ApprovalPacket }) {
 function ApprovalActions({ packet }: { packet: ApprovalPacket }) {
   const translate = useTranslate();
   const [outcome, setOutcome] = useState<'approve' | 'reject' | null>(null);
+  const outcomeId = useId();
   return (
     <section aria-labelledby="actions-heading" className="flex flex-col gap-2">
       <h2 id="actions-heading" className="sr-only">
@@ -175,13 +177,14 @@ function ApprovalActions({ packet }: { packet: ApprovalPacket }) {
             key={transition}
             packet={packet}
             transition={transition}
+            decidedById={outcome === null ? null : outcomeId}
             onChoose={() => {
               setOutcome(transition);
             }}
           />
         ))}
       </div>
-      <p role="status" className="text-sm font-medium text-success">
+      <p id={outcomeId} role="status" className="text-sm font-medium text-success">
         {outcome === null ? null : translate(`pl.rfqs.approval.${outcome}Preview`)}
       </p>
     </section>
@@ -191,10 +194,13 @@ function ApprovalActions({ packet }: { packet: ApprovalPacket }) {
 function ApprovalAction({
   packet,
   transition,
+  decidedById,
   onChoose,
 }: {
   packet: ApprovalPacket;
   transition: 'approve' | 'reject';
+  /** Once a decision is made both actions close, described by the decision's outcome. */
+  decidedById: string | null;
   onChoose: () => void;
 }) {
   const translate = useTranslate();
@@ -205,9 +211,9 @@ function ApprovalAction({
     <div className="flex max-w-sm flex-col items-start gap-1">
       <Button
         variant={transition === 'approve' ? 'primary' : 'secondary'}
-        disabled={!allowed}
+        disabled={!allowed || decidedById !== null}
         focusableWhenDisabled
-        aria-describedby={allowed ? undefined : reasonId}
+        aria-describedby={!allowed ? reasonId : (decidedById ?? undefined)}
         onClick={onChoose}
       >
         {translate(`pl.rfqs.approval.${transition}`)}
@@ -273,7 +279,7 @@ function GateCheckItem({ check }: { check: GateCheck }) {
   );
 }
 
-function DecisionCard({ decision }: { decision: AwardDecision }) {
+export function DecisionCard({ decision }: { decision: AwardDecision }) {
   const translate = useTranslate();
   return (
     <Card className="h-full gap-3 p-4">
@@ -294,6 +300,15 @@ function DecisionCard({ decision }: { decision: AwardDecision }) {
             {decision.lowest ? <StateBadge state={lowestMarker} showLabel /> : null}
             {decision.buyerRecorded ? <StateBadge state={buyerRecordedMarker} showLabel /> : null}
           </p>
+          {decision.alternate === null ? null : (
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <Mono>{translate('pl.rfqs.comparison.alternatePart', { part: decision.alternate.partNumber })}</Mono>
+              <StateBadge
+                state={decision.alternate.acceptedByQuality ? alternateAcceptedMarker : alternateAwaitingMarker}
+                showLabel
+              />
+            </p>
+          )}
           {decision.justification === null ? null : (
             <div className="flex flex-col gap-0.5 text-sm">
               <p className="text-muted">{translate('pl.rfqs.approval.justification')}</p>
@@ -325,7 +340,7 @@ function DecisionCard({ decision }: { decision: AwardDecision }) {
 function EvidenceList({ decision }: { decision: AwardDecision }) {
   const translate = useTranslate();
   if (decision.evidence.length === 0) {
-    return null;
+    return <p className="text-sm text-muted">{translate('pl.rfqs.approval.noEvidence')}</p>;
   }
   return (
     <div className="flex flex-col gap-1 text-sm">

@@ -330,7 +330,7 @@ const details: Readonly<Record<string, DetailOutput>> = {
     title: 'Pump housings, shafts and seals',
     status: 'closed',
     version: 2,
-    deadline: '2026-09-22T16:00:00Z',
+    deadline: '2026-09-24T16:00:00Z',
     currency: tenantCurrency,
     round: 1,
     lines: detailLines(closedParts),
@@ -418,6 +418,7 @@ function closedComparison(
   lines: ReturnType<typeof comparisonLine>[],
   keys: readonly SupplierKey[],
   pending: boolean,
+  closedAt: string = detail.deadline,
 ): ComparisonOutput {
   return {
     availability: 'available',
@@ -426,7 +427,8 @@ function closedComparison(
     title: detail.title,
     status: detail.status,
     version: detail.version,
-    closedAt: detail.deadline,
+    deadline: detail.deadline,
+    closedAt,
     currency: tenantCurrency,
     exchangeRates: [...exchangeRates],
     suppliers: supplierColumns(keys),
@@ -444,7 +446,14 @@ function closedComparison(
 const comparisons: Readonly<Record<string, ComparisonOutput>> = {
   [fixtureRfqIds.open]: notYetClosed(detailOf(fixtureRfqIds.open)),
   [fixtureRfqIds.draftWithoutSuppliers]: notYetClosed(detailOf(fixtureRfqIds.draftWithoutSuppliers)),
-  [fixtureRfqIds.closed]: closedComparison(detailOf(fixtureRfqIds.closed), closedLines, supplierOrder, false),
+  // Closed early, two days before its deadline, once the buyer had enough answers.
+  [fixtureRfqIds.closed]: closedComparison(
+    detailOf(fixtureRfqIds.closed),
+    closedLines,
+    supplierOrder,
+    false,
+    '2026-09-22T16:00:00Z',
+  ),
   [fixtureRfqIds.blockedApproval]: closedComparison(
     detailOf(fixtureRfqIds.blockedApproval),
     [
@@ -466,6 +475,8 @@ const comparisons: Readonly<Record<string, ComparisonOutput>> = {
     ],
     ['northwind', 'birchfield', 'kestrel'],
     true,
+    // Closed by the deadline job after its grace period.
+    '2026-09-18T16:15:00Z',
   ),
   [fixtureRfqIds.readyApproval]: closedComparison(
     detailOf(fixtureRfqIds.readyApproval),
@@ -478,11 +489,18 @@ const comparisons: Readonly<Record<string, ComparisonOutput>> = {
       comparisonLine(at(readyParts, 1), [
         { supplier: 'northwind', state: 'submitted', unitPrice: 2.05, buyerRecorded: true },
         { supplier: 'birchfield', state: 'bestPrice', unitPrice: 1.9, leadTimeDays: 70 },
-        { supplier: 'arbor', state: 'submitted', unitPrice: 2.2, leadTimeDays: 14 },
+        {
+          supplier: 'arbor',
+          state: 'alternate',
+          unitPrice: 2.2,
+          leadTimeDays: 14,
+          alternatePart: 'PN-31006-N2',
+          alternateAccepted: true,
+        },
       ]),
       comparisonLine(at(readyParts, 2), [
         { supplier: 'northwind', state: 'bestPrice', unitPrice: 49.5, oneOffCosts: 900, buyerRecorded: true },
-        { supplier: 'birchfield', state: 'submitted', unitPrice: 51 },
+        { supplier: 'birchfield', state: 'submitted', unitPrice: 55 },
       ]),
     ],
     ['northwind', 'birchfield', 'arbor'],
@@ -530,6 +548,7 @@ function decision(
   details: {
     lowest?: boolean;
     buyerRecorded?: boolean;
+    alternatePart?: string;
     justification?: string;
     evidence?: EvidenceDocument[];
     deviation?: ApprovalDecisionDeviation;
@@ -542,6 +561,8 @@ function decision(
     normalisedTotal: total === null ? null : money(total, tenantCurrency),
     lowest: details.lowest ?? false,
     buyerRecorded: details.buyerRecorded ?? false,
+    alternate:
+      details.alternatePart === undefined ? null : { partNumber: details.alternatePart, acceptedByQuality: true },
     justification: details.justification ?? null,
     evidence: details.evidence ?? [],
     deviation: details.deviation ?? null,
@@ -641,6 +662,7 @@ const approvals: Readonly<Record<string, ApprovalOutput>> = {
         evidence: evidence(6021, 'expiring', '2026-11-15'),
       }),
       decision(at(readyParts, 1), 'arbor', 2200, {
+        alternatePart: 'PN-31006-N2',
         justification: 'The lowest quote ships in ten weeks; this line is needed for the November build.',
         evidence: [
           ...evidence(6031, 'valid', '2027-02-28').slice(0, 1),

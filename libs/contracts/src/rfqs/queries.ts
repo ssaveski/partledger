@@ -193,6 +193,21 @@ export const comparisonLineSchema = z
     cells: z.array(comparisonCellSchema).describe('One cell per supplier invited to the line.'),
   })
   .strict()
+  // The highlighted cell and the named lowest supplier are one fact, so they can never disagree.
+  .superRefine((line, context) => {
+    const best = line.cells.filter((cell) => cell.state === 'bestPrice');
+    const consistent =
+      line.lowestSupplierId === null
+        ? best.length === 0
+        : best.length === 1 && best[0]?.supplierId === line.lowestSupplierId;
+    if (!consistent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['lowestSupplierId'],
+        message: 'exactly the lowest supplier cell is bestPrice',
+      });
+    }
+  })
   .describe('One RFQ line with every invited supplier answer.');
 
 export type ComparisonLine = z.infer<typeof comparisonLineSchema>;
@@ -241,7 +256,12 @@ export const quoteComparisonSchema = lifecycleRead(
       title: titleSchema,
       status: rfqStatusSchema,
       version: z.number().int().positive().describe('The RFQ version the answers belong to.'),
-      closedAt: z.iso.datetime().describe('When the RFQ closed.'),
+      deadline: z.iso
+        .datetime()
+        .describe('The response deadline in UTC; quotes received outside the portal count only up to it (R42).'),
+      closedAt: z.iso
+        .datetime()
+        .describe('When the RFQ closed: before the deadline on an early close, after it with grace.'),
       currency: currencyCodeSchema.describe('The tenant currency every total is normalised to.'),
       exchangeRates: z.array(exchangeRateSchema).describe('The rates used to normalise quotes in other currencies.'),
       suppliers: z.array(comparisonSupplierSchema).describe('The supplier columns, in invitation order.'),
@@ -350,6 +370,9 @@ export const awardDecisionSchema = z
     normalisedTotal: moneySchema.nullable().describe('The winning normalised total, or null for no award.'),
     lowest: z.boolean().describe('Whether the winner has the lowest normalised total on the line.'),
     buyerRecorded: z.boolean().describe('Whether the winning quote was recorded by a buyer (R42).'),
+    alternate: alternateOfferSchema
+      .nullable()
+      .describe('The alternate part the winner offered, which quality accepted (R22), or null.'),
     justification: z.string().nullable().describe('Why a winner that is not the lowest was chosen, or null.'),
     evidence: z
       .array(evidenceDocumentSchema)

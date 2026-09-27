@@ -1,6 +1,7 @@
-import type { ComparisonCellState, ComparisonLine, QuoteComparison } from '@partledger/contracts';
-import { fixtureNormalisedTotal } from '@partledger/contracts/fixtures';
+import type { ComparisonCellState, ComparisonLine, Money, QuoteComparison } from '@partledger/contracts';
 import { z } from 'zod';
+
+import type { AdapterKind } from '../../api/api-client';
 
 /**
  * After close a buyer can record a quote the supplier sent outside the portal before the
@@ -9,6 +10,57 @@ import { z } from 'zod';
 export function canRecordOutsideQuote(state: ComparisonCellState): boolean {
   return state === 'pending' || state === 'late' || state === 'stale';
 }
+
+export type OutsideQuoteAction =
+  | { readonly kind: 'record' }
+  | { readonly kind: 'unavailable'; readonly reasonKey: string }
+  | { readonly kind: 'hidden' };
+
+/**
+ * Recording is a preview against the fixtures only. Against the API the action stays visible but
+ * disabled with its reason until the command exists (U19), so no screen fakes a server write.
+ */
+export function outsideQuoteAction(
+  adapterKind: AdapterKind,
+  allowedTransitions: readonly string[],
+): OutsideQuoteAction {
+  if (!allowedTransitions.includes('recordOutsideQuote')) {
+    return { kind: 'hidden' };
+  }
+  return adapterKind === 'fixture'
+    ? { kind: 'record' }
+    : { kind: 'unavailable', reasonKey: 'pl.rfqs.outsideQuote.notYetAvailable' };
+}
+
+/** Quotes count up to the deadline, not up to when the RFQ happened to close (R42). */
+export function outsideQuoteDeadlineDate(comparison: Pick<QuoteComparison, 'deadline'>): string {
+  return comparison.deadline.slice(0, 10);
+}
+
+/** The supplier documents the upload pipeline accepts (KTD22) and the largest it takes. */
+export const outsideQuoteDocumentTypes = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+
+export const outsideQuoteDocumentMaxBytes = 20 * 1024 * 1024;
+
+// Every problem is reported on the field itself, where the form shows one message for it.
+const documentSchema = z
+  .object({ name: z.string(), type: z.string(), size: z.number() })
+  .nullable()
+  .superRefine((document, context) => {
+    const messageKey =
+      document === null || document.name === ''
+        ? 'pl.rfqs.outsideQuote.error.document'
+        : !outsideQuoteDocumentTypes.some((allowed) => allowed === document.type)
+          ? 'pl.rfqs.outsideQuote.error.documentType'
+          : document.size <= 0
+            ? 'pl.rfqs.outsideQuote.error.documentEmpty'
+            : document.size > outsideQuoteDocumentMaxBytes
+              ? 'pl.rfqs.outsideQuote.error.documentSize'
+              : null;
+    if (messageKey !== null) {
+      context.addIssue({ code: 'custom', message: messageKey });
+    }
+  });
 
 const decimalPattern = /^\d{1,12}(\.\d{1,6})?$/;
 
@@ -38,7 +90,7 @@ export function outsideQuoteFormSchema(currencies: readonly [string, ...string[]
       .date('pl.rfqs.outsideQuote.error.receivedOn')
       .refine((value) => value <= deadlineDate, 'pl.rfqs.outsideQuote.error.receivedAfterDeadline'),
     validUntil: z.iso.date('pl.rfqs.outsideQuote.error.validUntil'),
-    documentName: z.string().min(1, 'pl.rfqs.outsideQuote.error.document'),
+    document: documentSchema,
   });
 }
 
@@ -55,8 +107,27 @@ export function emptyOutsideQuote(currency: string): OutsideQuoteInput {
     leadTimeDays: '',
     receivedOn: '',
     validUntil: '',
-    documentName: '',
+    document: null,
   };
+}
+
+/**
+ * R21's total for the preview: the unit price times the quantity raised to the minimum order
+ * quantity, plus one-off costs, converted at the rate the comparison captured. The API computes
+ * the real total once the command exists.
+ */
+export function previewNormalisedTotal(
+  comparison: Pick<QuoteComparison, 'currency' | 'exchangeRates'>,
+  quantity: number,
+  quote: Pick<OutsideQuote, 'unitPrice' | 'oneOffCosts' | 'currency' | 'minimumOrderQuantity'>,
+): Money {
+  const rate =
+    quote.currency === comparison.currency
+      ? 1
+      : Number(comparison.exchangeRates.find((captured) => captured.currency === quote.currency)?.rate ?? Number.NaN);
+  const total =
+    (Number(quote.unitPrice) * Math.max(quantity, quote.minimumOrderQuantity) + Number(quote.oneOffCosts)) * rate;
+  return { amount: total.toFixed(2), currency: comparison.currency };
 }
 
 function withLowestHighlighted(line: ComparisonLine): ComparisonLine {
@@ -116,13 +187,7 @@ export function withOutsideQuote(
                   minimumOrderQuantity: quote.minimumOrderQuantity,
                   leadTimeDays: quote.leadTimeDays,
                   validUntil: quote.validUntil,
-                  normalisedTotal: fixtureNormalisedTotal({
-                    unitPrice: Number(quote.unitPrice),
-                    oneOffCosts: Number(quote.oneOffCosts),
-                    currency: quote.currency,
-                    quantity: line.quantity,
-                    minimumOrderQuantity: quote.minimumOrderQuantity,
-                  }),
+                  normalisedTotal: previewNormalisedTotal(comparison, line.quantity, quote),
                   buyerRecorded: true,
                 },
               }

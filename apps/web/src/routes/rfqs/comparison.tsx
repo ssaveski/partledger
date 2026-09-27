@@ -4,9 +4,9 @@ import { buttonVariants, EmptyState, GridLegend, Mono, useTranslate } from '@par
 import { useQueryClient } from '@tanstack/react-query';
 import { getRouteApi, Link } from '@tanstack/react-router';
 import { InfoIcon } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 
-import { queryKeyOf, useApiQuery } from '../../api/api-client';
+import { queryKeyOf, useAdapterKind, useApiQuery } from '../../api/api-client';
 import { useDocumentTitle } from '../../shell/document-title';
 import { formatInstantUtc, formatNumber } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
@@ -14,8 +14,8 @@ import { AwardDecisions } from './award-decisions';
 import { ComparisonGrid, type OutsideQuoteTarget } from './comparison-grid';
 import { buyerRecordedMarker, cellStates } from './comparison-states';
 import { OutsideQuoteDialog } from './outside-quote-dialog';
-import { withOutsideQuote, type OutsideQuote } from './outside-quote';
-import { Fact, RfqHeader } from './rfq-header';
+import { outsideQuoteAction, outsideQuoteDeadlineDate, withOutsideQuote, type OutsideQuote } from './outside-quote';
+import { ExchangeRateFacts, Fact, RfqHeader } from './rfq-header';
 
 const route = getRouteApi('/rfqs/$rfqId/comparison');
 
@@ -75,6 +75,13 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
   const translate = useTranslate();
   const queryClient = useQueryClient();
   useDocumentTitle('pl.rfqs.comparison.documentTitle', { reference: comparison.reference });
+  const adapterKind = useAdapterKind();
+  // Stable across renders, so the grid's columns (and the button that opened the dialog) persist.
+  const outsideQuote = useMemo(
+    () => outsideQuoteAction(adapterKind, comparison.allowedTransitions),
+    [adapterKind, comparison.allowedTransitions],
+  );
+  const unavailableReasonId = useId();
   const [target, setTarget] = useState<OutsideQuoteTarget | null>(null);
   const [recorded, setRecorded] = useState<{ supplier: string; line: number } | null>(null);
   const statusMessage = useRef<HTMLParagraphElement>(null);
@@ -84,10 +91,18 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
     ...comparison.exchangeRates.map((rate) => rate.currency),
   ];
 
-  const openOutsideQuote = useCallback((next: OutsideQuoteTarget) => {
-    returnFocusTo.current = null;
-    setTarget(next);
-  }, []);
+  const canRecord = outsideQuote.kind === 'record';
+  const openOutsideQuote = useCallback(
+    (next: OutsideQuoteTarget) => {
+      // Only the fixture preview records locally; against the API the command does (U19).
+      if (!canRecord) {
+        return;
+      }
+      returnFocusTo.current = null;
+      setTarget(next);
+    },
+    [canRecord],
+  );
 
   const recordOutsideQuote = (recordedTarget: OutsideQuoteTarget, quote: OutsideQuote) => {
     queryClient.setQueryData<ClientResult<ComparisonRead>>(
@@ -121,6 +136,9 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
         status={comparison.status}
         screenKey="pl.rfqs.comparison.title"
       >
+        <Fact label={translate('pl.rfqs.detail.deadline')}>
+          <Mono>{translate('pl.web.format.utc', { instant: formatInstantUtc(comparison.deadline) })}</Mono>
+        </Fact>
         <Fact label={translate('pl.rfqs.comparison.closedAt')}>
           <Mono>{translate('pl.web.format.utc', { instant: formatInstantUtc(comparison.closedAt) })}</Mono>
         </Fact>
@@ -130,16 +148,7 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
         <Fact label={translate('pl.rfqs.comparison.totalsIn')}>
           <Mono>{comparison.currency}</Mono>
         </Fact>
-        {comparison.exchangeRates.map((rate) => (
-          <Fact key={rate.currency} label={translate('pl.rfqs.comparison.rateLabel', { currency: rate.currency })}>
-            <Mono>
-              {translate(
-                rate.source === 'manual' ? 'pl.rfqs.comparison.rateManual' : 'pl.rfqs.comparison.rateCentralBank',
-                { rate: rate.rate, currency: comparison.currency, date: rate.capturedOn },
-              )}
-            </Mono>
-          </Fact>
-        ))}
+        <ExchangeRateFacts rates={comparison.exchangeRates} currency={comparison.currency} />
       </RfqHeader>
       <section aria-labelledby="quotes-heading" className="flex flex-col gap-3">
         <h2 id="quotes-heading" className="text-lg font-semibold">
@@ -155,6 +164,11 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
           </p>
         </div>
         <GridLegend states={legendStates} />
+        {outsideQuote.kind === 'unavailable' ? (
+          <p id={unavailableReasonId} className="text-sm text-muted">
+            {translate(outsideQuote.reasonKey)}
+          </p>
+        ) : null}
         <p ref={statusMessage} role="status" tabIndex={-1} className="text-sm font-medium text-success outline-hidden">
           {recorded === null ? null : translate('pl.rfqs.outsideQuote.recorded', recorded)}
         </p>
@@ -162,7 +176,8 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
           label={translate('pl.rfqs.comparison.gridLabel', { reference: comparison.reference })}
           lines={comparison.lines}
           suppliers={comparison.suppliers}
-          recordingAllowed={comparison.allowedTransitions.includes('recordOutsideQuote')}
+          outsideQuote={outsideQuote}
+          unavailableReasonId={unavailableReasonId}
           onRecordOutsideQuote={openOutsideQuote}
         />
       </section>
@@ -170,7 +185,7 @@ function ComparisonView({ comparison }: { comparison: QuoteComparison }) {
       <OutsideQuoteDialog
         target={target}
         currencies={currencies}
-        deadlineDate={comparison.closedAt.slice(0, 10)}
+        deadlineDate={outsideQuoteDeadlineDate(comparison)}
         returnFocusTo={returnFocusTo}
         onRecorded={recordOutsideQuote}
         onClose={() => {
