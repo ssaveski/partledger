@@ -15,7 +15,7 @@ import { inputFingerprint } from '../idempotency/fingerprint';
 import type { HttpEntryAdapter } from '../listeners/entry-adapters';
 import { isAllowed } from '../principals/authorize';
 import type { AuthenticatedPrincipal, Principal } from '../principals/principal';
-import { PrincipalResolver } from '../principals/principal-resolver';
+import { PrincipalResolver, type Authentication, type PresentedHeaders } from '../principals/principal-resolver';
 import { roleDirectory, type RoleDirectory } from '../principals/role-directory';
 import { hasRecentStepUp } from '../principals/step-up';
 import { clock, type Clock } from '../time/clock';
@@ -25,7 +25,8 @@ import { operationRoutes, type OperationRoutes } from './route-generator';
 export interface OperationRequest {
   /** The listener the request arrived on; `undefined` when no listener accepted it. */
   readonly adapter: HttpEntryAdapter | undefined;
-  readonly authorization: string | undefined;
+  /** The `Authorization` and `Cookie` headers; which one counts depends on the listener. */
+  readonly credentialHeaders: PresentedHeaders;
   readonly correlationId: string;
 }
 
@@ -67,6 +68,13 @@ function refused(error: DomainError): Failed {
   return { kind: 'failure', error };
 }
 
+/** A refused credential gets the uniform 401; an identity provider outage is a 503, not a sign-out. */
+function notAuthenticated(reason: 'refused' | 'unavailable'): Outcome {
+  return reason === 'unavailable'
+    ? refused(domainError('Unavailable', 'dependencyUnavailable'))
+    : { kind: 'unauthenticated' };
+}
+
 /**
  * Runs a command or query for a request: authenticate the credential, parse the input, then,
  * in one tenant transaction, read the principal's roles, check access and step-up, claim the
@@ -87,11 +95,11 @@ export class OperationExecutor {
 
   async executeCommand(name: string, request: CommandRequest): Promise<Outcome> {
     const now = this.time.now();
-    const authenticated = await this.authenticate(request, now);
-    if (authenticated === null) {
-      return { kind: 'unauthenticated' };
+    const authentication = await this.authenticate(request, now);
+    if (!authentication.ok) {
+      return notAuthenticated(authentication.reason);
     }
-    return this.runCommand(authenticated, name, request.body, request.idempotencyKey, now);
+    return this.runCommand(authentication.principal, name, request.body, request.idempotencyKey, now);
   }
 
   /**
@@ -177,10 +185,11 @@ export class OperationExecutor {
 
   async executeQuery(name: string, request: QueryRequest): Promise<Outcome> {
     const now = this.time.now();
-    const authenticated = await this.authenticate(request, now);
-    if (authenticated === null) {
-      return { kind: 'unauthenticated' };
+    const authentication = await this.authenticate(request, now);
+    if (!authentication.ok) {
+      return notAuthenticated(authentication.reason);
     }
+    const authenticated = authentication.principal;
     const registration = this.routes.query(name);
     if (registration === undefined) {
       return refused(domainError('NotFound', 'route'));
@@ -205,11 +214,11 @@ export class OperationExecutor {
     });
   }
 
-  private async authenticate(request: OperationRequest, now: Date): Promise<AuthenticatedPrincipal | null> {
+  private async authenticate(request: OperationRequest, now: Date): Promise<Authentication> {
     if (request.adapter === undefined) {
-      return null;
+      return { ok: false, reason: 'refused' };
     }
-    return this.principals.authenticate(request.adapter, request.authorization, request.correlationId, now);
+    return this.principals.authenticate(request.adapter, request.credentialHeaders, request.correlationId, now);
   }
 
   private async inTenantTransaction(

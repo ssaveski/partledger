@@ -1,9 +1,15 @@
-import { correlationIdHeader, healthResponseSchema } from '@partledger/contracts';
+import { correlationIdHeader, healthResponseSchema, staffRequestHeader } from '@partledger/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { formatCredentialToken } from '../src/principals/credential-token';
-import { newIdempotencyKey, startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
+import {
+  credentialHeaders,
+  newIdempotencyKey,
+  startApiHarness,
+  type ApiHarness,
+  type IssuedToken,
+} from './support/api-harness';
 
 const uniform401 = { error: 'Unauthenticated', message: 'pl.error.unauthenticated.credential', params: {} };
 const createdNote = z.object({ noteId: z.uuid(), version: z.number().int() });
@@ -177,7 +183,11 @@ describe('listeners, principals and access', () => {
   it('answers malformed JSON with a message key', async () => {
     const response = await fetch(`${harness.api.listeners.urls.staff}/api/v1/commands/internalTest.createNote`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${buyer.token}` },
+      headers: {
+        'content-type': 'application/json',
+        ...credentialHeaders('staff', buyer.token),
+        [staffRequestHeader.name]: staffRequestHeader.value,
+      },
       body: '{"title":',
     });
     expect(response.status).toBe(400);
@@ -272,7 +282,7 @@ describe('listeners, principals and access', () => {
     const response = await fetch(
       `${harness.api.listeners.urls.staff}/api/v1/queries/internalTest.getNote?input=%7Bnot`,
       {
-        headers: { authorization: `Bearer ${buyer.token}` },
+        headers: credentialHeaders('staff', buyer.token),
       },
     );
     expect(response.status).toBe(400);

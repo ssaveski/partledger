@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
@@ -68,6 +68,14 @@ async function insertIdempotencyKey(client: pg.Client, tenantId: string, credent
   );
 }
 
+async function insertStaffSession(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
+  await client.query(
+    `insert into staff_sessions (tenant_id, credential_id, subject_id, refresh_token_ciphertext, started_at, last_seen_at, refreshed_at)
+     values ($1, $2, $3, $4, now(), now(), now())`,
+    [tenantId, credentialId, randomUUID(), randomBytes(64)],
+  );
+}
+
 describe('row-level security as pl_app', () => {
   let database: TestDatabase;
   let superuser: pg.Client;
@@ -126,6 +134,7 @@ describe('row-level security as pl_app', () => {
       credentialOf.set(tenant, credential.id);
       await insertIdempotencyKey(superuser, tenant, credential.id);
       await insertAuditRows(superuser, tenant);
+      await insertStaffSession(superuser, tenant, credential.id);
     }
   });
 
@@ -202,6 +211,66 @@ describe('row-level security as pl_app', () => {
   it('an idempotency key referencing another tenant credential fails its composite foreign key', async () => {
     const code = await errorCodeOf(insertIdempotencyKey(superuser, tenantA, credentialOf.get(tenantB) ?? ''));
     expect(code).toBe('23503');
+  });
+
+  it('a staff session referencing another tenant credential fails its composite foreign key', async () => {
+    const code = await errorCodeOf(insertStaffSession(superuser, tenantA, credentialOf.get(tenantB) ?? ''));
+    expect(code).toBe('23503');
+  });
+
+  it('pl_app can end a staff session but cannot move it to another subject or credential, or delete it', async () => {
+    const credentialId = credentialOf.get(tenantA) ?? '';
+    const ended = await withTenant(app, tenantA, async () =>
+      app.query(
+        `update staff_sessions set ended_at = now(), end_reason = 'signed_out' where credential_id = $1 and ended_at is null`,
+        [credentialId],
+      ),
+    );
+    expect(ended.rowCount).toBe(1);
+    for (const statement of [
+      `update staff_sessions set subject_id = gen_random_uuid() where credential_id = '${credentialId}'`,
+      `update staff_sessions set credential_id = gen_random_uuid() where credential_id = '${credentialId}'`,
+      `update staff_sessions set tenant_id = '${tenantB}' where credential_id = '${credentialId}'`,
+      `delete from staff_sessions where credential_id = '${credentialId}'`,
+    ]) {
+      const code = await withTenant(app, tenantA, () => errorCodeOf(app.query(statement)));
+      expect(code, statement).toBe('42501');
+    }
+  });
+
+  it('an ended staff session cannot be reopened or changed, by pl_app or by the owner', async () => {
+    const credential = await issueCredential(drizzle({ client: superuser }), {
+      tenantId: tenantA,
+      kind: 'staff_session',
+      subjectId: null,
+      expiresAt: inOneHour(),
+    });
+    await insertStaffSession(superuser, tenantA, credential.id);
+    await withTenant(
+      app,
+      tenantA,
+      () =>
+        app.query(`update staff_sessions set ended_at = now(), end_reason = 'signed_out' where credential_id = $1`, [
+          credential.id,
+        ]),
+      'commit',
+    );
+    for (const statement of [
+      `update staff_sessions set ended_at = null, end_reason = null where credential_id = '${credential.id}'`,
+      `update staff_sessions set last_seen_at = now() where credential_id = '${credential.id}'`,
+      `update staff_sessions set end_reason = 'idle_timeout' where credential_id = '${credential.id}'`,
+    ]) {
+      const code = await withTenant(app, tenantA, () => errorCodeOf(app.query(statement)));
+      expect(code, statement).toBe('42501');
+    }
+    const asOwner = await withTenant(migrator, tenantA, () =>
+      errorCodeOf(
+        migrator.query(`update staff_sessions set ended_at = null, end_reason = null where credential_id = $1`, [
+          credential.id,
+        ]),
+      ),
+    );
+    expect(asOwner).toBe('42501');
   });
 
   it('a row referencing another tenant parent row fails its composite foreign key', async () => {

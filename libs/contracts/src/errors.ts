@@ -13,7 +13,7 @@ export const domainErrorReasons = {
   Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists'],
   Invalid: ['request', 'idempotencyKeyRequired'],
   Unprocessable: ['idempotencyKeyReused'],
-  Forbidden: ['notPermitted'],
+  Forbidden: ['notPermitted', 'crossSiteRequest'],
   Unavailable: ['dependencyUnavailable'],
   StepUpRequired: ['recentAuthentication'],
 } as const satisfies Readonly<Record<string, readonly [string, ...string[]]>>;

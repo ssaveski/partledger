@@ -6,6 +6,7 @@ import { correlationIdHeader, idempotencyKeyHeader, idempotentReplayHeader } fro
 
 import { DomainFailure, RequestValidationFailure, UnauthenticatedFailure } from '../http/failures';
 import { entryAdapterOf } from '../listeners/listeners';
+import type { PresentedHeaders } from '../principals/principal-resolver';
 import { OperationExecutor, type Outcome } from './operation-executor';
 
 /**
@@ -28,7 +29,7 @@ export class OperationGatewayController {
     const correlationId = startResponse(response);
     const outcome = await this.executor.executeCommand(name, {
       adapter: entryAdapterOf(request),
-      authorization: request.headers.authorization,
+      credentialHeaders: credentialHeadersOf(request),
       idempotencyKey: singleHeader(request.headers[idempotencyKeyHeader]),
       body,
       correlationId,
@@ -49,7 +50,7 @@ export class OperationGatewayController {
     const correlationId = startResponse(response);
     const outcome = await this.executor.executeQuery(name, {
       adapter: entryAdapterOf(request),
-      authorization: request.headers.authorization,
+      credentialHeaders: credentialHeadersOf(request),
       // A repeated or nested `input` parameter is not a JSON string and fails to parse.
       input: typeof input === 'string' || input === undefined ? input : '',
       correlationId,
@@ -63,6 +64,10 @@ function startResponse(response: ServerResponse): string {
   response.setHeader(correlationIdHeader, correlationId);
   response.setHeader('cache-control', 'no-store');
   return correlationId;
+}
+
+export function credentialHeadersOf(request: IncomingMessage): PresentedHeaders {
+  return { authorization: request.headers.authorization, cookie: request.headers.cookie };
 }
 
 function singleHeader(value: string | string[] | undefined): string | undefined {

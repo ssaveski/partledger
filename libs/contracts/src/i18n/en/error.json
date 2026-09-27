@@ -8,6 +8,7 @@
   "pl.error.invalid.idempotencyKeyRequired": "This action needs an idempotency key so that a retry cannot apply it twice.",
   "pl.error.unprocessable.idempotencyKeyReused": "This idempotency key was already used for a different request.",
   "pl.error.forbidden.notPermitted": "You do not have permission to do this.",
+  "pl.error.forbidden.crossSiteRequest": "This request did not come from the Partledger app, so it was refused. Reload the page and try again.",
   "pl.error.unavailable.dependencyUnavailable": "A service this action needs is unavailable. Try again shortly.",
   "pl.error.stepUpRequired.recentAuthentication": "Confirm your identity again to continue.",
   "pl.error.unauthenticated.credential": "Your session or link is not valid. Sign in again or request a new link.",

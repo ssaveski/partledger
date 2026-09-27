@@ -6,6 +6,8 @@ import { healthResponseSchema } from '@partledger/contracts';
 import { startTestDatabase, type TestDatabase } from '@partledger/db/testing';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import { placeholderAuthEnvironment } from './support/auth-environment';
+
 const apiDirectory = join(import.meta.dirname, '..');
 const entryPoint = join(apiDirectory, 'dist', 'main.js');
 const placeholderDatabaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:1/partledger';
@@ -13,7 +15,7 @@ const ports = { STAFF_PORT: '3000', PORTAL_PORT: '3001', DROP_PORT: '3002', OPER
 
 function startWith(environment: Readonly<Record<string, string>>) {
   return spawnSync(process.execPath, [entryPoint], {
-    env: { PATH: process.env.PATH, ...environment },
+    env: { PATH: process.env.PATH, ...placeholderAuthEnvironment(), ...environment },
     encoding: 'utf8',
     timeout: 30_000,
   });
@@ -77,6 +79,7 @@ describe('the built API entry point', () => {
     const child = spawn(process.execPath, [entryPoint], {
       env: {
         PATH: process.env.PATH,
+        ...placeholderAuthEnvironment(),
         NODE_ENV: 'test',
         STAFF_PORT: String(staff),
         PORTAL_PORT: String(portal),

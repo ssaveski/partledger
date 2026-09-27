@@ -1,0 +1,21 @@
+{
+  "realm": "customer-idp",
+  "displayName": "Synthetic customer identity provider",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "partledger-broker",
+      "name": "Synthetic broker client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": []
+    }
+  ]
+}

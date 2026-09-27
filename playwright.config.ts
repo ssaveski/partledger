@@ -37,5 +37,15 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 120_000,
     },
+    {
+      // The staff sign-in stack: PostgreSQL and Keycloak in containers and the built API on the
+      // staff listener that the web app's /api proxy targets (apps/api/test/e2e/staff-stack.ts).
+      command: 'node node_modules/vite/bin/vite.js build --logLevel warn && node test/e2e/staff-stack.ts',
+      cwd: 'apps/api',
+      url: 'http://127.0.0.1:3000/api/v1/health',
+      reuseExistingServer: false,
+      timeout: 300_000,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 30_000 },
+    },
   ],
 });

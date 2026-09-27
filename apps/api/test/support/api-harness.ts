@@ -1,18 +1,28 @@
 import { randomUUID } from 'node:crypto';
 
-import { commandPath, idempotencyKeyHeader, queryPath, type TenantRole } from '@partledger/contracts';
+import {
+  commandPath,
+  idempotencyKeyHeader,
+  queryPath,
+  staffRequestHeader,
+  type TenantRole,
+} from '@partledger/contracts';
 import { issueCredential, type CredentialKind } from '@partledger/db';
 import { insertTenant, startTestDatabase, type TestDatabase } from '@partledger/db/testing';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { z } from 'zod';
 
+import type { IdentityProvider } from '../../src/auth/identity-provider';
+import { sessionCookieName } from '../../src/auth/session-cookie';
+import { StaffSessions } from '../../src/auth/staff-sessions';
 import { startApi, type RunningApi } from '../../src/bootstrap';
 import { parseConfig } from '../../src/config/env.schema';
 import type { HttpEntryAdapter } from '../../src/listeners/entry-adapters';
 import { formatCredentialToken } from '../../src/principals/credential-token';
 import type { RoleDirectory } from '../../src/principals/role-directory';
 import type { Clock } from '../../src/time/clock';
+import { placeholderAuthEnvironment } from './auth-environment';
 import { internalTestNotesTable, internalTestRegistry } from './internal-test-module';
 
 const countRows = z.tuple([z.object({ count: z.number().int() })]);
@@ -54,8 +64,20 @@ export interface ApiHarness {
     options?: { readonly token?: string; readonly idempotencyKey?: string },
   ): Promise<ApiResponse>;
   query(adapter: HttpEntryAdapter, name: string, input: unknown, token?: string): Promise<ApiResponse>;
+  /** Gives a person, such as one signed in through Keycloak, roles in the stand-in directory. */
+  grantRoles(userId: string, roles: readonly TenantRole[]): void;
   count(sql: string, values?: unknown[]): Promise<number>;
   close(): Promise<void>;
+}
+
+export interface ApiHarnessOptions {
+  /** Staff sign-in settings; by default an unreachable placeholder realm. */
+  readonly authEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * `keycloak` signs in and refreshes against the configured realm; an object replaces the
+   * stand-in, whose refreshes always succeed with the same identity.
+   */
+  readonly identityProvider?: 'keycloak' | IdentityProvider;
 }
 
 /**
@@ -63,7 +85,7 @@ export interface ApiHarness {
  * migrated PostgreSQL 18 as `pl_app`. People's roles come from an in-memory directory, which
  * stands in for U8's membership rows.
  */
-export async function startApiHarness(): Promise<ApiHarness> {
+export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<ApiHarness> {
   const database = await startTestDatabase();
   const superuser = await database.connect('superuser');
   const tenantA = await insertTenant(superuser, 'tenant-a');
@@ -86,13 +108,22 @@ export async function startApiHarness(): Promise<ApiHarness> {
     DROP_PORT: '3',
     OPERATOR_PORT: '4',
     DATABASE_URL: database.connectionString('pl_app'),
+    // Tests move the clock by up to a day; sessions they issue must outlast that.
+    ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
   });
   const loopback = { host: '127.0.0.1', port: 0 };
   const api = await startApi(
     config,
     { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
-    { registry: internalTestRegistry, roleDirectory, clock },
+    {
+      registry: internalTestRegistry,
+      roleDirectory,
+      clock,
+      identityProvider:
+        options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
+    },
   );
+  const staffSessions = api.app.get(StaffSessions);
   // Created after boot: the boot-time catalog check knows only the shipped schema.
   const migrator = await database.connect('pl_migrator');
   await migrator.query(internalTestNotesTable);
@@ -116,28 +147,44 @@ export async function startApiHarness(): Promise<ApiHarness> {
     async issue(kind, tenantId, options = {}) {
       const subjectId = randomUUID();
       rolesByUser.set(subjectId, options.roles ?? []);
-      const issued = await issueCredential(issuer, {
-        tenantId,
-        kind,
-        subjectId,
-        expiresAt: new Date(Date.now() + (options.expiresInMilliseconds ?? 3_600_000)),
-      });
+      const expiresAt = new Date(clock.now().getTime() + (options.expiresInMilliseconds ?? 3_600_000));
+      if (kind === 'staff_session') {
+        // Staff sessions start the way a sign-in starts them, with a stand-in refresh token.
+        const identity = { subject: subjectId, tenantId, organizationId: 'harness' };
+        const started = await staffSessions.start(
+          { identity, refreshToken: JSON.stringify(identity) },
+          clock.now(),
+          expiresAt,
+        );
+        if (started === null) {
+          throw new Error('The harness could not start a staff session');
+        }
+        return {
+          credentialId: started.credentialId,
+          subjectId,
+          token: formatCredentialToken(kind, started.credentialId, started.secret),
+        };
+      }
+      const issued = await issueCredential(issuer, { tenantId, kind, subjectId, expiresAt });
       return { credentialId: issued.id, subjectId, token: formatCredentialToken(kind, issued.id, issued.secret) };
     },
     command(adapter, name, body, options = {}) {
-      const headers: Record<string, string> = { 'content-type': 'application/json' };
-      if (options.token !== undefined) {
-        headers.authorization = `Bearer ${options.token}`;
-      }
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+        ...credentialHeaders(adapter, options.token),
+        [staffRequestHeader.name]: staffRequestHeader.value,
+      };
       if (options.idempotencyKey !== undefined) {
         headers[idempotencyKeyHeader] = options.idempotencyKey;
       }
       return send(adapter, commandPath(name), { method: 'POST', headers, body: JSON.stringify(body) });
     },
     query(adapter, name, input, token) {
-      const headers: Record<string, string> = token === undefined ? {} : { authorization: `Bearer ${token}` };
       const search = new URLSearchParams({ input: JSON.stringify(input) });
-      return send(adapter, `${queryPath(name)}?${search.toString()}`, { headers });
+      return send(adapter, `${queryPath(name)}?${search.toString()}`, { headers: credentialHeaders(adapter, token) });
+    },
+    grantRoles(userId, roles) {
+      rolesByUser.set(userId, roles);
     },
     async count(text, values = []) {
       const result = await superuser.query(`select count(*)::int as count from (${text}) as counted`, values);
@@ -150,6 +197,32 @@ export async function startApiHarness(): Promise<ApiHarness> {
     },
   };
 }
+
+/**
+ * How a client presents a token on each listener: the staff app sends its session cookie,
+ * everything else a bearer token. A token of the wrong kind travels the same way, so the
+ * listener's refusal is what the test sees.
+ */
+export function credentialHeaders(adapter: HttpEntryAdapter, token: string | undefined): Record<string, string> {
+  if (token === undefined) {
+    return {};
+  }
+  return adapter === 'staff' ? { cookie: `${sessionCookieName}=${token}` } : { authorization: `Bearer ${token}` };
+}
+
+/**
+ * Stands in for Keycloak: every refresh succeeds with the same identity. Sign-in against a
+ * real Keycloak is covered by the auth integration tests.
+ */
+export const stubIdentity = z.object({ subject: z.uuid(), tenantId: z.uuid(), organizationId: z.string() });
+
+export const stubIdentityProvider: IdentityProvider = {
+  authorizationUrl: () => Promise.resolve({ ok: false, error: 'unavailable' }),
+  exchangeCode: () => Promise.resolve({ ok: false, error: 'unavailable' }),
+  refresh: (refreshToken) =>
+    Promise.resolve({ kind: 'refreshed', identity: stubIdentity.parse(JSON.parse(refreshToken)), refreshToken }),
+  endSession: () => Promise.resolve(),
+};
 
 export function newIdempotencyKey(): string {
   return randomUUID();

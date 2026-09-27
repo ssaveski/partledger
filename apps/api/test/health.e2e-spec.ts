@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { startApi, type RunningApi } from '../src/bootstrap';
 import { parseConfig } from '../src/config/env.schema';
+import { placeholderAuthEnvironment } from './support/auth-environment';
 
 describe('health endpoint', () => {
   let database: TestDatabase;
@@ -21,6 +22,7 @@ describe('health endpoint', () => {
         DROP_PORT: '3002',
         OPERATOR_PORT: '3003',
         DATABASE_URL: database.connectionString('pl_app'),
+        ...placeholderAuthEnvironment(),
       }),
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
     );
