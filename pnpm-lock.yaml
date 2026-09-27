@@ -238,6 +238,9 @@ importers:
       '@partledger/db':
         specifier: workspace:*
         version: link:../../libs/db
+      '@partledger/domain':
+        specifier: workspace:*
+        version: link:../../libs/domain
       drizzle-orm:
         specifier: ~0.45.3
         version: 0.45.3(@types/pg@8.23.1)(pg@8.23.0)
@@ -382,7 +385,11 @@ importers:
         specifier: ^12.1.0
         version: 12.1.0(supports-color@7.2.0)
 
-  libs/domain: {}
+  libs/domain:
+    dependencies:
+      '@partledger/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   libs/packs: {}
 

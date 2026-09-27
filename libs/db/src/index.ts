@@ -37,5 +37,6 @@ export {
   type RuntimeRole,
 } from './roles.ts';
 export * as schema from './schema/index.ts';
+export type { CredentialKind } from './schema/index.ts';
 export { tableAccessManifest } from './schema/index.ts';
 export { defineTableAccess, type TableAccess, type TablePrivilege } from './table-access.ts';
