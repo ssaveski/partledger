@@ -146,7 +146,7 @@ export class OperationExecutor {
       }
       let claimId: string | undefined;
       const { actedUnder } = principal;
-      if (idempotencyKey !== undefined && actedUnder.grant !== 'job') {
+      if (idempotencyKey !== undefined && 'credentialId' in actedUnder) {
         const claim = await this.idempotency.claim(database, {
           tenantId: principal.tenantId,
           credentialId: actedUnder.credentialId,

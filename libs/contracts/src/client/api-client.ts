@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 
-import type { QueryDeclaration } from '../define';
+import { staffSessionSchema, type StaffSession } from '../auth';
+import type { CommandDeclaration, QueryDeclaration } from '../define';
 import type { ErrorParams, ValidationIssue } from '../errors';
 import {
   internalErrorMessageKey,
@@ -36,6 +37,12 @@ export type AdapterResult =
 /** Transport only: the HTTP adapter calls the API, the fixture adapter serves synthetic data. */
 export interface ApiAdapter {
   query(name: string, input: unknown): Promise<AdapterResult>;
+  /** Sends a command once per idempotency key; a retry with the same key and input acts once. */
+  command(name: string, input: unknown, idempotencyKey: string): Promise<AdapterResult>;
+  /** The signed-in staff session, or `unauthenticated`. */
+  session(): Promise<AdapterResult>;
+  /** Ends the staff session. */
+  signOut(): Promise<AdapterResult>;
 }
 
 export interface ApiClient {
@@ -43,6 +50,13 @@ export interface ApiClient {
     declaration: Declaration,
     input: z.input<Declaration['input']>,
   ): Promise<ClientResult<z.output<Declaration['output']>>>;
+  command<Declaration extends CommandDeclaration>(
+    declaration: Declaration,
+    input: z.input<Declaration['input']>,
+    idempotencyKey: string,
+  ): Promise<ClientResult<z.output<Declaration['output']>>>;
+  session(): Promise<ClientResult<StaffSession>>;
+  signOut(): Promise<ClientResult<null>>;
 }
 
 /**
@@ -50,31 +64,60 @@ export interface ApiClient {
  * arrival against the same declaration the API serves, so a screen never sees an unchecked shape.
  */
 export function createApiClient(adapter: ApiAdapter): ApiClient {
-  async function query<Declaration extends QueryDeclaration>(
-    declaration: Declaration,
-    input: z.input<Declaration['input']>,
-  ): Promise<ClientResult<z.output<Declaration['output']>>> {
-    const parsedInput = parseWith(declaration.input, input);
-    if (!parsedInput.success) {
-      return failed({
-        kind: 'invalid',
-        issues: parsedInput.error.issues.map((issue) => ({
-          path: issue.path.filter((segment) => typeof segment !== 'symbol'),
-          code: issue.code,
-        })),
-      });
-    }
-    const response = await adapter.query(declaration.name, parsedInput.data);
-    if (!response.ok) {
-      return response;
-    }
-    const output = parseWith<Declaration['output']>(declaration.output, response.body);
-    if (!output.success) {
-      return failed({ kind: 'malformed' });
-    }
-    return { ok: true, value: output.data };
+  return {
+    async query(declaration, input) {
+      const parsedInput = parseInput(declaration.input, input);
+      if (!parsedInput.ok) {
+        return parsedInput;
+      }
+      return parsedResponse<(typeof declaration)['output']>(
+        declaration.output,
+        await adapter.query(declaration.name, parsedInput.value),
+      );
+    },
+    async command(declaration, input, idempotencyKey) {
+      const parsedInput = parseInput(declaration.input, input);
+      if (!parsedInput.ok) {
+        return parsedInput;
+      }
+      return parsedResponse<(typeof declaration)['output']>(
+        declaration.output,
+        await adapter.command(declaration.name, parsedInput.value, idempotencyKey),
+      );
+    },
+    async session() {
+      return parsedResponse(staffSessionSchema, await adapter.session());
+    },
+    async signOut() {
+      const response = await adapter.signOut();
+      return response.ok ? { ok: true, value: null } : response;
+    },
+  };
+}
+
+function parseInput(schema: z.ZodType, input: unknown): ClientResult<unknown> {
+  const parsed = schema.safeParse(input);
+  if (parsed.success) {
+    return { ok: true, value: parsed.data };
   }
-  return { query };
+  return failed({
+    kind: 'invalid',
+    issues: parsed.error.issues.map((issue) => ({
+      path: issue.path.filter((segment) => typeof segment !== 'symbol'),
+      code: issue.code,
+    })),
+  });
+}
+
+function parsedResponse<Schema extends z.ZodType>(
+  schema: Schema,
+  response: AdapterResult,
+): ClientResult<z.output<Schema>> {
+  if (!response.ok) {
+    return response;
+  }
+  const output = parseWith(schema, response.body);
+  return output.success ? { ok: true, value: output.data } : failed({ kind: 'malformed' });
 }
 
 function parseWith<Schema extends z.ZodType>(schema: Schema, value: unknown): z.ZodSafeParseResult<z.output<Schema>> {

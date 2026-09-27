@@ -1,4 +1,4 @@
-import type { ApiAdapter } from '@partledger/contracts/client';
+import type { AdapterResult, ApiAdapter } from '@partledger/contracts/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPreviewStore, previewStateFrom, withPreviewStore } from './preview';
@@ -17,7 +17,9 @@ describe('the preview state in the address', () => {
 describe('the preview store', () => {
   function fixtures() {
     const query = vi.fn<ApiAdapter['query']>(() => Promise.resolve({ ok: true, body: { from: 'fixtures' } }));
-    return { adapter: { query }, query };
+    const unused = () => Promise.resolve<AdapterResult>({ ok: false, failure: { kind: 'unavailable' } });
+    const adapter: ApiAdapter = { query, command: unused, session: unused, signOut: unused };
+    return { adapter, query };
   }
 
   it('asks the fixtures until the preview writes the same query and input', async () => {

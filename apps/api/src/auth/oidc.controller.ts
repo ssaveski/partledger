@@ -153,7 +153,9 @@ export class OidcController {
     }
     const started = exchanged.ok ? await this.sessions.start(exchanged.value, now) : null;
     if (started === null) {
-      this.logger.warn(`A staff sign-in was refused (${exchanged.ok ? 'unknown_tenant' : exchanged.error})`);
+      this.logger.warn(
+        `A staff sign-in was refused (${exchanged.ok ? 'unknown_tenant_or_not_a_member' : exchanged.error})`,
+      );
       if (exchanged.ok) {
         await this.provider.endSession(exchanged.value.refreshToken);
       }

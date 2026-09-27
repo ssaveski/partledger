@@ -64,7 +64,8 @@ describe('staff sign-in and sessions against Keycloak', () => {
     organizationA = await keycloak.admin.createOrganization('tenant-a', harness.tenantA);
     buyer = await memberOf(organizationA, 'synthetic.buyer');
     harness.grantRoles(buyer.id, ['buyer']);
-  });
+    // Keycloak can take minutes to start beside the other suites' containers on a busy runner.
+  }, 300_000);
 
   afterAll(async () => {
     await harness.close();

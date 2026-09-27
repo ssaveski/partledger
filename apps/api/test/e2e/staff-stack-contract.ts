@@ -17,6 +17,8 @@ export const e2eStaffUserSchema = z.object({
   email: z.string(),
   password: z.string(),
   tenantId: z.uuid(),
+  tenantDisplayName: z.string(),
+  displayName: z.string(),
 });
 
 export type E2eStaffUser = z.infer<typeof e2eStaffUserSchema>;

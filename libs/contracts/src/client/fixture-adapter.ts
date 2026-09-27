@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import type { QueryDeclaration } from '../define';
+import type { StaffSession } from '../auth';
+import type { CommandDeclaration, QueryDeclaration } from '../define';
 import { messageKeyOf, type ErrorCode } from '../errors';
 import type { AdapterResult, ApiAdapter, ClientFailure } from './api-client';
 
@@ -54,11 +55,30 @@ function parseInput<Schema extends z.ZodType>(schema: Schema, value: unknown): z
   return schema.safeParse(value);
 }
 
+/** Serves one declared command from synthetic state; the input is parsed exactly as the API would. */
+export function fixtureCommand<Declaration extends CommandDeclaration>(
+  declaration: Declaration,
+  respond: (input: z.output<Declaration['input']>) => FixtureResponse<z.input<Declaration['output']>>,
+): FixtureHandler {
+  return {
+    name: declaration.name,
+    respond(input) {
+      const parsed = parseInput<Declaration['input']>(declaration.input, input);
+      return parsed.success ? respond(parsed.data) : { kind: 'invalid' };
+    },
+  };
+}
+
 export interface FixtureAdapterOptions {
   /** Simulated network time before each response, so loading states show as they would against the API. */
   readonly latency?: () => Promise<void>;
   /** The preview state asked for when a read is made, if any. */
   readonly previewState?: () => PreviewState | null;
+  readonly commands?: readonly FixtureHandler[];
+  /** The synthetic signed-in session; without one, or once it answers `null`, the preview is signed out. */
+  readonly session?: () => StaffSession | null;
+  /** Reads that a forced preview state leaves alone, such as the signed-in member the shell needs. */
+  readonly unforcedQueries?: readonly string[];
 }
 
 /**
@@ -67,32 +87,59 @@ export interface FixtureAdapterOptions {
  */
 export function createFixtureAdapter(
   handlers: readonly FixtureHandler[],
-  { latency = () => Promise.resolve(), previewState = () => null }: FixtureAdapterOptions = {},
+  {
+    latency = () => Promise.resolve(),
+    previewState = () => null,
+    commands = [],
+    session,
+    unforcedQueries = [],
+  }: FixtureAdapterOptions = {},
 ): ApiAdapter {
-  const byName = new Map(handlers.map((handler) => [handler.name, handler]));
+  const queriesByName = new Map(handlers.map((handler) => [handler.name, handler]));
+  const commandsByName = new Map(commands.map((handler) => [handler.name, handler]));
+  let signedIn = session !== undefined;
+
+  async function serve(
+    handler: FixtureHandler | undefined,
+    input: unknown,
+    state: PreviewState | null,
+  ): Promise<AdapterResult> {
+    await latency();
+    if (handler === undefined) {
+      return refusedWith({ tag: 'NotFound', reason: 'route' });
+    }
+    const response = forcedResponse(state) ?? handler.respond(input, state === 'empty' ? 'empty' : 'populated');
+    switch (response.kind) {
+      case 'output':
+        return { ok: true, body: JSON.parse(JSON.stringify(response.output)) };
+      case 'refused':
+        return refusedWith(response.code);
+      case 'invalid':
+        return { ok: false, failure: { kind: 'invalid', issues: [{ path: [], code: 'invalid_input' }] } };
+      case 'unavailable':
+        return { ok: false, failure: { kind: 'unavailable' } };
+      case 'unauthenticated':
+        return { ok: false, failure: { kind: 'unauthenticated' } };
+      case 'pending':
+        return new Promise<never>(() => undefined);
+    }
+  }
+
   return {
-    async query(name, input): Promise<AdapterResult> {
+    query: (name, input) =>
+      serve(queriesByName.get(name), input, unforcedQueries.includes(name) ? null : previewState()),
+    command: (name, input) => serve(commandsByName.get(name), input, null),
+    async session() {
       await latency();
-      const handler = byName.get(name);
-      if (handler === undefined) {
-        return refusedWith({ tag: 'NotFound', reason: 'route' });
-      }
-      const state = previewState();
-      const response = forcedResponse(state) ?? handler.respond(input, state === 'empty' ? 'empty' : 'populated');
-      switch (response.kind) {
-        case 'output':
-          return { ok: true, body: JSON.parse(JSON.stringify(response.output)) };
-        case 'refused':
-          return refusedWith(response.code);
-        case 'invalid':
-          return { ok: false, failure: { kind: 'invalid', issues: [{ path: [], code: 'invalid_input' }] } };
-        case 'unauthenticated':
-          return { ok: false, failure: { kind: 'unauthenticated' } };
-        case 'unavailable':
-          return { ok: false, failure: { kind: 'unavailable' } };
-        case 'pending':
-          return new Promise<never>(() => undefined);
-      }
+      const current = signedIn && session !== undefined ? session() : null;
+      return current === null
+        ? { ok: false, failure: { kind: 'unauthenticated' } }
+        : { ok: true, body: JSON.parse(JSON.stringify(current)) };
+    },
+    async signOut() {
+      await latency();
+      signedIn = false;
+      return { ok: true, body: null };
     },
   };
 }

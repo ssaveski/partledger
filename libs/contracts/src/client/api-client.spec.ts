@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import { defineQuery } from '../define';
+import { defineCommand, defineQuery } from '../define';
 import { errorCode } from '../errors';
 import {
   createApiClient,
@@ -28,8 +28,28 @@ const exampleId = '00000000-0000-4000-8000-000000000001';
 
 function adapterAnswering(result: AdapterResult) {
   const query = vi.fn<ApiAdapter['query']>(() => Promise.resolve(result));
-  return { adapter: { query }, query };
+  const command = vi.fn<ApiAdapter['command']>(() => Promise.resolve(result));
+  const answer = () => Promise.resolve(result);
+  const adapter: ApiAdapter = { query, command, session: answer, signOut: answer };
+  return { adapter, query, command };
 }
+
+const exampleCommand = defineCommand({
+  name: 'examples.rename',
+  description: 'Rename an example.',
+  purpose: 'business',
+  input: z.object({ exampleId: z.uuid().describe('The example.') }).describe('Which example.'),
+  output: z
+    .object({ exampleId: z.uuid().describe('The example.') })
+    .strict()
+    .describe('The renamed example.'),
+  errors: [errorCode('NotFound', 'resource')],
+  access: { person: ['buyer'] },
+  stepUp: false,
+  impact: 'standard',
+  idempotencyKey: 'required',
+  expectedVersion: false,
+});
 
 describe('the typed API client', () => {
   it('returns the output parsed against the declaration when the adapter answers in the declared shape', async () => {
@@ -72,6 +92,39 @@ describe('the typed API client', () => {
     };
     const { adapter } = adapterAnswering({ ok: false, failure });
     expect(await createApiClient(adapter).query(exampleQuery, { exampleId })).toEqual({ ok: false, failure });
+  });
+});
+
+describe('the typed API client for commands and the session', () => {
+  it('sends a command with its idempotency key and parses the output against the declaration', async () => {
+    const { adapter, command } = adapterAnswering({ ok: true, body: { exampleId } });
+    const result = await createApiClient(adapter).command(exampleCommand, { exampleId }, 'key-0000000000000001');
+    expect(result).toEqual({ ok: true, value: { exampleId } });
+    expect(command).toHaveBeenCalledWith('examples.rename', { exampleId }, 'key-0000000000000001');
+  });
+
+  it('refuses command input that does not parse without calling the adapter', async () => {
+    const { adapter, command } = adapterAnswering({ ok: true, body: { exampleId } });
+    const result = await createApiClient(adapter).command(exampleCommand, { exampleId: 'x' }, 'key-0000000000000001');
+    expect(result.ok).toBe(false);
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it('parses the session against the staff session shape', async () => {
+    const session = {
+      userId: exampleId,
+      tenantId: exampleId,
+      expiresAt: '2026-09-27T20:00:00.000Z',
+      idleExpiresAt: '2026-09-27T10:30:00.000Z',
+    };
+    expect(await createApiClient(adapterAnswering({ ok: true, body: session }).adapter).session()).toEqual({
+      ok: true,
+      value: session,
+    });
+    expect(await createApiClient(adapterAnswering({ ok: true, body: { userId: 'x' } }).adapter).session()).toEqual({
+      ok: false,
+      failure: { kind: 'malformed' },
+    });
   });
 });
 

@@ -106,6 +106,24 @@ async function insertStaffSession(client: pg.Client, tenantId: string, credentia
   );
 }
 
+/** A member holding one role, and the tenant's directory entry. */
+async function insertMembershipRows(client: pg.Client, tenantId: string, slug: string): Promise<string> {
+  const userId = randomUUID();
+  await client.query(
+    `insert into memberships (tenant_id, user_id, email, display_name, invited_at)
+     values ($1, $2, $3, 'Synthetic Member', now())`,
+    [tenantId, userId, `member.${userId.slice(0, 8)}@synthetic.test`],
+  );
+  await client.query(
+    `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, 'buyer', now())`,
+    [tenantId, userId],
+  );
+  await client.query(`insert into directory_entries (slug, region) values ($1, 'ca')`, [slug]);
+  return userId;
+}
+
+const tenantOwned = tableAccessManifest.filter((access) => access.tenantKey !== 'none');
+
 describe('row-level security as pl_app', () => {
   let database: TestDatabase;
   let superuser: pg.Client;
@@ -115,6 +133,7 @@ describe('row-level security as pl_app', () => {
   let tenantA: string;
   let tenantB: string;
   const credentialOf = new Map<string, string>();
+  const memberOf = new Map<string, string>();
   const inOneHour = () => new Date(Date.now() + 3_600_000);
 
   beforeAll(async () => {
@@ -148,7 +167,10 @@ describe('row-level security as pl_app', () => {
 
     // Every tenant-owned table holds rows of both tenants, so a missing policy or FORCE shows.
     const superuserDatabase = drizzle({ client: superuser });
-    for (const tenant of [tenantA, tenantB]) {
+    for (const [tenant, slug] of [
+      [tenantA, 'tenant-a'],
+      [tenantB, 'tenant-b'],
+    ] as const) {
       const parent = z
         .tuple([z.object({ id: z.uuid() })])
         .parse(
@@ -167,6 +189,7 @@ describe('row-level security as pl_app', () => {
       await insertStaffSession(superuser, tenant, credential.id);
       await insertJobRows(superuser, tenant);
       await insertNotificationRows(superuser, tenant);
+      memberOf.set(tenant, await insertMembershipRows(superuser, tenant, slug));
     }
   });
 
@@ -218,7 +241,7 @@ describe('row-level security as pl_app', () => {
   });
 
   it('with no tenant context set, tenant-owned tables return no rows', async () => {
-    const readable = tableAccessManifest.filter((access) => access.grants.pl_app?.includes('SELECT') === true);
+    const readable = tenantOwned.filter((access) => access.grants.pl_app?.includes('SELECT') === true);
     for (const table of [...readable.map((access) => access.table), ...fixtureTables]) {
       const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
       expect(result[0].count, table).toBe(0);
@@ -233,7 +256,7 @@ describe('row-level security as pl_app', () => {
   });
 
   it('the owning role is bound by the policies too and sees no rows of any tenant-owned table without a tenant context', async () => {
-    for (const table of [...tableAccessManifest.map((access) => access.table), ...fixtureTables]) {
+    for (const table of [...tenantOwned.map((access) => access.table), ...fixtureTables]) {
       const stored = countRows.parse((await superuser.query(`select count(*) from ${table}`)).rows);
       expect(stored[0].count, `${table} holds committed rows`).toBeGreaterThan(0);
       const visible = countRows.parse((await migrator.query(`select count(*) from ${table}`)).rows);

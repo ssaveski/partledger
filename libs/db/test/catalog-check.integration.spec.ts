@@ -382,6 +382,20 @@ describe('the catalog check', () => {
     expect(codesOf(result)).toEqual(['missing_backup_policy credentials']);
   });
 
+  it('fails when the global directory gains a policy, loosens its insert check or loses row-level security', async () => {
+    const result = await checkAfter(`
+      create policy directory_entries_anyone on directory_entries for update to pl_app using (true);
+      alter policy directory_entries_register on directory_entries with check (true);
+      alter table directory_entries no force row level security;
+    `);
+    expect(codesOf(result).sort()).toEqual([
+      'global_policy_mismatch directory_entries',
+      'global_policy_mismatch directory_entries',
+      'global_policy_mismatch directory_entries',
+      'row_security_not_forced public.directory_entries',
+    ]);
+  });
+
   it('fails when a table has no tenant policy', async () => {
     const result = await checkAfter('drop policy fixture_children_tenant_isolation on fixture_children');
     expect(codesOf(result)).toEqual(['missing_tenant_policy fixture_children']);

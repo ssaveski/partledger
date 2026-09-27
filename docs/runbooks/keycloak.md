@@ -117,6 +117,39 @@ Keycloak itself runs with `--features-disabled=impersonation`, and the API refus
 
 The client secret is not in `realm.json`. After an import, regenerate it (Clients > `partledger-api` > Credentials, or the command below) and put it in the API's environment.
 
+## Tenants, members and roles (U8)
+
+- **Membership lives in two places, with different jobs.** Keycloak knows who belongs to a tenant: one organization per tenant, whose `tenant_id` attribute names the tenant. The platform knows what each person may do: `memberships` and `role_assignments` rows in the tenant, changed only by the audited commands `members.invite`, `members.remove`, `members.grantRole` and `members.revokeRole`, and read on every request. A sign-in is refused to anyone without a current membership row, even if Keycloak lists them in the organization.
+- **The API's service account** is the confidential client `partledger-api-admin` (service accounts only). It holds `manage-users`, `view-users` and `manage-realm` in `realm-management`: Keycloak 26 guards its organization endpoints with `manage-realm`. The API uses it only to create a tenant's organization, create an invited person's account and add them to that one organization, remove a member from the organization and end their Keycloak sessions. It never assigns a realm or client role. Its secret is regenerated after import, like `partledger-api`'s, and goes in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
+- **Inviting** creates the account with the email as username and the required action `UPDATE_PASSWORD`, and adds it to the tenant's organization only. An email that already has an account is refused, so nobody ends up in two organizations (where every sign-in would be refused). The invitation email follows with the email port (U34); until then an administrator sends Keycloak's "execute actions" email from the admin console.
+- **Removing a member** revokes every role, records the removal, ends every API session of the person (`membership_removed`) and removes them from the organization, in the command's transaction; a Keycloak failure rolls all of it back.
+- **Role grants and revocations** are KTD20 high-impact commands and demand a recent step-up. Until U29 supplies the step-up source, the API refuses them with `pl.error.stepUpRequired.recentAuthentication`; the first tenant administrator is created by provisioning.
+
+## Operators (`infra/compose/keycloak/operator-realm.json`)
+
+Operators sign in through their own realm, `partledger-operators`, never through a tenant's realm (KTD20, R4).
+
+| Setting | Value | Why |
+|---|---|---|
+| `browserFlow` | `operator browser`: the SSO cookie, or the password form followed by a REQUIRED one-time code form | Every operator sign-in needs a second factor; an operator without one enrols at first sign-in. There is no single-factor path. |
+| OTP policy | TOTP, HmacSHA1, 6 digits, 30 s, codes not reusable | Works with common authenticator apps. |
+| Client `partledger-operator-console` | public, standard flow with PKCE `S256`, loopback redirect `http://127.0.0.1/operator-callback` (any port) | An operator console or CLI on the operator network signs in and keeps the access token. |
+| Audience mapper | adds `partledger-operator-api` | The operator listener checks the audience and that the token was issued to the console. |
+| Brute-force detection, admin events, no registration, no password reset | on, on, off, off | As in the staff realm. |
+
+The operator listener (`OPERATOR_HOST`, `OPERATOR_PORT`, bound to the operator network only) accepts two credentials: break-glass grants (`platform_operator` credentials, U30) and, for one route only, the operator realm's access token. That route is `POST /api/v1/operator/tenants`, which provisions a tenant:
+
+1. It refuses a region other than `CELL_REGION` and a slug the directory already holds.
+2. It creates the tenant's Keycloak organization with `tenant_id` set, and the first administrator's account in that organization.
+3. In one transaction whose `app.tenant_id` is the new tenant, it inserts the tenant (region fixed for good), its directory entry, the administrator's membership and `tenant_admin` role, the enrolment in the scheduled jobs (`enqueueTenantEnrolment`, see `docs/runbooks/jobs.md`), and the genesis of the tenant's audit chain, acted by the operator under `operator_sign_in`. Names and emails enter the chain only as commitments.
+4. If the transaction does not commit, the organization and the account are removed again.
+
+Configure it with `OPERATOR_KEYCLOAK_ISSUER` (https in production), `OPERATOR_KEYCLOAK_CLIENT_ID` and `OPERATOR_KEYCLOAK_AUDIENCE`.
+
+## The directory
+
+`GET /api/v1/directory/<slug>` on the staff listener answers `{ "regionUrl": … }` for a provisioned tenant, from `DIRECTORY_REGION_URLS`, and 404 otherwise. The `directory_entries` table holds a slug and a region and nothing else; it is the one global table, readable before any tenant is known, and its insert policy admits only the slug and region of the tenant the provisioning transaction can see.
+
 ## Local development
 
 Start Keycloak with the realm imported (the image digest is the pinned `26.4` build):
@@ -146,6 +179,18 @@ docker exec -it partledger-keycloak bash -c '
   $kc get clients/$client/client-secret -r partledger'
 ```
 
+The API refuses a sign-in without a membership row, so give the synthetic user one, as the database owner with the tenant's context set (or provision the tenant through the operator route above, which does all of this):
+
+```sql
+begin;
+select set_config('app.tenant_id', '<local tenant uuid>', true);
+insert into memberships (tenant_id, user_id, email, display_name, invited_at)
+  values ('<local tenant uuid>', '<the user id kcadm printed>', 'synthetic.buyer@synthetic.test', 'Synthetic Buyer', now());
+insert into role_assignments (tenant_id, user_id, role, granted_at)
+  values ('<local tenant uuid>', '<the user id kcadm printed>', 'buyer', now());
+commit;
+```
+
 Put the printed secret in `.env` as `KEYCLOAK_CLIENT_SECRET`; do the same for the client `partledger-api-admin` and put its secret in `KEYCLOAK_ADMIN_CLIENT_SECRET`; generate `SESSION_TOKEN_KEY`, start the API and the staff app (`apps/web`, port 5173, which proxies `/api` to `127.0.0.1:3000`), and open `http://127.0.0.1:5173/api/v1/auth/sign-in`. Keycloak asks for the username first and the password on the next page, because organizations are enabled.
 
 Browsers accept `Secure` and `__Host-` cookies over plain HTTP only on `localhost` and `127.0.0.1`; every other environment serves the staff app over HTTPS.
@@ -155,7 +200,8 @@ Browsers accept `Secure` and `__Host-` cookies over plain HTTP only on `localhos
 - `apps/api/test/step-up.integration.spec.ts` starts Keycloak with this realm, a synthetic customer realm for brokering and a local mail catcher, and drives step-up with enrolment and one-time codes (an authenticator in the test), the freshness window, the retry with the same idempotency key, a brokered user's enrolment, the forgot-password flow and the second-factor reset.
 - `apps/api/test/auth.integration.spec.ts` starts Keycloak with this realm (plus a synthetic customer realm for brokering) and drives sign-in, sign-out, organizations, the disabled-user refresh, key rotation, brute-force lockout, the no-auto-link rule and the realm settings.
 - `apps/api/test/staff-sessions.integration.spec.ts` covers idle and absolute timeouts and refresh outcomes with a stand-in identity provider.
-- `apps/web/e2e/login.spec.ts` signs in and out in Chromium through the staff app's proxy. Playwright starts the stack with `apps/api/test/e2e/staff-stack.ts` (PostgreSQL and Keycloak containers, the built API on port 3000), which generates the synthetic user's password per run.
+- `apps/api/test/tenants.integration.spec.ts` starts Keycloak with both realms and drives operator sign-in with a one-time code, provisioning, invitations, role changes, removal and the directory.
+- `apps/web/e2e/live/login.spec.ts` signs in and out in Chromium through the staff app's proxy. Playwright starts the stack with `apps/api/test/e2e/staff-stack.ts` (PostgreSQL and Keycloak containers, the built API on port 3000), which generates the synthetic user's password per run.
 
 ## Operations
 

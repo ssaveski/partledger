@@ -26,11 +26,58 @@ describe('the HTTP adapter', () => {
     expect(fetch.mock.calls[0]?.[0]).toMatch(/^https:\/\/staff\.example\.test\/api\/v1\/queries\/rfqs\.detail\?input=/);
   });
 
-  it('reports a 401 as unauthenticated whatever its body says', async () => {
+  it('reports a 401 as unauthenticated whatever its body says, unless it asks for a step-up', async () => {
     const { adapter } = respondWith(401, () =>
       Promise.resolve({ error: 'Unauthenticated', message: 'pl.error.unauthenticated.credential', params: {} }),
     );
     expect(await adapter.query('rfqs.detail', input)).toEqual({ ok: false, failure: { kind: 'unauthenticated' } });
+  });
+
+  it('reports a step-up refusal as refused, so a screen can ask the person to confirm their identity', async () => {
+    const { adapter } = respondWith(401, () =>
+      Promise.resolve({ error: 'StepUpRequired', message: 'pl.error.stepUpRequired.recentAuthentication', params: {} }),
+    );
+    expect(await adapter.command('members.grantRole', input, 'key-0000000000000001')).toEqual({
+      ok: false,
+      failure: {
+        kind: 'refused',
+        error: 'StepUpRequired',
+        message: 'pl.error.stepUpRequired.recentAuthentication',
+        params: {},
+      },
+    });
+  });
+
+  it('posts a command to its generated route with the idempotency key and the staff request header', async () => {
+    const { adapter, fetch } = respondWith(200, () => Promise.resolve({ userId: input.rfqId }));
+    expect(await adapter.command('members.invite', input, 'key-0000000000000001')).toEqual({
+      ok: true,
+      body: { userId: input.rfqId },
+    });
+    expect(fetch).toHaveBeenCalledWith('/api/v1/commands/members.invite', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'idempotency-key': 'key-0000000000000001',
+        'x-partledger-request': 'staff-app',
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify(input),
+    });
+  });
+
+  it('reads the session from the sign-in endpoints and signs out with the staff request header', async () => {
+    const { adapter, fetch } = respondWith(204, () => Promise.reject(new SyntaxError('No body')));
+    expect(await adapter.signOut()).toEqual({ ok: true, body: null });
+    expect(fetch).toHaveBeenCalledWith('/api/v1/auth/sign-out', {
+      method: 'POST',
+      headers: { 'x-partledger-request': 'staff-app' },
+      credentials: 'same-origin',
+    });
+    const signedOut = respondWith(401, () => Promise.resolve({}));
+    expect(await signedOut.adapter.session()).toEqual({ ok: false, failure: { kind: 'unauthenticated' } });
+    expect(signedOut.fetch.mock.calls[0]?.[0]).toBe('/api/v1/auth/session');
   });
 
   it('turns a declared refusal into a refused failure carrying its message key and params', async () => {

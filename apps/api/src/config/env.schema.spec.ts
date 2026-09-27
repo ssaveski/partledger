@@ -13,6 +13,10 @@ const auth = {
   KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
   SESSION_TOKEN_KEY: sessionKey.toString('base64'),
   JOBS_DATABASE_URL: jobsDatabaseUrl,
+  CELL_REGION: 'ca',
+  DIRECTORY_REGION_URLS: 'ca=https://ca.example.test,eu=https://eu.example.test',
+  KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
+  OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
 };
 
 function fieldsRefusedIn(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
@@ -55,7 +59,28 @@ describe('API configuration', () => {
       PORTAL_APP_ORIGIN: 'http://127.0.0.1:5174',
       EMAIL_LOCAL_INBOX_DIRECTORY: 'local-dev/email-inbox',
       EMAIL_FROM_ADDRESS: 'notifications@partledger.invalid',
+      CELL_REGION: 'ca',
+      DIRECTORY_REGION_URLS: { ca: 'https://ca.example.test', eu: 'https://eu.example.test' },
+      KEYCLOAK_ADMIN_CLIENT_ID: 'partledger-api-admin',
+      KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
+      OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
+      OPERATOR_KEYCLOAK_CLIENT_ID: 'partledger-operator-console',
+      OPERATOR_KEYCLOAK_AUDIENCE: 'partledger-operator-api',
     });
+  });
+
+  it('refuses directory region URLs that do not name this deployment’s region or are not origins', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(fieldsRefusedIn({ ...base, DIRECTORY_REGION_URLS: 'eu=https://eu.example.test' })).toContain(
+      'DIRECTORY_REGION_URLS',
+    );
+    expect(fieldsRefusedIn({ ...base, DIRECTORY_REGION_URLS: 'ca=https://ca.example.test/path' })).toContain(
+      'DIRECTORY_REGION_URLS',
+    );
+    expect(fieldsRefusedIn({ ...base, DIRECTORY_REGION_URLS: 'ca=https://a.test,ca=https://b.test' })).toContain(
+      'DIRECTORY_REGION_URLS',
+    );
+    expect(fieldsRefusedIn({ ...base, CELL_REGION: 'us' })).toContain('CELL_REGION');
   });
 
   it('refuses an invalid STAFF_PORT and names the field', () => {
@@ -150,13 +175,23 @@ describe('API configuration', () => {
     ).toEqual(['KEYCLOAK_ADMIN_CLIENT_SECRET', 'STEP_UP_ACR', 'STEP_UP_FRESHNESS_SECONDS']);
   });
 
-  it('requires https for the staff app, the supplier portal and Keycloak in production', () => {
-    expect(fieldsRefusedIn({ NODE_ENV: 'production', ...ports, DATABASE_URL: databaseUrl, ...auth })).toEqual([
+  it('requires https for the staff app, the supplier portal, both Keycloak realms and the directory in production', () => {
+    expect(
+      fieldsRefusedIn({
+        NODE_ENV: 'production',
+        ...ports,
+        DATABASE_URL: databaseUrl,
+        ...auth,
+        DIRECTORY_REGION_URLS: 'ca=http://ca.example.test',
+      }),
+    ).toEqual([
       'STAFF_APP_ORIGIN',
       'PORTAL_APP_ORIGIN',
       'KEYCLOAK_ISSUER',
+      'OPERATOR_KEYCLOAK_ISSUER',
       'EMAIL_ADAPTER',
       'OPERATIONAL_ALERT_FALLBACK_EMAIL',
+      'DIRECTORY_REGION_URLS',
     ]);
     expect(
       fieldsRefusedIn({
@@ -168,6 +203,7 @@ describe('API configuration', () => {
         PORTAL_APP_ORIGIN: 'https://suppliers.example',
         KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
         OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
+        OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
       }),
       // Only a sending adapter is missing: U24 adds the production provider's.
     ).toEqual(['EMAIL_ADAPTER']);

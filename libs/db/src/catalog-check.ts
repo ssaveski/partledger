@@ -34,6 +34,7 @@ export const catalogViolationCodes = [
   'missing_tenant_foreign_key',
   'missing_tenant_policy',
   'policy_not_tenant_scoped',
+  'global_policy_mismatch',
   'missing_job_runner_policy',
   'job_runner_policy_mismatch',
   'missing_backup_policy',
@@ -435,7 +436,11 @@ export async function checkCatalog(
       }
     }
 
-    checkPolicies(access, policies, report);
+    if (access.tenantKey === 'none') {
+      checkGlobalPolicies(access, policies, report);
+    } else {
+      checkPolicies(access, access.tenantKey, policies, report);
+    }
     checkGrants(access, grants, columnGrants, report);
 
     if (isGuarded(access)) {
@@ -656,8 +661,57 @@ function isGeneratedIdentifierKey(
   );
 }
 
-function checkPolicies(access: TableAccess, policies: readonly z.infer<typeof policyRow>[], report: Report): void {
-  const predicate = tenantPredicate(access.tenantKey);
+/**
+ * A global table holds no tenant's data, so it has no tenant policy: its policies are exactly
+ * the declared ones plus pl_backup's read-all, each for one role.
+ */
+function checkGlobalPolicies(
+  access: TableAccess,
+  policies: readonly z.infer<typeof policyRow>[],
+  report: Report,
+): void {
+  const describePolicy = (policy: {
+    readonly name: string;
+    readonly command: string;
+    readonly roles: readonly string[];
+    readonly using: string | null;
+    readonly check: string | null;
+  }) =>
+    `${policy.name} ${policy.command} to ${policy.roles.join(',')} using ${policy.using ?? 'none'} check ${policy.check ?? 'none'}`;
+  const expected = new Set(
+    [
+      ...(access.policies ?? []).map((policy) => ({ ...policy, roles: [policy.role] })),
+      { name: `${access.table}_backup_read`, command: 'r', roles: [backupRole], using: 'true', check: null },
+    ].map(describePolicy),
+  );
+  const actual = new Set(
+    policies
+      .filter((policy) => policy.table === access.table)
+      .map((policy) =>
+        describePolicy({
+          name: policy.permissive ? policy.name : `${policy.name} (restrictive)`,
+          command: policy.command,
+          roles: policy.roles,
+          using: withoutPublicSchema(policy.usingExpression),
+          check: withoutPublicSchema(policy.checkExpression),
+        }),
+      ),
+  );
+  compareSets(expected, actual, access.table, 'global_policy_mismatch', 'global_policy_mismatch', report);
+}
+
+/** `pg_get_expr` qualifies names that are not on the connection's search_path, which differs by role. */
+function withoutPublicSchema(expression: string | null): string | null {
+  return expression === null ? null : expression.replaceAll(/\bpublic\./g, '');
+}
+
+function checkPolicies(
+  access: TableAccess,
+  tenantKey: 'tenant_id' | 'id',
+  policies: readonly z.infer<typeof policyRow>[],
+  report: Report,
+): void {
+  const predicate = tenantPredicate(tenantKey);
   const readAllRoles = new Set<string>([backupRole]);
   if (access.table === resolverReadAll.table) {
     readAllRoles.add(resolverReadAll.role);

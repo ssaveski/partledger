@@ -10,6 +10,7 @@ export {
 } from './api-client';
 export {
   createFixtureAdapter,
+  fixtureCommand,
   fixtureQuery,
   previewStates,
   previewStateSchema,

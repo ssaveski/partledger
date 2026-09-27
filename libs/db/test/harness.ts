@@ -109,8 +109,44 @@ const insertedId = z.tuple([z.object({ id: z.uuid() })]);
 /** Inserts a synthetic tenant through a superuser connection, which bypasses row-level security. */
 export async function insertTenant(superuser: pg.Client, slug: string): Promise<string> {
   const result = await superuser.query(
-    `insert into tenants (slug, display_name, region) values ($1, $2, 'ca') returning id`,
+    `insert into tenants (slug, display_name, region, supplier_list_source, ai_provider, ai_region_restricted, base_currency)
+     values ($1, $2, 'ca', 'platform', 'platform_default', false, 'CAD') returning id`,
     [slug, `Synthetic ${slug}`],
   );
   return insertedId.parse(result.rows)[0].id;
+}
+
+export interface SyntheticMember {
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly roles: readonly string[];
+  readonly email?: string;
+  readonly displayName?: string;
+}
+
+/**
+ * Makes a person a current member of a tenant holding exactly `roles`, through a superuser
+ * connection, which bypasses row-level security; an existing membership keeps its row.
+ */
+export async function insertMember(superuser: pg.Client, member: SyntheticMember): Promise<void> {
+  await superuser.query(
+    `insert into memberships (tenant_id, user_id, email, display_name, invited_at)
+     values ($1, $2, $3, $4, now()) on conflict (tenant_id, user_id) do nothing`,
+    [
+      member.tenantId,
+      member.userId,
+      member.email ?? `member.${member.userId}@synthetic.test`,
+      member.displayName ?? 'Synthetic Member',
+    ],
+  );
+  await superuser.query(`delete from role_assignments where tenant_id = $1 and user_id = $2`, [
+    member.tenantId,
+    member.userId,
+  ]);
+  for (const role of member.roles) {
+    await superuser.query(
+      `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, $3, now())`,
+      [member.tenantId, member.userId, role],
+    );
+  }
 }

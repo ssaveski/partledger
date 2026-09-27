@@ -4,6 +4,7 @@ import { issueCredential, type ResolvedCredential, type StaffSessionEndReason } 
 
 import { TenantTransactions } from '../db/tenant-transaction';
 import type { StepUp } from '../principals/principal';
+import { roleDirectory, type RoleDirectory } from '../principals/role-directory';
 import { identityProvider, type IdentityProvider, type SignedInIdentity } from './identity-provider';
 import type { StaffIdentity } from './jwks';
 import { sessionStore, type SessionAuthentication } from './session.store';
@@ -64,14 +65,18 @@ export class StaffSessions {
     @Inject(identityProvider) private readonly provider: IdentityProvider,
     @Inject(TokenCipher) private readonly cipher: TokenCipher,
     @Inject(sessionSettings) private readonly settings: SessionSettings,
+    @Inject(roleDirectory) private readonly roles: RoleDirectory,
   ) {}
 
-  /** `null` when the identity's tenant does not exist in this region. */
+  /** `null` when the identity's tenant does not exist in this region or the person is not a current member of it. */
   async start(signedIn: SignedInIdentity, now: Date, expiresAt?: Date): Promise<StartedSession | null> {
     const { identity } = signedIn;
     const sessionExpiresAt = expiresAt ?? new Date(now.getTime() + this.settings.absoluteTimeoutMilliseconds);
     return this.transactions.run(identity.tenantId, async (database) => {
       if (!(await sessionStore.tenantExists(database, identity.tenantId))) {
+        return null;
+      }
+      if (!(await this.roles.isActiveMember({ tenantId: identity.tenantId, userId: identity.subject }, database))) {
         return null;
       }
       const credential = await issueCredential(database, {
