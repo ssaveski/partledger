@@ -9,6 +9,8 @@
   "pl.error.invalid.idempotencyKeyRequired": "This action needs an idempotency key so that a retry cannot apply it twice.",
   "pl.error.unprocessable.idempotencyKeyReused": "This idempotency key was already used for a different request.",
   "pl.error.unprocessable.regionNotServed": "This region's deployment does not serve tenants of the requested region.",
+  "pl.error.unprocessable.aiRegionNotAllowed": "Your organization keeps AI processing in its own region, and this AI provider processes elsewhere. Choose a provider in your region, or ask your administrator.",
+  "pl.error.unprocessable.aiOutputInvalid": "The AI answer was not in the expected form, so nothing was suggested. Try again later.",
   "pl.error.forbidden.notPermitted": "You do not have permission to do this.",
   "pl.error.forbidden.crossSiteRequest": "This request did not come from the Partledger app, so it was refused. Reload the page and try again.",
   "pl.error.unavailable.dependencyUnavailable": "A service this action needs is unavailable. Try again shortly.",

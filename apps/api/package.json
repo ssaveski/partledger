@@ -9,6 +9,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.62",
+    "@ai-sdk/azure": "^4.0.78",
+    "@ai-sdk/mistral": "^4.0.50",
+    "@ai-sdk/openai": "^4.0.74",
+    "@ai-sdk/provider": "^4.0.18",
     "@nestjs-cls/transactional": "4.0.0",
     "@nestjs-cls/transactional-adapter-drizzle-orm": "2.0.0",
     "@nestjs/common": "^12.1.0",
@@ -18,6 +23,7 @@
     "@partledger/contracts": "workspace:*",
     "@partledger/db": "workspace:*",
     "@partledger/domain": "workspace:*",
+    "ai": "^7.0.113",
     "drizzle-orm": "~0.45.3",
     "jose": "^6.2.12",
     "nestjs-cls": "7.0.0",

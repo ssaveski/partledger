@@ -141,6 +141,20 @@
       "when": 1790493414609,
       "tag": "0019_tenants_security",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790497847264,
+      "tag": "0020_ai_suggestions_and_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790497848149,
+      "tag": "0021_ai_worker_grants",
+      "breakpoints": true
     }
   ]
 }
