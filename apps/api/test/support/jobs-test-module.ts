@@ -14,6 +14,7 @@ import {
   type OperationRegistry,
 } from '../../src/commands/handlers';
 import { combineModuleJobs, productionJobs } from '../../src/jobs/job-registry';
+import { enqueueTenantEnrolment } from '../../src/jobs/tenant-enrollment.job';
 import {
   defineJob,
   jobField,
@@ -143,10 +144,53 @@ export class ObserveNotesHandler implements JobHandler<typeof observeNotesJob> {
   }
 }
 
+/** A synthetic personal value that must never reach pg-boss's tables or the logs. */
+export const leakedValue = 'Synthetic Person Jane Roe';
+
+/** Fails in the items stage, or has its item refused where recording the failure fails, each quoting `leakedValue`. */
+export const misbehaveJob = defineJob({
+  name: 'jobsTest.misbehave',
+  description: 'Fails where a raw database error would otherwise escape.',
+  payload: { stage: jobField.oneOf(['items', 'recordFailure']) },
+  retryLimit: 0,
+});
+
+/** Makes recording a failed item of that job fail with an error that quotes the personal value. */
+export const failingFailureRecord = `
+  create function pl_migration.refuse_failed_item() returns trigger language plpgsql
+    set search_path = pg_catalog, pg_temp
+    as $body$ begin
+      if new.job = 'jobsTest.misbehave' and new.status = 'failed' then
+        raise exception 'cannot record %', '${leakedValue}';
+      end if;
+      return new;
+    end $body$;
+  create trigger job_item_outcomes_refuse_failed before insert or update on job_item_outcomes
+    for each row execute function pl_migration.refuse_failed_item();
+`;
+
+@Injectable()
+export class MisbehaveHandler implements JobHandler<typeof misbehaveJob> {
+  async items(payload: PayloadOf<typeof misbehaveJob>, context: JobContext): Promise<readonly string[]> {
+    if (payload.stage === 'items') {
+      await context.database.execute(sql`select ${leakedValue}::int`);
+    }
+    return [`misbehave:${context.jobId}`];
+  }
+
+  apply(): Promise<Result<void, DomainError>> {
+    return Promise.resolve(refuse('Unavailable', 'dependencyUnavailable'));
+  }
+}
+
 export const jobsTestJobs: ModuleJobs = combineModuleJobs([
   productionJobs,
   {
-    jobs: [registerJob(applyNotesJob, ApplyNotesHandler), registerJob(observeNotesJob, ObserveNotesHandler)],
+    jobs: [
+      registerJob(applyNotesJob, ApplyNotesHandler),
+      registerJob(observeNotesJob, ObserveNotesHandler),
+      registerJob(misbehaveJob, MisbehaveHandler),
+    ],
     schedules: [],
   },
 ]);
@@ -200,7 +244,35 @@ export class CreateNotesAndEnqueueHandler implements CommandHandler<typeof creat
   }
 }
 
+/** Stands in for U8's tenant provisioning: enrols the tenant of its transaction in the scheduled jobs. */
+export const provisionTenant = defineCommand({
+  name: 'jobsTest.provisionTenant',
+  description: "Enrols the caller's tenant in the scheduled jobs, as provisioning will for a new tenant.",
+  purpose: 'business',
+  input: z.object({}).describe("Nothing: the tenant is the transaction's."),
+  output: z.object({ jobId: z.uuid().describe('The enrolment job.') }).describe('The enrolment job.'),
+  errors: [],
+  access: { person: ['buyer'] },
+  stepUp: false,
+  impact: 'standard',
+  idempotencyKey: 'optional',
+  expectedVersion: false,
+});
+
+@Injectable()
+export class ProvisionTenantHandler implements CommandHandler<typeof provisionTenant> {
+  async execute(
+    _input: InputOf<typeof provisionTenant>,
+    context: CommandContext,
+  ): Promise<HandlerResult<typeof provisionTenant>> {
+    return success({ jobId: await enqueueTenantEnrolment(context, context.principal.tenantId) });
+  }
+}
+
 export const jobsTestRegistry: OperationRegistry = {
-  commands: [registerCommand(createNotesAndEnqueue, CreateNotesAndEnqueueHandler)],
+  commands: [
+    registerCommand(createNotesAndEnqueue, CreateNotesAndEnqueueHandler),
+    registerCommand(provisionTenant, ProvisionTenantHandler),
+  ],
   queries: [],
 };

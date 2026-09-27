@@ -1,14 +1,25 @@
 import { randomUUID } from 'node:crypto';
 
-import { correlationIdHeader } from '@partledger/contracts';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+
+import { Logger } from '@nestjs/common';
 import { insertTenant } from '@partledger/db/testing';
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { PgBoss } from 'pg-boss';
+import { build } from 'vite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import type { RunningApi } from '../src/bootstrap';
 import { TenantTransactions } from '../src/db/tenant-transaction';
-import { JobQueue, type JobOrigin } from '../src/jobs/enqueue';
+import { CommandJobs, JobQueue, jobBoss, type JobOrigin } from '../src/jobs/enqueue';
+import { JobScheduler } from '../src/jobs/job-scheduler';
+import { productionJobs } from '../src/jobs/job-registry';
+import { defineSchedule, type JobSchedule } from '../src/jobs/job.types';
+import { enqueueTenantEnrolment, TenantEnrolmentContextError } from '../src/jobs/tenant-enrollment.job';
+import { verifyChainJob } from '../src/audit/chain-verification.job';
+import type { SystemPrincipal } from '../src/principals/principal';
 import { JobItemFailedError, JobRunner, type DeliveredJob } from '../src/jobs/job-runner';
 import type { JobEnvelope } from '../src/jobs/job.types';
 import { startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
@@ -19,7 +30,12 @@ import {
   jobsTestJobs,
   jobsTestRegistry,
   jobsTestTables,
+  failingFailureRecord,
+  leakedValue,
+  misbehaveJob,
 } from './support/jobs-test-module';
+
+const apiDirectory = join(import.meta.dirname, '..');
 
 const commandSource = 'jobsTest.createNotesAndEnqueue';
 const nightlySchedule = 'audit.nightlyChainVerification';
@@ -48,6 +64,9 @@ const entryRows = z.array(
       data: z.record(z.string(), z.unknown()),
     }),
   }),
+);
+const scheduleRows = z.array(
+  z.object({ name: z.string(), key: z.string(), cron: z.string(), timezone: z.string(), data: z.unknown() }),
 );
 const createdNotes = z.object({ noteIds: z.array(z.uuid()), jobId: z.uuid() });
 const insertedIds = z.array(z.object({ id: z.uuid() }));
@@ -163,47 +182,80 @@ describe('background jobs', () => {
     return entryRows.parse(result.rows);
   }
 
+  async function schedulesOf(tenantId: string) {
+    const result = await harness.superuser.query(
+      `select name, key, cron, timezone, data from pl_jobs.schedule where data ->> 'tenantId' = $1 order by key`,
+      [tenantId],
+    );
+    return scheduleRows.parse(result.rows);
+  }
+
+  function nightlyScheduleOf(tenantId: string) {
+    return {
+      name: 'audit.verifyChain',
+      key: `${nightlySchedule}/${tenantId}`,
+      cron: '17 3 * * *',
+      timezone: 'UTC',
+      data: { tenantId, cause: 'schedule', source: nightlySchedule, payload: {} },
+    };
+  }
+
   describe('enqueuing inside the command transaction', () => {
-    it("runs a committed command's job in a worker started after the enqueuing process has stopped", async () => {
-      const enqueuer = await harness.startAnotherApi({
-        registry: jobsTestRegistry,
-        jobs: jobsTestJobs,
-        workers: false,
-        catalogTables: jobsTestCatalogTables,
+    it("runs a committed command's job after the enqueuing process is killed right after the commit", async () => {
+      const outDir = join(apiDirectory, 'node_modules', '.cache', 'jobs-enqueue-then-die');
+      await build({
+        root: apiDirectory,
+        configFile: false,
+        logLevel: 'silent',
+        build: {
+          ssr: 'test/support/enqueue-then-die.ts',
+          outDir,
+          emptyOutDir: true,
+          target: 'node24',
+          sourcemap: false,
+        },
+        ssr: { noExternal: [/^@partledger\//] },
       });
-      const response = await harness.command(
-        'staff',
-        'jobsTest.createNotesAndEnqueue',
-        { count: 2 },
-        { token: buyer.token, api: enqueuer },
-      );
-      await enqueuer.close();
-      expect(response.status).toBe(200);
-      const { noteIds, jobId } = createdNotes.parse(response.body);
+      const settings = {
+        databaseUrl: harness.database.connectionString('pl_app'),
+        jobsDatabaseUrl: harness.database.connectionString('pl_job_runner'),
+        tenantId: harness.tenantA,
+        credentialId: buyer.credentialId,
+      };
+      const child = spawnSync(process.execPath, [join(outDir, 'enqueue-then-die.js'), JSON.stringify(settings)], {
+        encoding: 'utf8',
+        timeout: 60_000,
+        env: { PATH: process.env.PATH, TZ: 'UTC' },
+      });
+      expect(child.signal).toBe('SIGKILL');
+      const outcome = z
+        .object({ kind: z.literal('success'), output: createdNotes })
+        .parse(JSON.parse(child.stdout.trim()));
+      const { noteIds, jobId } = outcome.output;
       expect(await jobState(jobId)).toEqual({ state: 'created', retry_count: 0 });
 
       const worker = await startWorker();
       try {
-        const state = await eventually(
+        await eventually(
           () => jobState(jobId),
           (current) => current?.state === 'completed',
         );
-        expect(state?.state).toBe('completed');
       } finally {
         await worker.close();
       }
+      expect(await jobState(jobId)).toEqual({ state: 'completed', retry_count: 0 });
       const items = noteIds.map((noteId) => `note:${noteId}`);
       expect(await effectCounts(items)).toEqual(Object.fromEntries(items.map((item) => [item, 1])));
       const applied = (await chainEntries(harness.tenantA)).filter(
-        (entry) => entry.payload.event === 'jobsTest.noteApplied',
+        (entry) =>
+          entry.payload.event === 'jobsTest.noteApplied' && noteIds.includes(String(entry.payload.data.noteId)),
       );
-      expect(applied.filter((entry) => noteIds.includes(String(entry.payload.data.noteId)))).toHaveLength(2);
-      for (const entry of applied.filter((candidate) => noteIds.includes(String(candidate.payload.data.noteId)))) {
+      expect(applied).toHaveLength(2);
+      for (const entry of applied) {
         expect(entry).toMatchObject({
           actor_type: 'system',
           actor_id: null,
           acted_under: { grant: 'job', jobId, cause: 'command', source: commandSource },
-          correlation_id: response.headers.get(correlationIdHeader),
           payload: { adapter: 'jobs' },
         });
       }
@@ -398,23 +450,162 @@ describe('background jobs', () => {
     });
   });
 
+  describe('tenant enrolment', () => {
+    it('schedules the nightly chain verification for a tenant whose provisioning command enrols it, once a worker runs', async () => {
+      const tenantD = await insertTenant(harness.superuser, 'tenant-d');
+      const buyerOfD = await harness.issue('staff_session', tenantD, { roles: ['buyer'] });
+      const response = await harness.command('staff', 'jobsTest.provisionTenant', {}, { token: buyerOfD.token });
+      expect(response.status).toBe(200);
+      expect(await schedulesOf(tenantD)).toEqual([]);
+      const worker = await startWorker();
+      try {
+        await eventually(
+          () => schedulesOf(tenantD),
+          (schedules) => schedules.length > 0,
+        );
+      } finally {
+        await worker.close();
+      }
+      expect(await schedulesOf(tenantD)).toEqual([nightlyScheduleOf(tenantD)]);
+      expect(await harness.count('select 1 from pl_jobs.tenant_enrolment where tenant_id = $1', [tenantD])).toBe(1);
+    });
+
+    it("refuses to enrol a tenant from a transaction that is not that tenant's", async () => {
+      const principal: SystemPrincipal = {
+        type: 'system',
+        tenantId: harness.tenantA,
+        actedUnder: { grant: 'job', jobId: randomUUID(), cause: 'command', source: commandSource },
+        adapter: 'jobs',
+        correlationId: randomUUID(),
+      };
+      let refusal: unknown;
+      try {
+        await transactions.run(harness.tenantA, (database) =>
+          enqueueTenantEnrolment(
+            { database, jobs: new CommandJobs(queue, database, principal, 'jobsTest.provisionTenant') },
+            harness.tenantB,
+          ),
+        );
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal).toBeInstanceOf(TenantEnrolmentContextError);
+    });
+  });
+
+  describe('schedule synchronisation', () => {
+    let boss: PgBoss;
+    const declared = productionJobs.schedules;
+
+    beforeAll(() => {
+      boss = harness.api.app.get<PgBoss>(jobBoss);
+    });
+
+    function schedulerDeclaring(schedules: readonly JobSchedule[]): JobScheduler {
+      return new JobScheduler(boss, { jobs: jobsTestJobs.jobs, schedules });
+    }
+
+    it('keeps enrolled tenants when a build that declares no schedules synchronises, and a restored build still has them', async () => {
+      const tenant = await insertTenant(harness.superuser, 'tenant-e');
+      await schedulerDeclaring(declared).enrollTenant(tenant);
+      await schedulerDeclaring([]).synchronise();
+      expect(await schedulesOf(tenant)).toEqual([nightlyScheduleOf(tenant)]);
+      await boss.unschedule('audit.verifyChain', `${nightlySchedule}/${tenant}`);
+      await schedulerDeclaring(declared).synchronise();
+      expect(await schedulesOf(tenant)).toEqual([nightlyScheduleOf(tenant)]);
+    });
+
+    it('keeps a tenant whose schedules a crashed synchronisation removed before writing them again', async () => {
+      const tenant = await insertTenant(harness.superuser, 'tenant-f');
+      await schedulerDeclaring(declared).enrollTenant(tenant);
+      await boss.unschedule('audit.verifyChain', `${nightlySchedule}/${tenant}`);
+      expect(await schedulesOf(tenant)).toEqual([]);
+      await schedulerDeclaring(declared).synchronise();
+      expect(await schedulesOf(tenant)).toEqual([nightlyScheduleOf(tenant)]);
+    });
+
+    it('replaces a renamed schedule for every enrolled tenant', async () => {
+      const tenant = await insertTenant(harness.superuser, 'tenant-g');
+      await schedulerDeclaring(declared).enrollTenant(tenant);
+      const renamed = defineSchedule({
+        name: 'audit.nightlyVerification',
+        job: verifyChainJob,
+        cron: '5 4 * * *',
+        payload: {},
+      });
+      await schedulerDeclaring([renamed]).synchronise();
+      expect((await schedulesOf(tenant)).map((schedule) => schedule.key)).toEqual([
+        `audit.nightlyVerification/${tenant}`,
+      ]);
+      await schedulerDeclaring(declared).synchronise();
+      expect(await schedulesOf(tenant)).toEqual([nightlyScheduleOf(tenant)]);
+    });
+  });
+
+  describe('failures that reach pg-boss', () => {
+    it('let no query, parameter or personal value of a failing items stage or failure record reach pg-boss or the logs', async () => {
+      const logged: string[] = [];
+      const spy = vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+        logged.push(String(message));
+      });
+      const worker = await startWorker();
+      const migrator = await harness.database.connect('pl_migrator');
+      const jobIds: string[] = [];
+      try {
+        await migrator.query(failingFailureRecord);
+        const stages: readonly ('items' | 'recordFailure')[] = ['items', 'recordFailure'];
+        for (const stage of stages) {
+          jobIds.push(
+            await transactions.run(harness.tenantA, (database) =>
+              queue.enqueue(
+                database,
+                misbehaveJob,
+                { tenantId: harness.tenantA, cause: 'command', source: commandSource, correlationId: randomUUID() },
+                { stage },
+              ),
+            ),
+          );
+        }
+        for (const jobId of jobIds) {
+          await eventually(
+            () => jobState(jobId),
+            (current) => current?.state === 'failed',
+          );
+        }
+      } finally {
+        await migrator.query(`drop trigger job_item_outcomes_refuse_failed on job_item_outcomes;
+                              drop function pl_migration.refuse_failed_item()`);
+        await migrator.end();
+        await worker.close();
+        spy.mockRestore();
+      }
+      const outputs = await harness.superuser.query(
+        'select id, state::text, output::text as output from pl_jobs.job where id = any($1::uuid[])',
+        [jobIds],
+      );
+      const stored = z.array(z.object({ id: z.uuid(), state: z.string(), output: z.string() })).parse(outputs.rows);
+      expect(stored.map((row) => row.state)).toEqual(['failed', 'failed']);
+      for (const { output } of stored) {
+        expect(output).not.toContain(leakedValue);
+        expect(output).not.toMatch(/params|select|insert into|Failed query/i);
+        expect(output).toContain('JobRunFailedError');
+      }
+      for (const jobId of jobIds) {
+        expect(logged.some((message) => message.includes(`correlation ${jobId}`))).toBe(true);
+      }
+      for (const message of logged) {
+        expect(message).not.toContain(leakedValue);
+        expect(message).not.toContain('params:');
+      }
+    });
+  });
+
   describe('the nightly chain verification', () => {
     let tenantC: string;
-    const scheduleRows = z.array(
-      z.object({ name: z.string(), key: z.string(), cron: z.string(), timezone: z.string(), data: z.unknown() }),
-    );
 
     beforeAll(async () => {
       tenantC = await insertTenant(harness.superuser, 'tenant-c');
     });
-
-    async function schedulesOf(tenantId: string) {
-      const result = await harness.superuser.query(
-        `select name, key, cron, timezone, data from pl_jobs.schedule where data ->> 'tenantId' = $1`,
-        [tenantId],
-      );
-      return scheduleRows.parse(result.rows);
-    }
 
     it('is scheduled for a tenant once its enrolment job runs, however often that job runs', async () => {
       const enrolment = delivered('jobs.enrollTenant', commandEnvelope(tenantC, {}));

@@ -173,6 +173,28 @@ describe('the catalog check', () => {
     ]);
   });
 
+  it('fails when the job runner loses its policy on the job table', async () => {
+    const result = await checkAfter('drop policy job_common_runner on pl_jobs.job_common');
+    expect(codesOf(result)).toEqual(['missing_job_runner_policy pl_jobs.job_common']);
+  });
+
+  it('fails when the job runner policy is anything but every command on every row', async () => {
+    const narrowed = await checkAfter(`
+      drop policy job_common_runner on pl_jobs.job_common;
+      create policy job_common_runner on pl_jobs.job_common for select to pl_job_runner using (true);
+    `);
+    expect(codesOf(narrowed)).toEqual([
+      'job_runner_policy_mismatch pl_jobs.job_common.job_common_runner',
+      'missing_job_runner_policy pl_jobs.job_common',
+    ]);
+    const conditional = await checkAfter(`
+      drop policy job_common_runner on pl_jobs.job_common;
+      create policy job_common_runner on pl_jobs.job_common to pl_job_runner
+        using (name <> 'x') with check (true);
+    `);
+    expect(codesOf(conditional)).toContain('job_runner_policy_mismatch pl_jobs.job_common.job_common_runner');
+  });
+
   it('fails when a table in the job queue schema belongs to a runtime role or anyone may create there', async () => {
     const result = await checkAfter(`
       alter table pl_jobs.warning owner to pl_job_runner;

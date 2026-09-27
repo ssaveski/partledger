@@ -7,12 +7,14 @@ import { z } from 'zod';
 import type { AuditPayload, AuditToken } from '../audit/audit-payload';
 import { appendAuditEntry, auditActorOf } from '../audit/audit-writer';
 import { TenantTransactions, type AppDatabase } from '../db/tenant-transaction';
+import { describeUnexpectedFailure } from '../http/domain-error.filter';
 import type { SystemPrincipal } from '../principals/principal';
 import { clock, type Clock } from '../time/clock';
 import { claimItem, recordItemFailure } from './item-outcomes';
 import {
   jobEnvelopeSchema,
   jobItemKeyPattern,
+  jobNamePattern,
   type JobAudit,
   type JobContext,
   type JobHandler,
@@ -65,6 +67,14 @@ export class JobItemFailedError extends Error {
   }
 }
 
+/** A run that failed outside any item, or whose failure could not be recorded; see `JobRunner.run`. */
+export class JobRunFailedError extends Error {
+  constructor(job: string) {
+    super(`Job ${jobNamePattern.test(job) ? job : 'unknown'} failed: unexpected`);
+    this.name = 'JobRunFailedError';
+  }
+}
+
 class ItemRefused extends Error {
   readonly error: DomainError;
 
@@ -112,7 +122,26 @@ export class JobRunner {
     this.registrations = new Map(catalog.jobs.map((registration) => [registration.declaration.name, registration]));
   }
 
+  /**
+   * pg-boss stores whatever a run throws with the job, outside row-level security, and never
+   * erases it. So only a `JobItemFailedError` or a `JobRunFailedError` leaves here: codes and
+   * keys, never the text of an underlying error, which for a query holds its SQL and parameters.
+   * The underlying error is logged without its values, under the job id.
+   */
   async run(job: DeliveredJob): Promise<JobRunSummary> {
+    try {
+      return await this.runOnce(job);
+    } catch (error) {
+      if (error instanceof JobItemFailedError) {
+        throw error;
+      }
+      const jobId = jobIdSchema.safeParse(job.id);
+      this.logger.error(describeUnexpectedFailure(error, jobId.success ? jobId.data : null));
+      throw new JobRunFailedError(job.name);
+    }
+  }
+
+  private async runOnce(job: DeliveredJob): Promise<JobRunSummary> {
     const registration = this.registrations.get(job.name);
     if (registration === undefined) {
       throw new UnknownJobError(job.name);
@@ -153,7 +182,7 @@ export class JobRunner {
       } catch (error) {
         const failure = error instanceof ItemRefused ? `${error.error._tag}.${error.error.reason}` : 'unexpected';
         if (!(error instanceof ItemRefused)) {
-          this.logger.error(`Job ${declaration.name} ${jobId} failed at item ${item}: ${describe(error)}`);
+          this.logger.error(describeUnexpectedFailure(error, jobId));
         }
         await this.transactions.run(principal.tenantId, (database) =>
           recordItemFailure(database, { ...reference, now: this.time.now(), failure }),
@@ -173,8 +202,4 @@ function checkItems(job: string, items: readonly string[]): void {
   if (new Set(items).size !== items.length) {
     throw new InvalidJobItemsError(job, 'a key appears twice');
   }
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : 'a non-error value was thrown';
 }

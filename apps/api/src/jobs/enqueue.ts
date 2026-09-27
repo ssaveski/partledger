@@ -74,15 +74,23 @@ export class CommandJobs {
     declaration: Declaration,
     payload: PayloadOf<Declaration>,
   ): Promise<string> {
+    return this.enqueueFor(this.database, this.principal.tenantId, declaration, payload);
+  }
+
+  /**
+   * Enqueues for a tenant other than the principal's, in a transaction whose `app.tenant_id`
+   * is that tenant (the job table's policy refuses anything else); tenant provisioning uses it.
+   */
+  enqueueFor<Declaration extends JobDeclaration>(
+    database: AppDatabase,
+    tenantId: string,
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+  ): Promise<string> {
     return this.queue.enqueue(
-      this.database,
+      database,
       declaration,
-      {
-        tenantId: this.principal.tenantId,
-        cause: 'command',
-        source: this.command,
-        correlationId: this.principal.correlationId,
-      },
+      { tenantId, cause: 'command', source: this.command, correlationId: this.principal.correlationId },
       payload,
     );
   }

@@ -34,6 +34,8 @@ export const catalogViolationCodes = [
   'missing_tenant_foreign_key',
   'missing_tenant_policy',
   'policy_not_tenant_scoped',
+  'missing_job_runner_policy',
+  'job_runner_policy_mismatch',
   'missing_backup_policy',
   'unexpected_grant',
   'missing_grant',
@@ -88,9 +90,10 @@ const allowedDefinerFunction = 'public.resolve_credential(requested_kind text, r
 /** EXECUTE grants besides the owner's; every other function in the checked schemas has none. */
 const expectedFunctionGrants = new Map<string, readonly string[]>([[allowedDefinerFunction, ['pl_app', 'pl_portal']]]);
 /**
- * The one read-all policy besides pl_backup's (KTD37): resolve_credential runs as the
- * resolver role on a table whose row-level security is forced, and must find a credential
- * before any tenant is known.
+ * The read-all policies besides pl_backup's are exactly two. This one (KTD37):
+ * resolve_credential runs as the resolver role on a table whose row-level security is forced,
+ * and must find a credential before any tenant is known. The other is the job runner's on
+ * pg-boss's job table (KTD16), which fetches every tenant's jobs; `checkJobQueue` pins it.
  */
 const resolverReadAll = { table: 'credentials', role: credentialResolverRole };
 const pinnedSearchPath = 'search_path=pg_catalog, pg_temp';
@@ -583,6 +586,7 @@ function checkJobQueue(
       report('row_security_not_enabled', object);
     }
     let hasTenantPolicy = false;
+    let hasRunnerPolicy = false;
     for (const policy of policies.filter((candidate) => candidate.table === tableName)) {
       const policyObject = `${object}.${policy.name}`;
       if (!policy.permissive) {
@@ -590,6 +594,16 @@ function checkJobQueue(
       }
       const onlyRole = policy.roles.length === 1 ? policy.roles[0] : undefined;
       if (onlyRole === access.runnerRole) {
+        // The runner fetches, completes and retries every tenant's jobs: all commands, every row, nothing more.
+        if (policy.command === '*' && policy.usingExpression === 'true' && policy.checkExpression === 'true') {
+          hasRunnerPolicy = true;
+        } else {
+          report(
+            'job_runner_policy_mismatch',
+            policyObject,
+            `${policy.command} using ${policy.usingExpression ?? 'none'} check ${policy.checkExpression ?? 'none'}`,
+          );
+        }
         continue;
       }
       const tenantScoped =
@@ -606,6 +620,9 @@ function checkJobQueue(
     }
     if (!hasTenantPolicy) {
       report('missing_tenant_policy', object);
+    }
+    if (!hasRunnerPolicy) {
+      report('missing_job_runner_policy', object);
     }
   }
 
