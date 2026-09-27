@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   isAllowedFor,
   uploadAccess,
@@ -131,6 +131,8 @@ function exceedsQuota(principal: Principal, usage: Usage, quotas: UploadQuotas, 
  */
 @Injectable()
 export class UploadPipeline {
+  private readonly logger = new Logger('Uploads');
+
   constructor(
     @Inject(PrincipalResolver) private readonly principals: PrincipalResolver,
     @Inject(roleDirectory) private readonly roles: RoleDirectory,
@@ -237,7 +239,7 @@ export class UploadPipeline {
     if (!written.ok || inspected === null) {
       request.unpipe(inspector);
       // The storage leaves nothing behind a failed write; the delete makes sure of it.
-      await this.storage.delete(quarantine);
+      await this.discard(quarantine, principal.correlationId);
       if (written.ok || written.error.kind === 'storage') {
         return { kind: 'failure', error: domainError('Unavailable', 'dependencyUnavailable'), closeConnection: true };
       }
@@ -248,55 +250,62 @@ export class UploadPipeline {
       return { kind: 'failure', error: domainError('Invalid', 'request'), closeConnection: true };
     }
 
-    const recorded = await this.transactions.run(principal.tenantId, async (database) => {
-      await database.execute(
-        sql`select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`partledger/uploads:${principal.tenantId}`}, 0))`,
-      );
-      if (exceedsQuota(principal, await this.usageOf(database, principal), this.quotas, inspected.sizeBytes)) {
-        await this.auditRefusal(database, principal, checked.purpose, checked.mediaType, 'uploadQuotaExceeded');
-        return false;
-      }
-      const now = this.time.now();
-      await database.execute(
-        sql`insert into uploads (id, tenant_id, purpose, media_type, file_name, size_bytes, content_hash, attestation,
+    let recorded: boolean;
+    try {
+      recorded = await this.transactions.run(principal.tenantId, async (database) => {
+        await database.execute(
+          sql`select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`partledger/uploads:${principal.tenantId}`}, 0))`,
+        );
+        if (exceedsQuota(principal, await this.usageOf(database, principal), this.quotas, inspected.sizeBytes)) {
+          await this.auditRefusal(database, principal, checked.purpose, checked.mediaType, 'uploadQuotaExceeded');
+          return false;
+        }
+        const now = this.time.now();
+        await database.execute(
+          sql`insert into uploads (id, tenant_id, purpose, media_type, file_name, size_bytes, content_hash, attestation,
                                  uploader_type, uploader_id, credential_id, uploaded_at, scan_status)
             values (${uploadId}, ${principal.tenantId}, ${checked.purpose}, ${checked.mediaType}, ${checked.fileName},
                     ${inspected.sizeBytes}, ${inspected.contentHash}, ${checked.attestation},
                     ${principal.type}, ${uploaderIdOf(principal)}, ${credentialIdOf(principal)},
                     ${now.toISOString()}::timestamptz, 'pending')`,
-      );
-      await appendAuditEntry(
-        database,
-        {
-          tenantId: principal.tenantId,
-          actor: auditActorOf(principal),
-          event: auditToken('uploads.received'),
-          data: {
-            uploadId: auditId(uploadId),
-            purpose: auditToken(checked.purpose),
-            fileType: auditToken(fileTypeTokens[checked.mediaType]),
-            sizeBytes: inspected.sizeBytes,
-            contentHash: auditHash(inspected.contentHash),
-            attestation: auditToken(checked.attestation),
+        );
+        await appendAuditEntry(
+          database,
+          {
+            tenantId: principal.tenantId,
+            actor: auditActorOf(principal),
+            event: auditToken('uploads.received'),
+            data: {
+              uploadId: auditId(uploadId),
+              purpose: auditToken(checked.purpose),
+              fileType: auditToken(fileTypeTokens[checked.mediaType]),
+              sizeBytes: inspected.sizeBytes,
+              contentHash: auditHash(inspected.contentHash),
+              attestation: auditToken(checked.attestation),
+            },
           },
-        },
-        this.time,
-      );
-      await this.jobQueue.enqueue(
-        database,
-        scanUploadJob,
-        {
-          tenantId: principal.tenantId,
-          cause: 'command',
-          source: 'uploads.upload',
-          correlationId: principal.correlationId,
-        },
-        { uploadId },
-      );
-      return true;
-    });
+          this.time,
+        );
+        await this.jobQueue.enqueue(
+          database,
+          scanUploadJob,
+          {
+            tenantId: principal.tenantId,
+            cause: 'command',
+            source: 'uploads.upload',
+            correlationId: principal.correlationId,
+          },
+          { uploadId },
+        );
+        return true;
+      });
+    } catch (error) {
+      // Nothing on record points at the object, so it would otherwise stay in quarantine for good.
+      await this.discard(quarantine, principal.correlationId);
+      throw error;
+    }
     if (!recorded) {
-      await this.storage.delete(quarantine);
+      await this.discard(quarantine, principal.correlationId);
       return {
         kind: 'failure',
         error: domainError('Unprocessable', 'uploadQuotaExceeded'),
@@ -314,6 +323,14 @@ export class UploadPipeline {
         scanStatus: 'pending',
       },
     };
+  }
+
+  /** Removes an object that nothing on record points at; the log names the request, never the file. */
+  private async discard(location: ObjectLocation, correlationId: string): Promise<void> {
+    const removed = await this.storage.delete(location);
+    if (!removed.ok) {
+      this.logger.warn(`A quarantined upload could not be deleted; correlation ${correlationId}`);
+    }
   }
 
   private async refuse(

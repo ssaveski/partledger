@@ -39,6 +39,7 @@ export interface ParseWorkerOptions {
 export const parseRefusals = [
   'notWorkbook',
   'macroEnabled',
+  'externalContent',
   'malformedArchive',
   'decompressionLimit',
   'dtdNotAllowed',

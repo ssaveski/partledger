@@ -10,6 +10,10 @@
 
 export interface ZipEntry {
   readonly name: string;
+  /** The name exactly as the directory stores it, which the local header must repeat. */
+  readonly nameBytes: Uint8Array;
+  /** General purpose flags; bit 3 means the local header leaves the sizes to a data descriptor. */
+  readonly flags: number;
   readonly compressionMethod: number;
   readonly compressedSize: number;
   readonly uncompressedSize: number;
@@ -159,13 +163,26 @@ export function readZipDirectory(
       return refused('duplicateName');
     }
     names.add(name);
-    entries.push({ name, compressionMethod, compressedSize, uncompressedSize, localHeaderOffset });
+    entries.push({
+      name,
+      nameBytes: Uint8Array.from(nameBytes),
+      flags,
+      compressionMethod,
+      compressedSize,
+      uncompressedSize,
+      localHeaderOffset,
+    });
     position = next;
   }
   return { ok: true, entries };
 }
 
-/** Where an entry's compressed data starts in the whole file, or null when its local header is wrong. */
+/**
+ * Where an entry's compressed data starts in the whole file, or null when its local header
+ * disagrees with the directory: another name, another method, or, unless a data descriptor
+ * follows (flag bit 3), other sizes. Readers differ in which of the two they trust, so a
+ * workbook whose two copies differ could show one part to this check and another to a parser.
+ */
 export function entryDataOffset(file: Uint8Array, entry: ZipEntry): number | null {
   const offset = entry.localHeaderOffset;
   if (offset + 30 > file.byteLength) {
@@ -175,7 +192,19 @@ export function entryDataOffset(file: Uint8Array, entry: ZipEntry): number | nul
   if (data.getUint32(offset, true) !== localHeaderSignature) {
     return null;
   }
-  const start = offset + 30 + data.getUint16(offset + 26, true) + data.getUint16(offset + 28, true);
+  const nameLength = data.getUint16(offset + 26, true);
+  const extraLength = data.getUint16(offset + 28, true);
+  const localName = file.subarray(offset + 30, offset + 30 + nameLength);
+  const sameName =
+    nameLength === entry.nameBytes.byteLength && localName.every((byte, index) => byte === entry.nameBytes[index]);
+  const sameSizes =
+    (entry.flags & 0x0008) !== 0 ||
+    (data.getUint32(offset + 18, true) === entry.compressedSize &&
+      data.getUint32(offset + 22, true) === entry.uncompressedSize);
+  if (!sameName || data.getUint16(offset + 8, true) !== entry.compressionMethod || !sameSizes) {
+    return null;
+  }
+  const start = offset + 30 + nameLength + extraLength;
   return start + entry.compressedSize <= file.byteLength ? start : null;
 }
 
@@ -189,13 +218,19 @@ const activeContentPatterns = [
   /^xl\/embeddings\//i,
 ];
 
-export type WorkbookShape = 'workbook' | 'macroEnabled' | 'notWorkbook';
+/** Links to other workbooks, which a spreadsheet program may fetch or update when the file opens. */
+const externalContentPatterns = [/^xl\/externalLinks\//i];
+
+export type WorkbookShape = 'workbook' | 'macroEnabled' | 'externalContent' | 'notWorkbook';
 
 /** Judges an XLSX by the names in its central directory, before anything is decompressed. */
 export function workbookShapeOf(entries: readonly ZipEntry[]): WorkbookShape {
   const names = entries.map((entry) => entry.name);
   if (names.some((name) => activeContentPatterns.some((pattern) => pattern.test(name)))) {
     return 'macroEnabled';
+  }
+  if (names.some((name) => externalContentPatterns.some((pattern) => pattern.test(name)))) {
+    return 'externalContent';
   }
   return names.includes('[Content_Types].xml') && names.includes('xl/workbook.xml') ? 'workbook' : 'notWorkbook';
 }

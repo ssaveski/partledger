@@ -20,6 +20,8 @@ export interface UploadsOptions {
   readonly config: AppConfig;
   readonly clock: Clock;
   readonly roleDirectory: RoleDirectory;
+  /** Tests replace the configured scanner; production always uses the configured one. */
+  readonly malwareScanner?: MalwareScanner | undefined;
 }
 
 export class MissingAdapterSettingError extends Error {
@@ -81,7 +83,7 @@ export class UploadsModule {
       controllers: [UploadController, DownloadController],
       providers: [
         { provide: objectStorage, useValue: objectStorageFor(options.config) },
-        { provide: malwareScanner, useValue: malwareScannerFor(options.config) },
+        { provide: malwareScanner, useValue: options.malwareScanner ?? malwareScannerFor(options.config) },
         { provide: uploadQuotas, useValue: uploadQuotasFrom(options.config) },
         { provide: roleDirectory, useValue: options.roleDirectory },
         { provide: clock, useValue: options.clock },

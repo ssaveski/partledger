@@ -30,6 +30,8 @@ const productionKeysAndAi = {
   OVH_KMS_CLIENT_KEY_FILE: '/run/secrets/kms-client.key',
   AI_PLATFORM_PROVIDER: 'none',
   AI_WORKER_DATABASE_URL: 'postgres://pl_ai_worker:placeholder@127.0.0.1:5432/partledger',
+};
+
 /** Object storage and the malware scanner as production must name them (U14). */
 const productionUploads = {
   STORAGE_ADAPTER: 's3',
@@ -271,13 +273,13 @@ describe('API configuration', () => {
   });
 
   it('refuses the local key service and the local AI adapter in production, and requires the AI worker connection', () => {
-  it('refuses local object storage and the local malware scanner in production, even when named explicitly', () => {
     const production = {
       NODE_ENV: 'production',
       ...ports,
       DATABASE_URL: databaseUrl,
       ...auth,
       ...productionKeysAndAi,
+      ...productionUploads,
       STAFF_APP_ORIGIN: 'https://app.example',
       PORTAL_APP_ORIGIN: 'https://suppliers.example',
       KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
@@ -326,6 +328,20 @@ describe('API configuration', () => {
       'AI_PLATFORM_ENDPOINT_REGION',
     ]);
     expect(fieldsRefusedIn({ ...base, AI_PLATFORM_PROVIDER: 'none' })).toEqual([]);
+  });
+
+  it('refuses local object storage and the local malware scanner in production, even when named explicitly', () => {
+    const production = {
+      NODE_ENV: 'production',
+      ...ports,
+      DATABASE_URL: databaseUrl,
+      ...auth,
+      ...productionKeysAndAi,
+      STAFF_APP_ORIGIN: 'https://app.example',
+      PORTAL_APP_ORIGIN: 'https://suppliers.example',
+      KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+      OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
+      OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
       ...productionUploads,
     };
     expect(fieldsRefusedIn({ ...production, STORAGE_ADAPTER: 'local', MALWARE_SCANNER: 'local' })).toEqual([

@@ -30,6 +30,7 @@ export interface ParseLimits {
 export type ParseProblem =
   | 'notWorkbook'
   | 'macroEnabled'
+  | 'externalContent'
   | 'malformedArchive'
   | 'decompressionLimit'
   | 'dtdNotAllowed'
@@ -106,7 +107,17 @@ function inflateEntry(file: Uint8Array, entry: ZipEntry, limits: ParseLimits, re
 
 const markupPart = /\.(xml|rels|vml)$/i;
 
-/** An XML part must be UTF-8 and may declare no DTD and no entity. */
+/**
+ * No part may declare a DTD or an entity, whatever its name: a parser follows the relationships,
+ * not the file extensions, so a sheet stored as `sheet1.data` is parsed as XML all the same.
+ */
+function refuseDeclarations(content: Buffer): void {
+  if (/<!DOCTYPE|<!ENTITY/i.test(content.toString('latin1'))) {
+    throw new Refused('dtdNotAllowed');
+  }
+}
+
+/** A part named as markup must be UTF-8. */
 function checkMarkup(content: Buffer): void {
   if (
     (content[0] === 0xfe && content[1] === 0xff) ||
@@ -116,9 +127,6 @@ function checkMarkup(content: Buffer): void {
     throw new Refused('encodingNotAllowed');
   }
   const text = content.toString('latin1');
-  if (/<!DOCTYPE|<!ENTITY/i.test(text)) {
-    throw new Refused('dtdNotAllowed');
-  }
   const declaration = /^(?:\xEF\xBB\xBF)?<\?xml[^>]*\bencoding\s*=\s*["']([^"']*)["']/.exec(text);
   const encoding = declaration?.[1]?.toLowerCase();
   if (encoding !== undefined && encoding !== 'utf-8' && encoding !== 'utf8') {
@@ -158,6 +166,7 @@ function parseWorkbook(file: Uint8Array, limits: ParseLimits): ParsedSheet[] {
   for (const entry of directory.entries) {
     const content = inflateEntry(file, entry, limits, remaining);
     remaining -= content.byteLength;
+    refuseDeclarations(content);
     if (markupPart.test(entry.name)) {
       checkMarkup(content);
     }

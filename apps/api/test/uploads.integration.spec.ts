@@ -22,8 +22,9 @@ import { z } from 'zod';
 import { productionRegistry } from '../src/commands/query-registry';
 import { JobItemFailedError, JobRunner, type DeliveredJob } from '../src/jobs/job-runner';
 import type { HttpEntryAdapter } from '../src/listeners/entry-adapters';
-import { eicarTestFile } from '../src/uploads/malware-scanner.port';
+import { eicarTestFile, type MalwareScanner } from '../src/uploads/malware-scanner.port';
 import { credentialHeaders, startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
+import { jobsTestCatalogTables } from './support/jobs-test-module';
 import {
   binaryBytes,
   macroEnabledWorkbook,
@@ -626,6 +627,81 @@ describe('secure uploads', () => {
     expect(busy).toBe(0);
     for (const response of await Promise.all(slowUploads)) {
       expect(response.status).toBe(201);
+    }
+  });
+
+  it('a failed recording transaction leaves no quarantine object', async () => {
+    await harness.superuser.query(
+      `create function public.fail_recording_fixture() returns trigger language plpgsql as $$
+       begin
+         if new.file_name = 'fail-recording.pdf' then
+           raise exception 'synthetic recording failure';
+         end if;
+         return new;
+       end $$`,
+    );
+    await harness.superuser.query(
+      `create trigger uploads_fail_recording_fixture before insert on uploads
+         for each row execute function public.fail_recording_fixture()`,
+    );
+    try {
+      const before = await store.keys(store.buckets.quarantine, `t/${harness.tenantA}/`);
+      const uploadsBefore = await harness.count('select 1 from uploads');
+      const response = await upload(qualityA, 'evidence', syntheticPdf(), {
+        mediaType: pdfMediaType,
+        fileName: 'fail-recording.pdf',
+      });
+      expect(response.status).toBe(500);
+      expect(await store.keys(store.buckets.quarantine, `t/${harness.tenantA}/`)).toEqual(before);
+      expect(await harness.count('select 1 from uploads')).toBe(uploadsBefore);
+    } finally {
+      await harness.superuser.query('drop trigger uploads_fail_recording_fixture on uploads');
+      await harness.superuser.query('drop function public.fail_recording_fixture()');
+    }
+  });
+
+  it('a slow scan holds no database connection', async () => {
+    const uploadId = await uploaded(
+      await upload(qualityA, 'evidence', syntheticPdf(), { mediaType: pdfMediaType, fileName: 'slow-scan.pdf' }),
+    );
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: () => void = () => undefined;
+    const scanning = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const slowScanner: MalwareScanner = {
+      async scan() {
+        entered();
+        await released;
+        return { kind: 'clean' };
+      },
+    };
+    const migrator = await harness.database.connect('pl_migrator');
+    await migrator.query('grant select on internal_test_notes to pl_backup');
+    await migrator.end();
+    const other = await harness.startAnotherApi({
+      registry: productionRegistry,
+      workers: false,
+      // The harness created its notes table after the first API booted.
+      catalogTables: jobsTestCatalogTables.filter((access) => access.table === 'internal_test_notes'),
+      malwareScanner: slowScanner,
+    });
+    try {
+      const run = other.app.get(JobRunner).run(await jobFor('uploads.scan', uploadId));
+      await scanning;
+      const holding = await harness.count(
+        `select 1 from pg_stat_activity where usename = 'pl_app' and state in ('active', 'idle in transaction')`,
+      );
+      release();
+      await run;
+      expect(holding).toBe(0);
+      expect((await row(uploadId)).scan_status).toBe('clean');
+    } finally {
+      release();
+      await other.close();
     }
   });
 

@@ -166,6 +166,15 @@ export class JobRunner {
       const now = this.time.now();
       const reference = { tenantId: principal.tenantId, job: declaration.name, itemKey: item, jobId, now };
       try {
+        const prepared: unknown =
+          handler.prepare === undefined
+            ? undefined
+            : await handler.prepare(item, payload, {
+                jobId,
+                principal,
+                now,
+                inTransaction: (work) => this.transactions.run(principal.tenantId, work),
+              });
         const done = await this.transactions.run(principal.tenantId, async (database) => {
           const attempt = await claimItem(database, reference);
           if (attempt === null) {
@@ -177,6 +186,7 @@ export class JobRunner {
             audit: new ItemAudit(database, principal, this.time),
             attempt,
             jobs: new JobFollowUps(this.queue, database, principal),
+            prepared,
           });
           if (!result.ok) {
             throw new ItemRefused(result.error);

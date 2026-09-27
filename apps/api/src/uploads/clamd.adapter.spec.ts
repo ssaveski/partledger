@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { createServer, type AddressInfo, type Server, type Socket } from 'node:net';
+import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { envSchema } from '../config/env.schema';
 import { ClamdScanner, verdictOf } from './clamd.adapter';
 import { eicarTestFile } from './malware-scanner.port';
 
@@ -108,5 +111,19 @@ describe('the clamd scanner', () => {
     ).toEqual({ kind: 'unavailable' });
     const silent = await scannerFor(() => null, 300);
     expect(await silent.scan(Buffer.from('x'))).toEqual({ kind: 'unavailable' });
+  });
+});
+
+describe('the shipped clamd configuration', () => {
+  it('lets clamd give up on a scan well before the API stops waiting for it', () => {
+    const configuration = readFileSync(
+      join(import.meta.dirname, '..', '..', '..', '..', 'infra', 'compose', 'clamd', 'clamd.conf'),
+      'utf8',
+    );
+    const maximumScanTime = Number(/^MaxScanTime\s+(\d+)$/m.exec(configuration)?.[1]);
+    const clientTimeout = envSchema.shape.CLAMD_TIMEOUT_SECONDS.parse(undefined) * 1000;
+    const margin = 10_000;
+    expect(maximumScanTime).toBeGreaterThan(0);
+    expect(maximumScanTime).toBeLessThanOrEqual(clientTimeout - margin);
   });
 });

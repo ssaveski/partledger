@@ -10,9 +10,10 @@ import {
   type JobContext,
   type JobHandler,
   type JobItemContext,
+  type JobPreparationContext,
   type PayloadOf,
 } from '../jobs/job.types';
-import { UploadScanning, type ScanAttempt } from './upload-scanning';
+import { UploadScanning, type ScanAttempt, type ScanPreparation } from './upload-scanning';
 
 /**
  * How many times the scan job itself tries before it leaves the upload to the sweep. The
@@ -47,7 +48,7 @@ const sweepBatch = 200;
  * Raises one `scannerUnavailable` alert per tenant and day (KTD41) while the scanner stays
  * down, in the item's transaction, which then commits with the upload still pending.
  */
-async function alertScannerUnavailable(context: JobItemContext): Promise<void> {
+async function alertScannerUnavailable(context: JobItemContext<ScanPreparation>): Promise<void> {
   await raiseOperationalAlert(context.database, {
     tenantId: context.principal.tenantId,
     kind: 'scannerUnavailable',
@@ -68,19 +69,27 @@ function stillPending(attempt: ScanAttempt): boolean {
  * with the upload still pending, raising the scanner alert, and the sweep takes over.
  */
 @Injectable()
-export class ScanUploadHandler implements JobHandler<typeof scanUploadJob> {
+export class ScanUploadHandler implements JobHandler<typeof scanUploadJob, ScanPreparation> {
   constructor(@Inject(UploadScanning) private readonly scanning: UploadScanning) {}
 
   items(payload: PayloadOf<typeof scanUploadJob>): Promise<readonly string[]> {
     return Promise.resolve([`scan:${payload.uploadId}`]);
   }
 
+  prepare(
+    _item: string,
+    payload: PayloadOf<typeof scanUploadJob>,
+    context: JobPreparationContext,
+  ): Promise<ScanPreparation> {
+    return this.scanning.prepare(payload.uploadId, context);
+  }
+
   async apply(
     _item: string,
     payload: PayloadOf<typeof scanUploadJob>,
-    context: JobItemContext,
+    context: JobItemContext<ScanPreparation>,
   ): Promise<Result<void, DomainError>> {
-    const attempt = await this.scanning.scan(payload.uploadId, context);
+    const attempt = await this.scanning.record(payload.uploadId, context.prepared, context);
     if (!stillPending(attempt)) {
       return success(undefined);
     }
@@ -97,12 +106,16 @@ export class ScanUploadHandler implements JobHandler<typeof scanUploadJob> {
 const pendingRows = z.array(z.object({ id: z.uuid() }));
 const sweepItemPattern = /^rescan:([0-9a-f-]{36}):/;
 
+function uploadOfItem(item: string): string {
+  return z.uuid().parse(sweepItemPattern.exec(item)?.[1]);
+}
+
 /**
  * Every ten minutes, per tenant: each upload pending for longer than `sweepAfterMilliseconds`
  * is scanned again. Item keys carry the sweep's job id, so every sweep tries each upload anew.
  */
 @Injectable()
-export class RescanPendingUploadsHandler implements JobHandler<typeof rescanPendingUploadsJob> {
+export class RescanPendingUploadsHandler implements JobHandler<typeof rescanPendingUploadsJob, ScanPreparation> {
   constructor(@Inject(UploadScanning) private readonly scanning: UploadScanning) {}
 
   async items(_payload: PayloadOf<typeof rescanPendingUploadsJob>, context: JobContext): Promise<readonly string[]> {
@@ -115,13 +128,20 @@ export class RescanPendingUploadsHandler implements JobHandler<typeof rescanPend
     return pendingRows.parse(result.rows).map((row) => `rescan:${row.id}:${context.jobId}`);
   }
 
+  prepare(
+    item: string,
+    _payload: PayloadOf<typeof rescanPendingUploadsJob>,
+    context: JobPreparationContext,
+  ): Promise<ScanPreparation> {
+    return this.scanning.prepare(uploadOfItem(item), context);
+  }
+
   async apply(
     item: string,
     _payload: PayloadOf<typeof rescanPendingUploadsJob>,
-    context: JobItemContext,
+    context: JobItemContext<ScanPreparation>,
   ): Promise<Result<void, DomainError>> {
-    const uploadId = z.uuid().parse(sweepItemPattern.exec(item)?.[1]);
-    const attempt = await this.scanning.scan(uploadId, context);
+    const attempt = await this.scanning.record(uploadOfItem(item), context.prepared, context);
     if (attempt === 'scannerUnavailable') {
       await alertScannerUnavailable(context);
     }

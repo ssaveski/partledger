@@ -13,6 +13,8 @@ export interface ZipPart {
   readonly stored?: boolean;
   /** The uncompressed size the directory claims, when a test wants it to lie. */
   readonly declaredSize?: number;
+  /** The name the local header gives, when a test wants it to differ from the directory's. */
+  readonly localName?: string;
 }
 
 export function zipOf(parts: readonly ZipPart[]): Buffer {
@@ -23,6 +25,7 @@ export function zipOf(parts: readonly ZipPart[]): Buffer {
     const content = Buffer.isBuffer(part.content) ? part.content : Buffer.from(part.content, 'utf8');
     const data = part.stored === true ? content : deflateRawSync(content);
     const name = Buffer.from(part.name, 'utf8');
+    const localName = Buffer.from(part.localName ?? part.name, 'utf8');
     const method = part.stored === true ? 0 : 8;
     const checksum = crc32(content);
     const size = part.declaredSize ?? content.byteLength;
@@ -36,7 +39,7 @@ export function zipOf(parts: readonly ZipPart[]): Buffer {
     local.writeUInt32LE(checksum, 14);
     local.writeUInt32LE(data.byteLength, 18);
     local.writeUInt32LE(size, 22);
-    local.writeUInt16LE(name.byteLength, 26);
+    local.writeUInt16LE(localName.byteLength, 26);
     local.writeUInt16LE(0, 28);
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
@@ -51,9 +54,9 @@ export function zipOf(parts: readonly ZipPart[]): Buffer {
     central.writeUInt32LE(size, 24);
     central.writeUInt16LE(name.byteLength, 28);
     central.writeUInt32LE(offset, 42);
-    locals.push(local, name, data);
+    locals.push(local, localName, data);
     centrals.push(central, name);
-    offset += local.byteLength + name.byteLength + data.byteLength;
+    offset += local.byteLength + localName.byteLength + data.byteLength;
   }
   const directory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);

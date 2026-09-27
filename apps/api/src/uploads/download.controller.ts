@@ -18,7 +18,15 @@ function asciiFallback(fileName: string): string {
  * as RFC 6266 and RFC 8187 spell it; the name comes from the upload, never from the request.
  */
 export function contentDisposition(fileName: string): string {
-  return `attachment; filename="${asciiFallback(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  return `attachment; filename="${asciiFallback(fileName)}"; filename*=UTF-8''${extendedValue(fileName)}`;
+}
+
+/** RFC 8187 leaves only attr-chars unescaped; `encodeURIComponent` also leaves `'`, `(`, `)` and `*`. */
+function extendedValue(fileName: string): string {
+  return encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
 }
 
 /**

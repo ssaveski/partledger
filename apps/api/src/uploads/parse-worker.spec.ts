@@ -152,4 +152,40 @@ describe('the parse worker', () => {
       await parseSpreadsheet(syntheticWorkbook(rows), 'xlsx', { heapMegabytes: 16, timeoutMilliseconds: 60_000 }),
     ).toEqual({ ok: false, error: 'memoryLimit' });
   });
+
+  it('a workbook whose local header names a part differently from its directory is refused', async () => {
+    const renamed = zipOf(
+      workbookParts(syntheticRows).map((part) =>
+        part.name === 'xl/worksheets/sheet1.xml' ? { ...part, localName: 'xl/worksheets/sheet9.xml' } : part,
+      ),
+    );
+    expect(await parseSpreadsheet(renamed, 'xlsx')).toEqual({ ok: false, error: 'malformedArchive' });
+    const hiddenProject = zipOf([
+      ...workbookParts(syntheticRows),
+      { name: 'xl/media/image1.png', localName: 'xl/vbaProject.bin', content: Buffer.from('synthetic VBA project') },
+    ]);
+    expect(await parseSpreadsheet(hiddenProject, 'xlsx')).toEqual({ ok: false, error: 'malformedArchive' });
+  });
+
+  it('a sheet part without an .xml extension that declares a DTD is refused', async () => {
+    const parts = workbookParts(syntheticRows).map((part) =>
+      part.name === 'xl/worksheets/sheet1.xml'
+        ? {
+            name: 'xl/worksheets/sheet1.data',
+            content: sheetXml(syntheticRows, { prolog: '<!DOCTYPE worksheet [<!ENTITY synthetic "x">]>' }),
+          }
+        : part.name === 'xl/_rels/workbook.xml.rels'
+          ? { ...part, content: String(part.content).replace('worksheets/sheet1.xml', 'worksheets/sheet1.data') }
+          : part,
+    );
+    expect(await parseSpreadsheet(zipOf(parts), 'xlsx')).toEqual({ ok: false, error: 'dtdNotAllowed' });
+  });
+
+  it('a workbook with an external link is refused', async () => {
+    const linked = zipOf([
+      ...workbookParts(syntheticRows),
+      { name: 'xl/externalLinks/externalLink1.xml', content: '<externalLink/>' },
+    ]);
+    expect(await parseSpreadsheet(linked, 'xlsx')).toEqual({ ok: false, error: 'externalContent' });
+  });
 });

@@ -185,4 +185,12 @@ describe('the upload inspector', () => {
     expect(error).toBeNull();
     expect(inspector.result?.sizeBytes).toBe(workbook.byteLength);
   });
+
+  it('refuses a workbook with an external link', async () => {
+    const linked = zipOf([
+      ...workbookParts([['A']]),
+      { name: 'xl/externalLinks/externalLink1.xml', content: '<externalLink/>' },
+    ]);
+    expect(refusalOf((await inspect(xlsxMediaType, [linked])).error)).toBe('uploadContentMismatch');
+  });
 });
