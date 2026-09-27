@@ -38,6 +38,20 @@ export function formatDate(isoDate: string): string {
   return dateFormat.format(new Date(`${isoDate}T00:00:00Z`));
 }
 
+const kilobyte = 1000;
+
+function formatUnit(unit: 'byte' | 'kilobyte' | 'megabyte', value: number): string {
+  return new Intl.NumberFormat(locale, { style: 'unit', unit, maximumFractionDigits: 1 }).format(value);
+}
+
+/** A file size in decimal units, as file managers show it. */
+export function formatBytes(bytes: number): string {
+  if (bytes >= kilobyte * kilobyte) {
+    return formatUnit('megabyte', bytes / (kilobyte * kilobyte));
+  }
+  return bytes >= kilobyte ? formatUnit('kilobyte', bytes / kilobyte) : formatUnit('byte', bytes);
+}
+
 /** The first characters of a content hash, enough to compare against a document by eye. */
 export function shortHash(hash: string): string {
   return hash.slice(0, 12);

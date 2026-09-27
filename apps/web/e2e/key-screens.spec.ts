@@ -350,7 +350,7 @@ test.describe('RFQ detail', () => {
     await page.goto(detail(rfq.draftWithoutSuppliers));
     await expect(page.getByRole('heading', { level: 3, name: 'No suppliers invited yet' })).toBeVisible();
     await expect(page.getByRole('grid', { name: /Supplier responses/ })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Back to the overview' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Assign suppliers' })).toBeVisible();
   });
 });
 

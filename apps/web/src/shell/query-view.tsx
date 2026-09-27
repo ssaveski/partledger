@@ -57,3 +57,37 @@ export function QueryView<Value>({
   }
   return children(result.value);
 }
+
+/**
+ * The same designed states for one section of a page that reads several things, such as the
+ * overview: each section loads, fails or is refused on its own, under the section's heading.
+ */
+export function SectionQueryView<Value>({
+  query,
+  loadingKey,
+  children,
+}: {
+  query: UseQueryResult<ClientResult<Value>>;
+  loadingKey: string;
+  children: (value: Value) => ReactNode;
+}) {
+  const result = query.data;
+  if (result === undefined || (query.isFetching && !result.ok)) {
+    return <LoadingState labelKey={loadingKey} />;
+  }
+  if (!result.ok) {
+    if (isPermissionFailure(result.failure)) {
+      return <NoPermissionState headingLevel={3} />;
+    }
+    return (
+      <ErrorState
+        headingLevel={3}
+        messageKey={failureMessageKey(result.failure)}
+        onRetry={() => {
+          void query.refetch();
+        }}
+      />
+    );
+  }
+  return children(result.value);
+}

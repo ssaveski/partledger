@@ -1,17 +1,55 @@
 import { createRootRoute, createRoute, createRouter, Outlet } from '@tanstack/react-router';
 import { z } from 'zod';
 
-import { HomePage } from './routes/home';
+import { DashboardPage } from './routes/dashboard';
+import { EvidenceReviewScreen } from './routes/evidence/review';
+import { PartListScreen } from './routes/parts/list';
+import { partListSearchSchema } from './routes/parts/part-filters';
 import { ApprovalScreen } from './routes/rfqs/approval';
+import { AssignmentScreen } from './routes/rfqs/assignment';
 import { ComparisonScreen } from './routes/rfqs/comparison';
 import { DetailScreen, detailSearchSchema } from './routes/rfqs/detail';
+import { RfqListScreen } from './routes/rfqs/list';
+import { NewRfqScreen } from './routes/rfqs/new';
+import { rfqListSearchSchema } from './routes/rfqs/rfq-list-filters';
+import { SupplierListScreen } from './routes/suppliers/list';
+import { supplierListSearchSchema } from './routes/suppliers/supplier-filters';
 import { AppShell } from './shell/app-shell';
 import { NotFoundPage } from './shell/not-found';
 import { ScreenError, ShellError } from './shell/route-error';
 
 const rootRoute = createRootRoute({ component: AppShell, errorComponent: ShellError, notFoundComponent: NotFoundPage });
 
-const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomePage });
+const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: DashboardPage });
+
+const rfqListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/rfqs',
+  validateSearch: rfqListSearchSchema,
+  component: RfqListScreen,
+});
+
+const newRfqRoute = createRoute({ getParentRoute: () => rootRoute, path: '/rfqs/new', component: NewRfqScreen });
+
+const partListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/parts',
+  validateSearch: partListSearchSchema,
+  component: PartListScreen,
+});
+
+const supplierListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/suppliers',
+  validateSearch: supplierListSearchSchema,
+  component: SupplierListScreen,
+});
+
+const evidenceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/evidence',
+  component: EvidenceReviewScreen,
+});
 
 const rfqIdSchema = z.uuid();
 
@@ -38,9 +76,20 @@ const comparisonRoute = createRoute({
 
 const approvalRoute = createRoute({ getParentRoute: () => rfqRoute, path: 'approval', component: ApprovalScreen });
 
+const assignmentRoute = createRoute({
+  getParentRoute: () => rfqRoute,
+  path: 'assignment',
+  component: AssignmentScreen,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
-  rfqRoute.addChildren([detailRoute, comparisonRoute, approvalRoute]),
+  rfqListRoute,
+  newRfqRoute,
+  partListRoute,
+  supplierListRoute,
+  evidenceRoute,
+  rfqRoute.addChildren([detailRoute, assignmentRoute, comparisonRoute, approvalRoute]),
 ]);
 
 export function createAppRouter() {

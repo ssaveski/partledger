@@ -2,14 +2,19 @@ import type { z } from 'zod';
 
 import { fixtureQuery, type FixtureHandler, type FixtureResponse } from '../client/fixture-adapter';
 import { errorCode } from '../errors';
+import { rfqAssignmentQuery } from '../rfqs/assignment';
 import {
   approvalPacketQuery,
   type evidenceDocumentSchema,
   quoteComparisonQuery,
   rfqDetailQuery,
+  rfqListQuery,
   type ComparisonCellState,
   type SupplierEvidenceStatus,
 } from '../rfqs/queries';
+import { fixtureHash, fixtureId } from './ids';
+import { fixtureCategoryOf, fixtureParts } from './parts';
+import { fixtureCovers, fixtureSuppliers } from './suppliers';
 
 /**
  * Synthetic RFQs for the key screens: invented parts, suppliers, people and certificates only.
@@ -17,13 +22,13 @@ import {
  */
 
 type DetailOutput = z.input<typeof rfqDetailQuery.output>;
+type ListOutput = z.input<typeof rfqListQuery.output>;
+type AssignmentOutput = z.input<typeof rfqAssignmentQuery.output>;
 type ComparisonOutput = z.input<typeof quoteComparisonQuery.output>;
 type ApprovalOutput = z.input<typeof approvalPacketQuery.output>;
 type EvidenceDocument = z.input<typeof evidenceDocumentSchema>;
 
-export function fixtureId(serial: number): string {
-  return `00000000-0000-4000-8000-${serial.toString().padStart(12, '0')}`;
-}
+export { fixtureId };
 
 export const fixtureRfqIds = {
   open: fixtureId(1042),
@@ -300,8 +305,32 @@ function responseStatus(key: SupplierKey, linesAssigned: number, respondedAt: st
   };
 }
 
-function detailLines(lines: readonly PartSpec[]) {
-  return lines.map((part) => ({ ...partFields(part), requiredBy: part.requiredBy }));
+/** Further quantities priced per part number; the requested quantity is always priced too. */
+const quantityBreaks: Readonly<Record<string, readonly number[]>> = {
+  'PN-10432': [100, 500],
+  'PN-31005': [1000, 5000],
+};
+
+/** How the current part differs from a line's snapshot; only open lines report it (R8). */
+function driftOf(part: PartSpec) {
+  const current = fixtureParts.find((candidate) => candidate.partNumber === part.partNumber);
+  if (current === undefined) {
+    return null;
+  }
+  const changes = [
+    { field: 'revision' as const, snapshot: part.revision, current: current.revision },
+    { field: 'description' as const, snapshot: part.description, current: current.description },
+  ].filter((change) => change.snapshot !== change.current);
+  return changes.length === 0 ? null : { detectedAt: current.updatedAt, changes };
+}
+
+function detailLines(lines: readonly PartSpec[], open = false) {
+  return lines.map((part) => ({
+    ...partFields(part),
+    quantityBreaks: [...(quantityBreaks[part.partNumber] ?? [])],
+    requiredBy: part.requiredBy,
+    drift: open ? driftOf(part) : null,
+  }));
 }
 
 const details: Readonly<Record<string, DetailOutput>> = {
@@ -314,7 +343,7 @@ const details: Readonly<Record<string, DetailOutput>> = {
     deadline: '2026-10-09T16:00:00Z',
     currency: tenantCurrency,
     round: 1,
-    lines: detailLines(openParts),
+    lines: detailLines(openParts, true),
     suppliers: [
       responseStatus('northwind', 3, '2026-09-25T14:12:00Z'),
       responseStatus('birchfield', 4, null),
@@ -510,17 +539,6 @@ const comparisons: Readonly<Record<string, ComparisonOutput>> = {
 
 const qualityCertificate = 'pl.rfqs.evidenceType.qualityCertificate';
 const forcedLabourAttestation = 'pl.rfqs.evidenceType.forcedLabourAttestation';
-
-/** A stable, random-looking SHA-256 stand-in; no real file has this hash. */
-function fixtureHash(seed: number): string {
-  let state = seed;
-  let hash = '';
-  while (hash.length < 64) {
-    state = (state * 48271) % 2147483647;
-    hash += (state % 16).toString(16);
-  }
-  return hash;
-}
 
 function evidence(serial: number, status: 'valid' | 'expiring' | 'expired', expiresOn: string): EvidenceDocument[] {
   return [
@@ -731,7 +749,115 @@ function scenarioResponse<Output>(
   return { kind: 'refused', code: errorCode('NotFound', 'resource') };
 }
 
+// Which lines each invited supplier quotes, by line index; the counts match the detail's linesAssigned.
+const assignedLines: Readonly<Record<string, Readonly<Record<string, readonly number[]>>>> = {
+  [fixtureRfqIds.open]: {
+    [suppliers.northwind.supplierId]: [0, 1, 2],
+    [suppliers.birchfield.supplierId]: [0, 1, 2, 3],
+    [suppliers.kestrel.supplierId]: [0, 1, 2, 3],
+    [suppliers.arbor.supplierId]: [2, 3],
+  },
+  [fixtureRfqIds.closed]: {
+    [suppliers.northwind.supplierId]: [0, 1, 2, 4],
+    [suppliers.birchfield.supplierId]: [0, 1, 2, 3, 4],
+    [suppliers.kestrel.supplierId]: [0, 1, 2, 3],
+    [suppliers.arbor.supplierId]: [2, 3, 4],
+  },
+  [fixtureRfqIds.blockedApproval]: {
+    [suppliers.northwind.supplierId]: [0, 1, 2],
+    [suppliers.birchfield.supplierId]: [0, 1, 2],
+    [suppliers.kestrel.supplierId]: [0, 1, 2],
+  },
+  [fixtureRfqIds.readyApproval]: {
+    [suppliers.northwind.supplierId]: [0, 1, 2],
+    [suppliers.birchfield.supplierId]: [0, 1, 2],
+    [suppliers.arbor.supplierId]: [0, 1],
+  },
+};
+
+function assignmentOf(detail: DetailOutput): AssignmentOutput {
+  const assigned = assignedLines[detail.rfqId] ?? {};
+  const draft = detail.status === 'draft';
+  const blockedMessage =
+    detail.status === 'published' ? 'pl.rfqs.blocked.alreadyPublished' : 'pl.rfqs.blocked.notAvailable';
+  return {
+    rfqId: detail.rfqId,
+    reference: detail.reference,
+    title: detail.title,
+    status: detail.status,
+    version: detail.version,
+    deadline: detail.deadline,
+    outOfScopePolicy: 'warn',
+    lines: detail.lines.map((line, index) => {
+      const category = fixtureCategoryOf(line.partNumber);
+      return {
+        lineId: line.lineId,
+        lineNumber: line.lineNumber,
+        partNumber: line.partNumber,
+        revision: line.revision,
+        description: line.description,
+        quantity: line.quantity,
+        unit: line.unit,
+        quantityBreaks: line.quantityBreaks,
+        requiredBy: line.requiredBy,
+        category,
+        candidates: fixtureSuppliers.map((supplier) => ({
+          supplierId: supplier.supplierId,
+          name: supplier.name,
+          assigned: assigned[supplier.supplierId]?.includes(index) ?? false,
+          inScope: fixtureCovers(supplier, category),
+          approval: supplier.approval,
+          evidence: supplier.evidence,
+        })),
+      };
+    }),
+    allowedTransitions: draft ? ['assign', 'publish'] : [],
+    blockingReasons: draft
+      ? []
+      : [
+          { transition: 'assign', message: blockedMessage, params: {} },
+          { transition: 'publish', message: blockedMessage, params: {} },
+        ],
+  };
+}
+
+const assignments: Readonly<Record<string, AssignmentOutput>> = Object.fromEntries(
+  Object.values(details).map((detail) => [detail.rfqId, assignmentOf(detail)]),
+);
+
+function listRow(detail: DetailOutput): ListOutput['rfqs'][number] {
+  return {
+    rfqId: detail.rfqId,
+    reference: detail.reference,
+    title: detail.title,
+    status: detail.status,
+    deadline: detail.deadline,
+    round: detail.round,
+    lineCount: detail.lines.length,
+    invitedCount: detail.suppliers.length,
+    respondedCount: detail.suppliers.filter((supplier) => supplier.response === 'responded').length,
+    driftedLineCount: detail.lines.filter((line) => line.drift !== null).length,
+  };
+}
+
+const rfqList: ListOutput = {
+  rfqs: Object.values(details)
+    .map(listRow)
+    .sort((first, second) => second.reference.localeCompare(first.reference)),
+};
+
 export const rfqFixtureHandlers: readonly FixtureHandler[] = [
+  fixtureQuery(rfqListQuery, (_input, view) => ({ kind: 'output', output: view === 'empty' ? { rfqs: [] } : rfqList })),
+  fixtureQuery(rfqAssignmentQuery, ({ rfqId }, view) => {
+    const response = scenarioResponse(rfqId, assignments);
+    // Empty: a tenant without suppliers has no one to invite to any line.
+    return view === 'empty' && response.kind === 'output'
+      ? {
+          kind: 'output',
+          output: { ...response.output, lines: response.output.lines.map((line) => ({ ...line, candidates: [] })) },
+        }
+      : response;
+  }),
   fixtureQuery(rfqDetailQuery, ({ rfqId }) => scenarioResponse(rfqId, details)),
   fixtureQuery(quoteComparisonQuery, ({ rfqId }) => scenarioResponse(rfqId, comparisons)),
   fixtureQuery(approvalPacketQuery, ({ rfqId }) => scenarioResponse(rfqId, approvals, noAwardSubmitted)),
@@ -739,6 +865,8 @@ export const rfqFixtureHandlers: readonly FixtureHandler[] = [
 
 /** Every fixture output, for schema tests. */
 export const rfqFixtureOutputs = {
+  list: rfqList,
+  assignments: Object.values(assignments),
   details: Object.values(details),
   comparisons: Object.values(comparisons),
   approvals: [...Object.values(approvals), ...Object.values(details).map(noAwardSubmitted)],

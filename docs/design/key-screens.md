@@ -83,3 +83,52 @@ Marker (not a state): "Recorded by a buyer" (R42), on any quoted cell.
 | Date | Reviewer role | Would use offline verification? | Notes |
 | --- | --- | --- | --- |
 |  |  |  |  |
+
+## Secondary screens
+
+Unit U27 of the Release 1 plan: the overview, the RFQ list, the RFQ builder, supplier assignment, the parts and supplier lists, and evidence review, on the same shell, client and fixture approach as the key screens. Requirements covered: R35, R36, and the screen side of R8, R9, R10, R13, R14, R15, R16 and R41. U10, U15 and U16 wire them to the API.
+
+### How to open them
+
+- The main navigation reaches Overview, RFQs, Parts, Suppliers and Evidence. Each RFQ screen gains a "Suppliers" section link to its assignment; "New RFQ" on the RFQ list opens the builder.
+- The overview's "Screen states preview" links open every screen in each designed state. Screens whose reads take no id get their state from the address: `?preview=empty`, `slow`, `unavailable` or `forbidden` applies to every read of the page opened (a full page load). Only the fixture adapter honours it.
+- Writes in the fixture preview (publishing, amending, extending, confirming, rejecting, recording a deviation) are kept for the page's lifetime in a preview store the fixture client reads first, so every screen sees them until a reload. Against the API each of these actions is shown disabled with the reason that it is not available yet, until its command exists.
+
+| Screen | Reads | Designed states |
+| --- | --- | --- |
+| Overview (`/`) | `rfqs.list`, `evidence.reviewQueue`, `suppliers.list` | Each section loads, fails, is refused or is empty on its own |
+| RFQs (`/rfqs`) | `rfqs.list` | Loading, empty (with "New RFQ"), error, no permission, no match |
+| New RFQ (`/rfqs/new`) | `parts.list`; `suppliers.list` and `rfqs.list` when saving | Loading, no active parts, no lines yet, error, no permission |
+| Supplier assignment (`/rfqs/:id/assignment`) | `rfqs.assignment` | Loading, no suppliers to invite, error, no permission |
+| Parts (`/parts`) | `parts.list` | Loading, empty, error, no permission, no match |
+| Suppliers (`/suppliers`) | `suppliers.list` | Loading, empty, error, no permission, no match |
+| Evidence review (`/evidence`) | `evidence.reviewQueue` | Loading, nothing awaiting confirmation, no gaps, error, no permission |
+
+### Flows
+
+1. **Building and publishing an RFQ (F2, R15).** The builder asks for a title and a UTC deadline, then lists the active parts in a grid with an Add or Remove button per row; each added part becomes a line with its quantity, optional quantity breaks (such as `100, 500`) and required date, which cannot fall before the deadline. "Save draft and invite suppliers" creates the draft and opens its supplier assignment, where each line lists every supplier with a checkbox and whether its approved scope covers the line's category. "Publish RFQ" needs a supplier on every line; the RFQ then opens with every invited supplier as "Not yet".
+2. **Changing a published RFQ (R16).** The RFQ detail offers "Amend a line" (quantity or required date; the next version, with a notice that answers to the line become stale) and "Extend the deadline" (a later UTC deadline and a reason, for every supplier; a closed RFQ reopens). Once staff have seen the answers after close, the read blocks the extension and the button stays focusable, disabled, and described by the server's reason: start a re-bid instead.
+3. **Reviewing evidence (R12, R13, R14, R41).** Each document awaiting confirmation is a card with its type, supplier, file, uploader (a supplier link or staff), issue date, how long it counts (12 months from issue for an undated attestation), scope, content hash, expiry badge and scan status. "Open document", "Confirm" and "Reject" are on every card; a file the malware scan has not cleared can be none of them, with the reason shown once. Rejecting opens a dialog whose "Reject document" enables only once a reason is written. Below, the gaps grid lists each supplier's missing, expired or rejected evidence type; "Record deviation" asks for a reason and an end date no later than the read's limit, after which the gap shows as covered until that date.
+4. **Keeping master data honest (R6, R8, R9, R10).** The parts list marks ERP-owned parts and parts an import deactivated; the supplier list shows approval status, scope, end date with an "expires within 60 days" or "expired" badge, evidence status and the latest identity check (verified, register names someone else, not in the register, not checked, no register applies), and says whether the approved-supplier list mirrors the ERP. Open RFQ lines whose part changed after publish carry a "Part changed since publish" flag naming the change (for example "Revision B is now C"), in the RFQ detail and as a count in the RFQ list and on the overview.
+
+### Decisions
+
+- **Every screen declares its reads.** `libs/contracts/src/parts/queries.ts` (`parts.list`), `suppliers/queries.ts` (`suppliers.list`), `evidence/queries.ts` (`evidence.reviewQueue`), and in `rfqs/` `rfqs.list` and `rfqs.assignment`, plus quantity breaks and drift on RFQ detail lines. They follow the API registry rules (`apps/api/src/commands/secondary-screen-queries.spec.ts`). List reads take no input: the tenant comes from the credential.
+- **The server decides dates and scope.** Expiry statuses (`current`, `expiringSoon` within 60 days, `expired`, `noExpiry`) and the latest date a deviation may end come in the read with the server date they were evaluated on, and whether a supplier is inside a line's approved scope is a field of the assignment read. Screens compare no dates and derive no scope; the preview's own stand-ins (a new draft's scope marks, confirming, deviations) are marked as such in `apps/web/src/routes/`.
+- **Lists filter on the client, in the address.** Search text and one select per list live in the URL (`?q=`, `?category=`, `?approval=`, `?status=`), so a filtered list can be shared. The lists stay well under the grid's 1,000-row threshold in Release 1; a tenant that outgrows it would move the filters into the read's input. A filter that matches nothing shows an empty state with "Clear filters", never an empty grid, and focus returns to the search field.
+- **Out-of-scope suppliers are marked, not hidden.** Assignment lists every supplier on every line with "Within approved scope" or "Outside approved scope" (icon and text, and the checkbox's description), plus a suspended or conditional approval and the evidence status. The tenant setting decides: under `warn` (the fixtures) they can be invited and the line summary counts them; under `block` their checkbox is disabled. Choosing suppliers in a grid would put a widget per cell and fight the grid's keys, so each line is a labelled field set of checkboxes, and each supplier's name toggles its box.
+- **The builder is a page, not a wizard.** Details, parts and lines are sections of one form, and supplier assignment is its own screen, because the same assignment screen serves a draft saved earlier (RFQ-1050) and shows who a published RFQ invited.
+- **The overview reads each section on its own.** A buyer without access to evidence still sees RFQs; each section has its own loading, error, no-permission and empty state under its heading.
+- **Opening a document goes through U14's audited download.** Against the API "Open document" is a link to `GET /api/v1/evidence/documents/:id/download` (declared in the contracts); the fixture preview has no files and says so instead.
+- **Rejecting needs a reason before the action enables** (plan test scenario), rather than the award form's pattern of showing an error on submit; the disabled button is focusable and described by what is missing.
+
+### Open questions
+
+- **How long a deviation may last.** The read carries the latest end date (`maxDeviationUntil`); the fixtures use 180 days. Whether the limit comes from the market pack, the tenant, or the evidence type is for U15.
+- **Assigning suppliers after publish.** The assignment of a published RFQ is read-only here; inviting another supplier to an open RFQ would be an amendment. Whether U16 allows it, and whether invitees see the earlier version, is open.
+- **Tenant currency in the builder preview.** A new draft takes CAD until a tenant settings read exists (U8); the API sets it on save.
+
+### Tests
+
+- `apps/web/e2e/secondary-screens.spec.ts`: every screen's loading, empty, error and no-permission states; out-of-scope suppliers on assignment; rejection needing a reason; a view action per document; the builder publishing from fixture parts; extension blocked once answers were shown; amending, drift, deviations, sorting and filtering; axe in both themes; keyboard only.
+- Unit tests for the contracts and fixtures (`libs/contracts/src/{parts,suppliers,evidence,rfqs}/*.spec.ts`, the fixture adapter's preview states) and for each form and preview stand-in in `apps/web/src/`.

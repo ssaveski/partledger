@@ -8,6 +8,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { adapterKindFrom, ApiProvider, createClient } from './api/api-client';
+import { createPreviewStore } from './api/preview';
 import { createAppRouter } from './router';
 
 const container = document.getElementById('root');
@@ -24,7 +25,8 @@ try {
 }
 
 const adapterKind = adapterKindFrom(import.meta.env['VITE_API_ADAPTER']);
-const client = createClient(adapterKind);
+const preview = adapterKind === 'fixture' ? createPreviewStore() : null;
+const client = createClient(adapterKind, preview);
 // Failures are data (see useApiQuery), so retrying is the person's choice through the error state.
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
 const router = createAppRouter();
@@ -32,7 +34,7 @@ const router = createAppRouter();
 createRoot(container).render(
   <StrictMode>
     <RootErrorBoundary>
-      <ApiProvider client={client} kind={adapterKind}>
+      <ApiProvider client={client} kind={adapterKind} preview={preview}>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <RouterProvider router={router} />

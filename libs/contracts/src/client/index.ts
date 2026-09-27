@@ -11,8 +11,12 @@ export {
 export {
   createFixtureAdapter,
   fixtureQuery,
+  previewStates,
+  previewStateSchema,
   type FixtureAdapterOptions,
   type FixtureHandler,
   type FixtureResponse,
+  type FixtureView,
+  type PreviewState,
 } from './fixture-adapter';
 export { createHttpAdapter, type FetchLike, type HttpAdapterOptions } from './http-adapter';
