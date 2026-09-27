@@ -57,6 +57,8 @@ try {
       DROP_PORT: String(staffStackPorts.drop),
       OPERATOR_PORT: String(staffStackPorts.operator),
       DATABASE_URL: database.connectionString('pl_app'),
+      JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
+      JOBS_WORKERS: 'off',
       STAFF_APP_ORIGIN: 'http://127.0.0.1:5173',
       KEYCLOAK_ISSUER: keycloak.issuer,
       KEYCLOAK_CLIENT_ID: clientId,

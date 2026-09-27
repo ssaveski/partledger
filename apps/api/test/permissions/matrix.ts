@@ -77,7 +77,12 @@ export function principalFor(principal: MatrixPrincipal): Principal {
         adapter: 'portal',
       };
     case 'system_job':
-      return { ...base, type: 'system', actedUnder: { grant: 'job', jobId: actorId }, adapter: 'jobs' };
+      return {
+        ...base,
+        type: 'system',
+        actedUnder: { grant: 'job', jobId: actorId, cause: 'schedule', source: 'internalTest.nightly' },
+        adapter: 'jobs',
+      };
     case 'system_drop_credential':
       return {
         ...base,
@@ -90,7 +95,7 @@ export function principalFor(principal: MatrixPrincipal): Principal {
         ...base,
         type: 'ai_agent',
         agentId: actorId,
-        actedUnder: { grant: 'job', jobId: actorId },
+        actedUnder: { grant: 'job', jobId: actorId, cause: 'schedule', source: 'internalTest.nightly' },
         adapter: 'jobs',
       };
     case 'platform_operator':

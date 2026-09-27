@@ -12,8 +12,15 @@ export const credentialResolverRole = 'pl_credential_resolver';
 /** Reads every tenant row for the nightly dump (KTD32); its read-all policies are the allowed exception. */
 export const backupRole = 'pl_backup';
 
+/**
+ * Runs pg-boss (KTD16): fetches, completes, retries and schedules jobs in the `pl_jobs`
+ * schema. It holds no privilege on the application's tables; a job's work runs as `pl_app`
+ * inside the job's tenant transaction.
+ */
+export const jobRunnerRole = 'pl_job_runner';
+
 /** Roles the running services connect as. None of them owns anything or bypasses row-level security. */
-export const runtimeRoles = ['pl_app', 'pl_portal', 'pl_ai_worker', 'pl_verifier', backupRole] as const;
+export const runtimeRoles = ['pl_app', 'pl_portal', 'pl_ai_worker', 'pl_verifier', backupRole, jobRunnerRole] as const;
 
 export const runtimeRoleSchema = z.enum(runtimeRoles);
 

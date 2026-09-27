@@ -130,6 +130,58 @@ describe('the catalog check', () => {
     expect(await checkAfter(`set local role pl_migrator; ${auditFixture}`, withAuditFixture)).toEqual({ ok: true });
   });
 
+  it('fails when pl_app gains more than enqueuing needs in the job queue schema', async () => {
+    const result = await checkAfter(`
+      grant update, delete on pl_jobs.job_common to pl_app;
+      grant select on pl_jobs.schedule to pl_app;
+      grant execute on function pl_jobs.create_queue(text, jsonb) to pl_app;
+    `);
+    expect(codesOf(result).sort()).toEqual([
+      'unexpected_function_grant pl_jobs.create_queue(queue_name text, options jsonb)',
+      'unexpected_grant pl_jobs.job_common',
+      'unexpected_grant pl_jobs.job_common',
+      'unexpected_grant pl_jobs.schedule',
+    ]);
+  });
+
+  it('fails when the job runner loses its access to the job queue schema or gains TRUNCATE', async () => {
+    const result = await checkAfter(`
+      revoke delete on pl_jobs.job_common from pl_job_runner;
+      grant truncate on pl_jobs.queue to pl_job_runner;
+    `);
+    expect(result).toEqual({
+      ok: false,
+      violations: [
+        { code: 'missing_grant', object: 'pl_jobs.job_common', detail: 'pl_job_runner:DELETE' },
+        { code: 'unexpected_grant', object: 'pl_jobs.queue', detail: 'pl_job_runner:TRUNCATE' },
+      ],
+    });
+  });
+
+  it('fails when the job table no longer confines pl_app to the tenant of its transaction', async () => {
+    const disabled = await checkAfter('alter table pl_jobs.job_common disable row level security');
+    expect(codesOf(disabled)).toEqual(['row_security_not_enabled pl_jobs.job_common']);
+
+    const widened = await checkAfter(`
+      drop policy job_common_tenant_enqueue on pl_jobs.job_common;
+      drop policy job_common_tenant_read on pl_jobs.job_common;
+      create policy job_common_any_tenant on pl_jobs.job_common to pl_app using (true) with check (true);
+    `);
+    expect(codesOf(widened)).toEqual([
+      'policy_not_tenant_scoped pl_jobs.job_common.job_common_any_tenant',
+      'missing_tenant_policy pl_jobs.job_common',
+    ]);
+  });
+
+  it('fails when a table in the job queue schema belongs to a runtime role or anyone may create there', async () => {
+    const result = await checkAfter(`
+      alter table pl_jobs.warning owner to pl_job_runner;
+      grant create on schema pl_jobs to pl_job_runner;
+    `);
+    expect(codesOf(result)).toContain('wrong_owner pl_jobs.warning');
+    expect(codesOf(result)).toContain('schema_create_granted pl_jobs');
+  });
+
   it('fails when a tenant table lacks FORCE ROW LEVEL SECURITY', async () => {
     const result = await checkAfter('alter table credentials no force row level security');
     expect(codesOf(result)).toEqual(['row_security_not_forced public.credentials']);

@@ -8,9 +8,20 @@ import type { CredentialKind } from '@partledger/db';
  * a correlation id; the audit writer (U6) records all four with every state change.
  */
 
+/**
+ * A background job, and what enqueued it (KTD16): a schedule, named by the schedule, or a
+ * command, named by the command, whose correlation id the job carries on.
+ */
+export type JobGrant = {
+  readonly grant: 'job';
+  readonly jobId: string;
+  readonly cause: 'schedule' | 'command';
+  /** The schedule's or the command's name, such as `audit.nightlyChainVerification`. */
+  readonly source: string;
+};
+
 /** The grant a principal acted under: a credential, or the job that ran it. */
-export type ActedUnder =
-  { readonly grant: CredentialKind; readonly credentialId: string } | { readonly grant: 'job'; readonly jobId: string };
+export type ActedUnder = { readonly grant: CredentialKind; readonly credentialId: string } | JobGrant;
 
 interface PrincipalBase {
   readonly type: PrincipalType;
@@ -43,9 +54,7 @@ export interface SupplierTokenPrincipal extends PrincipalBase {
 export interface SystemPrincipal extends PrincipalBase {
   readonly type: 'system';
   /** A background job, or an export drop pushed with a drop credential. */
-  readonly actedUnder:
-    | { readonly grant: 'drop_credential'; readonly credentialId: string }
-    | { readonly grant: 'job'; readonly jobId: string };
+  readonly actedUnder: { readonly grant: 'drop_credential'; readonly credentialId: string } | JobGrant;
 }
 
 export interface AiAgentPrincipal extends PrincipalBase {

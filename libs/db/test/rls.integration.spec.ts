@@ -60,6 +60,20 @@ async function insertAuditRows(client: pg.Client, tenantId: string): Promise<voi
   );
 }
 
+/** A job item outcome and an operational alert, as a background job records them. */
+async function insertJobRows(client: pg.Client, tenantId: string): Promise<void> {
+  await client.query(
+    `insert into job_item_outcomes (tenant_id, job, item_key, status, attempts, last_job_id, updated_at)
+     values ($1, 'fixtures.run', 'item-1', 'done', 1, $2, now())`,
+    [tenantId, randomUUID()],
+  );
+  await client.query(
+    `insert into operational_alerts (tenant_id, kind, key, params, raised_at)
+     values ($1, 'fixtureAlert', 'alert-1', '{}', now())`,
+    [tenantId],
+  );
+}
+
 async function insertIdempotencyKey(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
   await client.query(
     `insert into idempotency_keys (tenant_id, credential_id, command, key, fingerprint, result, created_at, expires_at)
@@ -135,6 +149,7 @@ describe('row-level security as pl_app', () => {
       await insertIdempotencyKey(superuser, tenant, credential.id);
       await insertAuditRows(superuser, tenant);
       await insertStaffSession(superuser, tenant, credential.id);
+      await insertJobRows(superuser, tenant);
     }
   });
 
@@ -186,7 +201,8 @@ describe('row-level security as pl_app', () => {
   });
 
   it('with no tenant context set, tenant-owned tables return no rows', async () => {
-    for (const table of ['tenants', 'idempotency_keys', 'audit_entries', 'commitments', ...fixtureTables]) {
+    const readable = tableAccessManifest.filter((access) => access.grants.pl_app?.includes('SELECT') === true);
+    for (const table of [...readable.map((access) => access.table), ...fixtureTables]) {
       const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
       expect(result[0].count, table).toBe(0);
     }

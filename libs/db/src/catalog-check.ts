@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { jobQueueAccess, type JobQueueAccess } from './job-queue-access.ts';
 import {
   backupRole,
   credentialResolverRole,
@@ -76,9 +77,11 @@ export interface CatalogExpectations {
    * then fails for any other session or current user, a superuser or a BYPASSRLS role.
    */
   readonly expectedRuntimeRole?: RuntimeRole;
+  /** pg-boss's schema; the shipped access when omitted. */
+  readonly jobQueue?: JobQueueAccess;
 }
 
-export const shippedExpectations: CatalogExpectations = { tables: tableAccessManifest };
+export const shippedExpectations: CatalogExpectations = { tables: tableAccessManifest, jobQueue: jobQueueAccess };
 
 const checkedSchemas = ['public', 'pl_migration'];
 const allowedDefinerFunction = 'public.resolve_credential(requested_kind text, requested_id uuid)';
@@ -91,8 +94,10 @@ const expectedFunctionGrants = new Map<string, readonly string[]>([[allowedDefin
  */
 const resolverReadAll = { table: 'credentials', role: credentialResolverRole };
 const pinnedSearchPath = 'search_path=pg_catalog, pg_temp';
-const tenantPredicate = (column: string) =>
-  `(${column} = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid)`;
+const currentTenant = `(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid`;
+const tenantPredicate = (column: string) => `(${column} = ${currentTenant})`;
+/** A job's tenant is in its payload, as `data.tenantId`. */
+const jobTenantPredicate = `(((data ->> 'tenantId'::text))::uuid = ${currentTenant})`;
 const generatedIdentifierDefaults = new Set(['gen_random_uuid()', 'uuidv7()', 'uuidv4()']);
 const restrictingActions = new Set(['a', 'r']);
 
@@ -121,6 +126,7 @@ const columnRow = z.object({
   defaultExpression: z.string().nullable(),
 });
 const policyRow = z.object({
+  schema: z.string(),
   table: z.string(),
   name: z.string(),
   command: z.string(),
@@ -129,8 +135,14 @@ const policyRow = z.object({
   usingExpression: z.string().nullable(),
   checkExpression: z.string().nullable(),
 });
-const grantRow = z.object({ table: z.string(), grantee: z.string(), privilege: z.string() });
-const columnGrantRow = z.object({ table: z.string(), column: z.string(), grantee: z.string(), privilege: z.string() });
+const grantRow = z.object({ schema: z.string(), table: z.string(), grantee: z.string(), privilege: z.string() });
+const columnGrantRow = z.object({
+  schema: z.string(),
+  table: z.string(),
+  column: z.string(),
+  grantee: z.string(),
+  privilege: z.string(),
+});
 const schemaGrantRow = z.object({ schema: z.string(), grantee: z.string(), privilege: z.string() });
 const foreignKeyRow = z.object({
   table: z.string(),
@@ -158,7 +170,10 @@ const functionRow = z.object({
   grantees: z.array(z.string()),
 });
 
-const schemaList = checkedSchemas.map((schema) => `'${schema}'`).join(', ');
+const quoted = (schemas: readonly string[]) => schemas.map((schema) => `'${schema}'`).join(', ');
+/** Every schema whose objects must belong to the owner; pg-boss's schema has its own access rules. */
+const schemaList = quoted([...checkedSchemas, jobQueueAccess.schema]);
+const tableSchemaList = quoted(['public', jobQueueAccess.schema]);
 
 const queries = {
   connection: `
@@ -194,7 +209,8 @@ const queries = {
      where relation.relnamespace = 'public'::regnamespace and relation.relkind in ('r', 'p', 'v', 'm', 'f')
        and attribute.attnum > 0 and not attribute.attisdropped`,
   policies: `
-    select relation.relname as "table", policy.polname as "name", policy.polcmd::text as "command",
+    select namespace.nspname as "schema", relation.relname as "table", policy.polname as "name",
+           policy.polcmd::text as "command",
            policy.polpermissive as "permissive",
            array(select case when role_id = 0 then 'public' else pg_catalog.pg_get_userbyid(role_id) end
                    from unnest(policy.polroles) as role_id order by 1)::text[] as "roles",
@@ -202,22 +218,25 @@ const queries = {
            pg_catalog.pg_get_expr(policy.polwithcheck, policy.polrelid) as "checkExpression"
       from pg_catalog.pg_policy policy
       join pg_catalog.pg_class relation on relation.oid = policy.polrelid
-     where relation.relnamespace = 'public'::regnamespace`,
+      join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+     where namespace.nspname in (${tableSchemaList})`,
   grants: `
-    select relation.relname as "table",
+    select namespace.nspname as "schema", relation.relname as "table",
            case when acl.grantee = 0 then 'public' else pg_catalog.pg_get_userbyid(acl.grantee) end as "grantee",
            acl.privilege_type as "privilege"
       from pg_catalog.pg_class relation
+      join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
      cross join lateral pg_catalog.aclexplode(relation.relacl) acl
-     where relation.relnamespace = 'public'::regnamespace and acl.grantee <> relation.relowner`,
+     where namespace.nspname in (${tableSchemaList}) and acl.grantee <> relation.relowner`,
   columnGrants: `
-    select relation.relname as "table", attribute.attname as "column",
+    select namespace.nspname as "schema", relation.relname as "table", attribute.attname as "column",
            case when acl.grantee = 0 then 'public' else pg_catalog.pg_get_userbyid(acl.grantee) end as "grantee",
            acl.privilege_type as "privilege"
       from pg_catalog.pg_attribute attribute
       join pg_catalog.pg_class relation on relation.oid = attribute.attrelid
+      join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
      cross join lateral pg_catalog.aclexplode(attribute.attacl) acl
-     where relation.relnamespace = 'public'::regnamespace and acl.grantee <> relation.relowner`,
+     where namespace.nspname in (${tableSchemaList}) and acl.grantee <> relation.relowner`,
   schemaGrants: `
     select namespace.nspname as "schema",
            case when acl.grantee = 0 then 'public' else pg_catalog.pg_get_userbyid(acl.grantee) end as "grantee",
@@ -291,9 +310,9 @@ export async function checkCatalog(
   const memberships = await load(client, queries.memberships, membershipRow);
   const relations = await load(client, queries.relations, relationRow);
   const columns = await load(client, queries.columns, columnRow);
-  const policies = await load(client, queries.policies, policyRow);
-  const grants = await load(client, queries.grants, grantRow);
-  const columnGrants = await load(client, queries.columnGrants, columnGrantRow);
+  const allPolicies = await load(client, queries.policies, policyRow);
+  const allGrants = await load(client, queries.grants, grantRow);
+  const allColumnGrants = await load(client, queries.columnGrants, columnGrantRow);
   const schemaGrants = await load(client, queries.schemaGrants, schemaGrantRow);
   const foreignKeys = await load(client, queries.foreignKeys, foreignKeyRow);
   const uniqueIndexes = await load(client, queries.uniqueIndexes, uniqueIndexRow);
@@ -304,6 +323,12 @@ export async function checkCatalog(
   const report = (code: CatalogViolationCode, object: string, detail?: string) => {
     violations.push(detail === undefined ? { code, object } : { code, object, detail });
   };
+
+  const jobQueue = expectations.jobQueue ?? jobQueueAccess;
+  const inPublic = (row: { readonly schema: string }) => row.schema === 'public';
+  const policies = allPolicies.filter(inPublic);
+  const grants = allGrants.filter(inPublic);
+  const columnGrants = allColumnGrants.filter(inPublic);
 
   const expectedTables = new Map(expectations.tables.map((access) => [access.table, access]));
   const publicTables = relations.filter((relation) => relation.schema === 'public' && isTable(relation.kind));
@@ -365,7 +390,7 @@ export async function checkCatalog(
     if (relation.kind === 'v' && !(relation.options ?? []).includes('security_invoker=true')) {
       report('view_not_security_invoker', qualifiedName);
     }
-    if (!isTable(relation.kind)) {
+    if (!isTable(relation.kind) || relation.schema === jobQueue.schema) {
       continue;
     }
     if (relation.schema === 'public' && !expectedTables.has(relation.name)) {
@@ -465,6 +490,23 @@ export async function checkCatalog(
         report('definer_search_path_not_pinned', routine.signature);
       }
     }
+    if (routine.schema === jobQueue.schema) {
+      if (routine.owner !== migratorRole) {
+        report('wrong_owner', routine.signature, routine.owner);
+      }
+      const expectedGrantees = new Set([
+        jobQueue.runnerRole,
+        ...(jobQueue.appFunctions.includes(routine.signature) ? ['pl_app'] : []),
+      ]);
+      compareSets(
+        expectedGrantees,
+        new Set(routine.grantees),
+        routine.signature,
+        'missing_function_grant',
+        'unexpected_function_grant',
+        report,
+      );
+    }
     if (inCheckedSchema) {
       const expectedOwner = routine.signature === allowedDefinerFunction ? credentialResolverRole : migratorRole;
       if (routine.owner !== expectedOwner) {
@@ -483,10 +525,95 @@ export async function checkCatalog(
     }
   }
 
+  checkJobQueue(
+    jobQueue,
+    relations.filter((relation) => relation.schema === jobQueue.schema),
+    allPolicies.filter((policy) => policy.schema === jobQueue.schema),
+    allGrants.filter((grant) => grant.schema === jobQueue.schema),
+    allColumnGrants.filter((grant) => grant.schema === jobQueue.schema),
+    report,
+  );
+
   return violations.length === 0 ? { ok: true } : { ok: false, violations };
 }
 
 type Report = (code: CatalogViolationCode, object: string, detail?: string) => void;
+
+/**
+ * pg-boss's schema: the runner holds DML on every table and nothing more; `pl_app` holds only
+ * the listed privileges, and on the job tables only under the job tenant policy, so a
+ * command can enqueue jobs for its own tenant and no other.
+ */
+function checkJobQueue(
+  access: JobQueueAccess,
+  relations: readonly z.infer<typeof relationRow>[],
+  policies: readonly z.infer<typeof policyRow>[],
+  grants: readonly z.infer<typeof grantRow>[],
+  columnGrants: readonly z.infer<typeof columnGrantRow>[],
+  report: Report,
+): void {
+  const tables = relations
+    .filter((relation) => isTable(relation.kind))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  for (const table of tables) {
+    const object = `${access.schema}.${table.name}`;
+    const expected = new Set<string>(
+      access.runnerTablePrivileges.map((privilege) => `${access.runnerRole}:${privilege}`),
+    );
+    for (const privilege of access.appGrants[table.name] ?? []) {
+      expected.add(`pl_app:${privilege}`);
+    }
+    const actual = new Set(
+      grants.filter((grant) => grant.table === table.name).map((grant) => `${grant.grantee}:${grant.privilege}`),
+    );
+    compareSets(expected, actual, object, 'missing_grant', 'unexpected_grant', report);
+    for (const grant of columnGrants.filter((candidate) => candidate.table === table.name)) {
+      report('unexpected_column_grant', object, `${grant.grantee}:${grant.column}:${grant.privilege}`);
+    }
+  }
+
+  for (const tableName of access.tenantTables) {
+    const object = `${access.schema}.${tableName}`;
+    const table = tables.find((candidate) => candidate.name === tableName);
+    if (table === undefined) {
+      report('missing_table', object);
+      continue;
+    }
+    if (!table.rowSecurity) {
+      report('row_security_not_enabled', object);
+    }
+    let hasTenantPolicy = false;
+    for (const policy of policies.filter((candidate) => candidate.table === tableName)) {
+      const policyObject = `${object}.${policy.name}`;
+      if (!policy.permissive) {
+        continue;
+      }
+      const onlyRole = policy.roles.length === 1 ? policy.roles[0] : undefined;
+      if (onlyRole === access.runnerRole) {
+        continue;
+      }
+      const tenantScoped =
+        onlyRole === 'pl_app' &&
+        [policy.usingExpression, policy.checkExpression].every(
+          (expression) => expression === null || isTenantScoped(expression, jobTenantPredicate),
+        ) &&
+        (policy.usingExpression ?? policy.checkExpression) !== null;
+      if (!tenantScoped) {
+        report('policy_not_tenant_scoped', policyObject, policy.usingExpression ?? policy.checkExpression ?? '');
+        continue;
+      }
+      hasTenantPolicy = true;
+    }
+    if (!hasTenantPolicy) {
+      report('missing_tenant_policy', object);
+    }
+  }
+
+  // Policies on the other tables would be dead code at best; the grants decide access there.
+  for (const policy of policies.filter((candidate) => !access.tenantTables.includes(candidate.table))) {
+    report('policy_not_tenant_scoped', `${access.schema}.${policy.table}.${policy.name}`, 'unexpected policy');
+  }
+}
 
 function isTable(kind: string): boolean {
   return kind === 'r' || kind === 'p';

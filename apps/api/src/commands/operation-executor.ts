@@ -12,6 +12,7 @@ import { CommandAudit } from '../audit/command-audit';
 import { TenantTransactions, type AppDatabase } from '../db/tenant-transaction';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { inputFingerprint } from '../idempotency/fingerprint';
+import { CommandJobs, JobQueue } from '../jobs/enqueue';
 import type { HttpEntryAdapter } from '../listeners/entry-adapters';
 import { isAllowed } from '../principals/authorize';
 import type { AuthenticatedPrincipal, Principal } from '../principals/principal';
@@ -91,6 +92,7 @@ export class OperationExecutor {
     @Inject(IdempotencyService) private readonly idempotency: IdempotencyService,
     @Inject(clock) private readonly time: Clock,
     @Inject(ModuleRef) private readonly moduleRef: ModuleRef,
+    @Inject(JobQueue) private readonly jobQueue: JobQueue,
   ) {}
 
   async executeCommand(name: string, request: CommandRequest): Promise<Outcome> {
@@ -162,7 +164,8 @@ export class OperationExecutor {
       }
       const handler = this.moduleRef.get(registration.handler);
       const audit = new CommandAudit(database, principal.tenantId, now);
-      const result = await handler.execute(input.value, { principal, database, now, audit });
+      const jobs = new CommandJobs(this.jobQueue, database, principal, declaration.name);
+      const result = await handler.execute(input.value, { principal, database, now, audit, jobs });
       const outcome = this.outcomeOf(declaration, result);
       if (outcome.kind === 'success') {
         await appendAuditEntry(

@@ -23,6 +23,8 @@ describe('health endpoint', () => {
         OPERATOR_PORT: '3003',
         DATABASE_URL: database.connectionString('pl_app'),
         ...placeholderAuthEnvironment(),
+        JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
+        JOBS_WORKERS: 'off',
       }),
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
     );

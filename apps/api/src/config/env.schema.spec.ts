@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { InvalidConfigurationError, parseConfig } from './env.schema';
 
 const databaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:5432/partledger';
+const jobsDatabaseUrl = 'postgres://pl_job_runner:placeholder@127.0.0.1:5432/partledger';
 const ports = { STAFF_PORT: '3000', PORTAL_PORT: '3001', DROP_PORT: '3002', OPERATOR_PORT: '3003' };
 const sessionKey = Buffer.alloc(32, 7);
 const auth = {
@@ -10,6 +11,7 @@ const auth = {
   KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger/',
   KEYCLOAK_CLIENT_SECRET: 'placeholder-client-secret',
   SESSION_TOKEN_KEY: sessionKey.toString('base64'),
+  JOBS_DATABASE_URL: jobsDatabaseUrl,
 };
 
 function fieldsRefusedIn(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
@@ -42,6 +44,9 @@ describe('API configuration', () => {
       STAFF_SESSION_IDLE_TIMEOUT_MINUTES: 30,
       STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS: 10,
       STAFF_SESSION_REFRESH_INTERVAL_SECONDS: 60,
+      JOBS_DATABASE_URL: jobsDatabaseUrl,
+      JOBS_DATABASE_POOL_SIZE: 5,
+      JOBS_WORKERS: 'on',
     });
   });
 
@@ -81,6 +86,15 @@ describe('API configuration', () => {
     for (const DATABASE_URL of [undefined, 'https://127.0.0.1/partledger', 'not a url']) {
       expect(fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DATABASE_URL, ...auth })).toEqual(['DATABASE_URL']);
     }
+  });
+
+  it('refuses a missing JOBS_DATABASE_URL or an unknown JOBS_WORKERS setting and names the field', () => {
+    expect(
+      fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth, JOBS_DATABASE_URL: undefined }),
+    ).toEqual(['JOBS_DATABASE_URL']);
+    expect(
+      fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth, JOBS_WORKERS: 'sometimes' }),
+    ).toEqual(['JOBS_WORKERS']);
   });
 
   it('refuses a staff app origin with a path or trailing slash', () => {
