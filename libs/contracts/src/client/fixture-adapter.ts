@@ -4,10 +4,14 @@ import type { QueryDeclaration } from '../define';
 import { messageKeyOf, type ErrorCode } from '../errors';
 import type { AdapterResult, ApiAdapter, ClientFailure } from './api-client';
 
-/** What a fixture returns for one input: the output, a declared failure, or a response that never arrives. */
+/**
+ * What a fixture returns for one input: the output, a declared failure, the uniform refusal of a
+ * missing, expired or revoked session or link, or a response that never arrives.
+ */
 export type FixtureResponse<Output> =
   | { readonly kind: 'output'; readonly output: Output }
   | { readonly kind: 'refused'; readonly code: ErrorCode }
+  | { readonly kind: 'unauthenticated' }
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'pending' };
 
@@ -82,6 +86,8 @@ export function createFixtureAdapter(
           return refusedWith(response.code);
         case 'invalid':
           return { ok: false, failure: { kind: 'invalid', issues: [{ path: [], code: 'invalid_input' }] } };
+        case 'unauthenticated':
+          return { ok: false, failure: { kind: 'unauthenticated' } };
         case 'unavailable':
           return { ok: false, failure: { kind: 'unavailable' } };
         case 'pending':

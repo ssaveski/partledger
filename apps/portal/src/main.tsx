@@ -1,11 +1,14 @@
 import '@partledger/ui/global';
 
 import { translate } from '@partledger/contracts';
-import { applyThemePreference, RootErrorBoundary } from '@partledger/ui';
+import { applyThemePreference, RootErrorBoundary, TooltipProvider } from '@partledger/ui';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { App } from './app';
+import { adapterKindFrom, ConnectionProvider, createConnection } from './api/connection';
+import { createPortalRouter } from './router';
 
 const container = document.getElementById('root');
 if (container === null) {
@@ -13,12 +16,28 @@ if (container === null) {
 }
 
 document.title = translate('pl.common.portalTitle');
-applyThemePreference();
+try {
+  applyThemePreference();
+} catch {
+  // Without storage the theme follows the system colour scheme.
+  applyThemePreference('system');
+}
+
+const connection = createConnection(adapterKindFrom(import.meta.env['VITE_API_ADAPTER']));
+// Failures are data (see useApiQuery), so retrying is the person's choice through the error state.
+const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
+const router = createPortalRouter();
 
 createRoot(container).render(
   <StrictMode>
     <RootErrorBoundary>
-      <App />
+      <ConnectionProvider connection={connection}>
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <RouterProvider router={router} />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </ConnectionProvider>
     </RootErrorBoundary>
   </StrictMode>,
 );

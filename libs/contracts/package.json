@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client/index.ts",
-    "./fixtures": "./src/fixtures/index.ts"
+    "./fixtures": "./src/fixtures/index.ts",
+    "./fixtures/portal": "./src/fixtures/portal.ts",
+    "./portal": "./src/portal/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
