@@ -43,6 +43,20 @@
       "when": 1790466002348,
       "tag": "0005_idempotency_keys_security",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790468853237,
+      "tag": "0006_audit_chain",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790468857021,
+      "tag": "0007_audit_chain_security",
+      "breakpoints": true
     }
   ]
 }

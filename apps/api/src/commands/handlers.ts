@@ -2,6 +2,7 @@ import type { Type } from '@nestjs/common';
 import type { CommandDeclaration, ErrorCodeOf, InputOf, OutputOf, QueryDeclaration } from '@partledger/contracts';
 import type { DomainErrorOf, Result } from '@partledger/domain';
 
+import type { CommandAudit } from '../audit/command-audit';
 import type { AppDatabase } from '../db/tenant-transaction';
 import type { Principal } from '../principals/principal';
 
@@ -14,6 +15,11 @@ export interface OperationContext {
   readonly now: Date;
 }
 
+/** A command also records what it changed in its one audit entry (R26). */
+export interface CommandContext extends OperationContext {
+  readonly audit: CommandAudit;
+}
+
 /** A handler returns its declared failures as values; any failure rolls the transaction back (KTD14). */
 export type HandlerResult<Declaration extends CommandDeclaration | QueryDeclaration> = Result<
   OutputOf<Declaration>,
@@ -21,7 +27,7 @@ export type HandlerResult<Declaration extends CommandDeclaration | QueryDeclarat
 >;
 
 export interface CommandHandler<Declaration extends CommandDeclaration = CommandDeclaration> {
-  execute(input: InputOf<Declaration>, context: OperationContext): Promise<HandlerResult<Declaration>>;
+  execute(input: InputOf<Declaration>, context: CommandContext): Promise<HandlerResult<Declaration>>;
 }
 
 export interface QueryHandler<Declaration extends QueryDeclaration = QueryDeclaration> {

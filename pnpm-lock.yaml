@@ -235,6 +235,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^12.1.0
         version: 12.1.0(@nestjs/common@12.1.0(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@7.2.0))(@nestjs/core@12.1.0)(supports-color@7.2.0)
+      '@partledger/chain':
+        specifier: workspace:*
+        version: link:../../libs/chain
       '@partledger/contracts':
         specifier: workspace:*
         version: link:../../libs/contracts
@@ -348,7 +351,14 @@ importers:
         specifier: ^8.0.0
         version: 8.3.0(@types/node@24.13.6)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  libs/chain: {}
+  libs/chain:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.6
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
 
   libs/contracts:
     dependencies:

@@ -1,0 +1,369 @@
+{
+  "description": "Partledger audit chain v1 test vectors (synthetic data only). The API and the standalone verifier must both pass every vector.",
+  "chain": {
+    "domainTag": "partledger/chain/v1",
+    "entryHash": "lowercase hex of SHA-256(UTF-8(domainTag) || 0x00 || canonical), where canonical is the RFC 8785 UTF-8 text of the record",
+    "record": "{tenant, seq, prevHash, actorType, actorId, actedUnder, time, schemaVersion, payload}",
+    "genesisPrevHash": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "commitment": {
+    "domainTag": "partledger/commitment/v1",
+    "commitment": "lowercase hex of SHA-256(UTF-8(domainTag) || 0x00 || salt (32 bytes) || UTF-8(value))",
+    "vectors": [
+      {
+        "salt": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "value": "Synthetic Contact Name",
+        "expected": "7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683"
+      }
+    ]
+  },
+  "canonicalization": [
+    {
+      "name": "RFC 8785 section 3.2.2: literals, numbers and string escapes",
+      "input": "{\n  \"numbers\": [333333333.33333329, 1E30, 4.50, 2e-3, 0.000000000000000000000000001],\n  \"string\": \"\\u20ac$\\u000F\\u000aA'\\u0042\\u0022\\u005c\\\\\\\"\\/\",\n  \"literals\": [null, true, false]\n}",
+      "expected": "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}"
+    },
+    {
+      "name": "RFC 8785 section 3.2.3: property names sorted by UTF-16 code units",
+      "input": "{\n  \"\\u20ac\": \"Euro Sign\",\n  \"\\r\": \"Carriage Return\",\n  \"\\ufb33\": \"Hebrew Letter Dalet With Dagesh\",\n  \"1\": \"One\",\n  \"\\ud83d\\ude00\": \"Emoji: Grinning Face\",\n  \"\\u0080\": \"Control\",\n  \"\\u00f6\": \"Latin Small Letter O With Diaeresis\"\n}",
+      "expected": "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}"
+    },
+    {
+      "name": "nested objects are sorted at every level and arrays keep their order",
+      "input": "{ \"b\": [3, 1, 2, {\"z\": 1, \"a\": [ ]}], \"a\": { \"d\": {}, \"c\": null } }",
+      "expected": "{\"a\":{\"c\":null,\"d\":{}},\"b\":[3,1,2,{\"a\":[],\"z\":1}]}"
+    },
+    {
+      "name": "control characters use the short escapes or lowercase \\u00xx; nothing else is escaped",
+      "input": "[\"\\u0000\\u0001\\b\\t\\n\\u000b\\f\\r\\u001f\", \"\\u007f\\u2028\\u2029/<>&\", \"caf\\u00e9 \\ud83d\\ude00\"]",
+      "expected": "[\"\\u0000\\u0001\\b\\t\\n\\u000b\\f\\r\\u001f\",\"  /<>&\",\"café 😀\"]"
+    },
+    {
+      "name": "numbers use the shortest round-trip form, and negative zero is zero",
+      "input": "[-0, 1.0, 100, 1e21, 1e-7, 0.1, -1.5E+2, 123456789012345680000, 5e-324]",
+      "expected": "[0,1,100,1e+21,1e-7,0.1,-150,123456789012345680000,5e-324]"
+    },
+    {
+      "name": "property names that differ only past the basic plane sort by code unit, not code point",
+      "input": "{\"\\uffff\": 1, \"\\ud800\\udc00\": 2}",
+      "expected": "{\"𐀀\":2,\"￿\":1}"
+    }
+  ],
+  "numbers": [
+    {
+      "ieee754": "0000000000000000",
+      "expected": "0"
+    },
+    {
+      "ieee754": "8000000000000000",
+      "expected": "0"
+    },
+    {
+      "ieee754": "0000000000000001",
+      "expected": "5e-324"
+    },
+    {
+      "ieee754": "8000000000000001",
+      "expected": "-5e-324"
+    },
+    {
+      "ieee754": "7fefffffffffffff",
+      "expected": "1.7976931348623157e+308"
+    },
+    {
+      "ieee754": "ffefffffffffffff",
+      "expected": "-1.7976931348623157e+308"
+    },
+    {
+      "ieee754": "4340000000000000",
+      "expected": "9007199254740992"
+    },
+    {
+      "ieee754": "c340000000000000",
+      "expected": "-9007199254740992"
+    },
+    {
+      "ieee754": "4430000000000000",
+      "expected": "295147905179352830000"
+    },
+    {
+      "ieee754": "44b52d02c7e14af5",
+      "expected": "9.999999999999997e+22"
+    },
+    {
+      "ieee754": "44b52d02c7e14af6",
+      "expected": "1e+23"
+    },
+    {
+      "ieee754": "44b52d02c7e14af7",
+      "expected": "1.0000000000000001e+23"
+    },
+    {
+      "ieee754": "444b1ae4d6e2ef4e",
+      "expected": "999999999999999700000"
+    },
+    {
+      "ieee754": "444b1ae4d6e2ef4f",
+      "expected": "999999999999999900000"
+    },
+    {
+      "ieee754": "444b1ae4d6e2ef50",
+      "expected": "1e+21"
+    },
+    {
+      "ieee754": "3eb0c6f7a0b5ed8c",
+      "expected": "9.999999999999997e-7"
+    },
+    {
+      "ieee754": "3eb0c6f7a0b5ed8d",
+      "expected": "0.000001"
+    },
+    {
+      "ieee754": "41b3de4355555553",
+      "expected": "333333333.3333332"
+    },
+    {
+      "ieee754": "41b3de4355555554",
+      "expected": "333333333.33333325"
+    },
+    {
+      "ieee754": "41b3de4355555555",
+      "expected": "333333333.3333333"
+    },
+    {
+      "ieee754": "41b3de4355555556",
+      "expected": "333333333.3333334"
+    },
+    {
+      "ieee754": "41b3de4355555557",
+      "expected": "333333333.33333343"
+    },
+    {
+      "ieee754": "becbf647612f3696",
+      "expected": "-0.0000033333333333333333"
+    },
+    {
+      "ieee754": "43143ff3c1cb0959",
+      "expected": "1424953923781206.2"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "a lone high surrogate in a string",
+      "input": "[\"\\ud800\"]"
+    },
+    {
+      "name": "a lone low surrogate in a property name",
+      "input": "{\"\\udc00\": 1}"
+    }
+  ],
+  "invalidNumbers": [
+    {
+      "name": "NaN",
+      "ieee754": "7fffffffffffffff"
+    },
+    {
+      "name": "Infinity",
+      "ieee754": "7ff0000000000000"
+    }
+  ],
+  "chains": [
+    {
+      "name": "a valid three-entry chain",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 2,
+          "prevHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "entryHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"ae4c6d80-5f71-4092-9d34-c56789012345\",\"grant\":\"supplier_link\"},\"actorId\":\"9d3b5c7f-4e60-4f81-8c23-b45678901234\",\"actorType\":\"supplier_token\",\"payload\":{\"adapter\":\"portal\",\"changes\":[{\"contactName\":{\"commitment\":\"7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683\"},\"currency\":\"CAD\",\"kind\":\"note\",\"unitPrice\":12.5}],\"command\":\"quotes.submit\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000002\",\"kind\":\"command\",\"output\":{\"quoteId\":\"bf5d7e91-6082-41a3-8e45-d67890123456\",\"version\":2}},\"prevHash\":\"fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72\",\"schemaVersion\":1,\"seq\":2,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": true,
+        "length": 3,
+        "headSeq": 3,
+        "headHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa"
+      }
+    },
+    {
+      "name": "an empty chain",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [],
+      "expected": {
+        "ok": true,
+        "length": 0,
+        "headSeq": null,
+        "headHash": null
+      }
+    },
+    {
+      "name": "a modified payload fails at the modified entry",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 2,
+          "prevHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "entryHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"ae4c6d80-5f71-4092-9d34-c56789012345\",\"grant\":\"supplier_link\"},\"actorId\":\"9d3b5c7f-4e60-4f81-8c23-b45678901234\",\"actorType\":\"supplier_token\",\"payload\":{\"adapter\":\"portal\",\"changes\":[{\"contactName\":{\"commitment\":\"7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683\"},\"currency\":\"CAD\",\"kind\":\"note\",\"unitPrice\":1.25}],\"command\":\"quotes.submit\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000002\",\"kind\":\"command\",\"output\":{\"quoteId\":\"bf5d7e91-6082-41a3-8e45-d67890123456\",\"version\":2}},\"prevHash\":\"fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72\",\"schemaVersion\":1,\"seq\":2,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 2,
+        "reason": "entry_hash_mismatch"
+      }
+    },
+    {
+      "name": "a modified and rehashed entry fails at the entry after it",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 2,
+          "prevHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "entryHash": "3790ff62a58d5c64c7db4bee45b386a081a678a5ae6d8be3cbbb255ae16f5c18",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"ae4c6d80-5f71-4092-9d34-c56789012345\",\"grant\":\"supplier_link\"},\"actorId\":\"9d3b5c7f-4e60-4f81-8c23-b45678901234\",\"actorType\":\"supplier_token\",\"payload\":{\"adapter\":\"portal\",\"changes\":[{\"contactName\":{\"commitment\":\"7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683\"},\"currency\":\"CAD\",\"kind\":\"note\",\"unitPrice\":1.25}],\"command\":\"quotes.submit\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000002\",\"kind\":\"command\",\"output\":{\"quoteId\":\"bf5d7e91-6082-41a3-8e45-d67890123456\",\"version\":2}},\"prevHash\":\"fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72\",\"schemaVersion\":1,\"seq\":2,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 3,
+        "reason": "prev_hash_mismatch"
+      }
+    },
+    {
+      "name": "a deleted middle entry fails at the missing sequence number",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 2,
+        "reason": "missing_entry"
+      }
+    },
+    {
+      "name": "entries reordered by swapping their sequence numbers fail at the first swapped position",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 2,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "entryHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"ae4c6d80-5f71-4092-9d34-c56789012345\",\"grant\":\"supplier_link\"},\"actorId\":\"9d3b5c7f-4e60-4f81-8c23-b45678901234\",\"actorType\":\"supplier_token\",\"payload\":{\"adapter\":\"portal\",\"changes\":[{\"contactName\":{\"commitment\":\"7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683\"},\"currency\":\"CAD\",\"kind\":\"note\",\"unitPrice\":12.5}],\"command\":\"quotes.submit\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000002\",\"kind\":\"command\",\"output\":{\"quoteId\":\"bf5d7e91-6082-41a3-8e45-d67890123456\",\"version\":2}},\"prevHash\":\"fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72\",\"schemaVersion\":1,\"seq\":2,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 2,
+        "reason": "sequence_mismatch"
+      }
+    },
+    {
+      "name": "a chain presented under another tenant fails at its first entry",
+      "tenant": "1e9b4d6f-8a0c-4b2d-9e4f-6a8b0c2d4e6f",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 2,
+          "prevHash": "fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72",
+          "entryHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "canonical": "{\"actedUnder\":{\"credentialId\":\"ae4c6d80-5f71-4092-9d34-c56789012345\",\"grant\":\"supplier_link\"},\"actorId\":\"9d3b5c7f-4e60-4f81-8c23-b45678901234\",\"actorType\":\"supplier_token\",\"payload\":{\"adapter\":\"portal\",\"changes\":[{\"contactName\":{\"commitment\":\"7efd939b8fc1869516d07141ec15b6d6b9850122f01445a80ebaec86a8fe8683\"},\"currency\":\"CAD\",\"kind\":\"note\",\"unitPrice\":12.5}],\"command\":\"quotes.submit\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000002\",\"kind\":\"command\",\"output\":{\"quoteId\":\"bf5d7e91-6082-41a3-8e45-d67890123456\",\"version\":2}},\"prevHash\":\"fdb0f28f2f84b7c0c08ccc4e3f3f120186a43bd5c5dc00811af23c4e96189c72\",\"schemaVersion\":1,\"seq\":2,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        },
+        {
+          "seq": 3,
+          "prevHash": "fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042",
+          "entryHash": "a7fdcf0e851ad508a9a61f461c6c025ea34a9552c9a12626d77052ca06231aaa",
+          "canonical": "{\"actedUnder\":{\"grant\":\"job\",\"jobId\":\"c06e8fa2-7193-42b4-9f56-e78901234567\"},\"actorId\":null,\"actorType\":\"system\",\"payload\":{\"adapter\":\"jobs\",\"changes\":[{\"aggregate\":\"rfq\",\"from\":\"open\",\"id\":\"d17f90b3-82a4-43c5-8067-f89012345678\",\"kind\":\"transition\",\"to\":\"closed\",\"transition\":\"close\"}],\"command\":\"rfqs.close\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000003\",\"kind\":\"command\",\"output\":{\"rfqId\":\"d17f90b3-82a4-43c5-8067-f89012345678\"}},\"prevHash\":\"fb01760408d3c2f0473010a0770889b7df92288a1c9878ab26f4b87f3b9b2042\",\"schemaVersion\":1,\"seq\":3,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:01.250Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 1,
+        "reason": "tenant_mismatch"
+      }
+    },
+    {
+      "name": "bytes that hash correctly but are not canonical fail at that entry",
+      "tenant": "0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b",
+      "entries": [
+        {
+          "seq": 1,
+          "prevHash": "0000000000000000000000000000000000000000000000000000000000000000",
+          "entryHash": "29ee0b54ccfd2f1b680835c7155279b4692937230f7283e843d3afbab16b5bfd",
+          "canonical": "{ \"actedUnder\":{\"credentialId\":\"7b1f3a5d-2c4e-4d6f-8a01-923456789012\",\"grant\":\"staff_session\"},\"actorId\":\"6a0e2f4c-1b3d-4c5e-9f70-812345678901\",\"actorType\":\"person\",\"payload\":{\"adapter\":\"staff\",\"changes\":[],\"command\":\"parts.create\",\"correlationId\":\"c0ffee00-0000-4000-8000-000000000001\",\"kind\":\"command\",\"output\":{\"partId\":\"8c2a4b6e-3d5f-4e70-9b12-a34567890123\",\"version\":1}},\"prevHash\":\"0000000000000000000000000000000000000000000000000000000000000000\",\"schemaVersion\":1,\"seq\":1,\"tenant\":\"0f8a3c2e-5b6d-4e7f-8a9b-0c1d2e3f4a5b\",\"time\":\"2026-09-27T12:00:00.000Z\"}"
+        }
+      ],
+      "expected": {
+        "ok": false,
+        "seq": 1,
+        "reason": "not_canonical"
+      }
+    }
+  ]
+}

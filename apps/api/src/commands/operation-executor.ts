@@ -1,10 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { idempotencyKeySchema, type OperationDeclaration, type ValidationIssue } from '@partledger/contracts';
+import { isJsonObject, parseJson as parseJsonValue, type JsonObject } from '@partledger/chain';
 import { domainError, type DomainError, type Result } from '@partledger/domain';
 import { sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
+import { appendAuditEntry, auditActorOf } from '../audit/audit-writer';
+import { CommandAudit } from '../audit/command-audit';
 import { TenantTransactions, type AppDatabase } from '../db/tenant-transaction';
 import { IdempotencyService } from '../idempotency/idempotency.service';
 import { inputFingerprint } from '../idempotency/fingerprint';
@@ -87,18 +90,33 @@ export class OperationExecutor {
     if (authenticated === null) {
       return { kind: 'unauthenticated' };
     }
+    return this.runCommand(authenticated, name, request.body, request.idempotencyKey, now);
+  }
+
+  /**
+   * Runs a command for a principal that is already authenticated: a request's credential, or
+   * a background job acting as `system` (U9). Every successful, non-replayed command appends
+   * exactly one audit entry inside its transaction (R26).
+   */
+  async runCommand(
+    authenticated: AuthenticatedPrincipal,
+    name: string,
+    body: unknown,
+    requestIdempotencyKey: string | undefined,
+    now: Date = this.time.now(),
+  ): Promise<Outcome> {
     const registration = this.routes.command(name);
     if (registration === undefined) {
       return refused(domainError('NotFound', 'route'));
     }
     const { declaration } = registration;
-    const input = parseInput(declaration.input, request.body);
+    const input = parseInput(declaration.input, body);
     if (!input.ok) {
       return { kind: 'invalid', issues: input.error };
     }
     let idempotencyKey: string | undefined;
-    if (request.idempotencyKey !== undefined) {
-      const parsedKey = idempotencyKeySchema.safeParse(request.idempotencyKey);
+    if (requestIdempotencyKey !== undefined) {
+      const parsedKey = idempotencyKeySchema.safeParse(requestIdempotencyKey);
       if (!parsedKey.success) {
         return { kind: 'invalid', issues: [{ path: ['headers', 'idempotency-key'], code: 'invalid_format' }] };
       }
@@ -134,10 +152,23 @@ export class OperationExecutor {
         claimId = claim.id;
       }
       const handler = this.moduleRef.get(registration.handler);
-      const result = await handler.execute(input.value, { principal, database, now });
+      const audit = new CommandAudit(database, principal.tenantId, now);
+      const result = await handler.execute(input.value, { principal, database, now, audit });
       const outcome = this.outcomeOf(declaration, result);
-      if (outcome.kind === 'success' && claimId !== undefined) {
-        await this.idempotency.complete(database, claimId, outcome.output);
+      if (outcome.kind === 'success') {
+        await appendAuditEntry(
+          database,
+          {
+            tenantId: principal.tenantId,
+            actor: auditActorOf(principal),
+            event: declaration.name,
+            data: { output: outputForAudit(outcome.output), changes: audit.changes },
+          },
+          this.time,
+        );
+        if (claimId !== undefined) {
+          await this.idempotency.complete(database, claimId, outcome.output);
+        }
       }
       return outcome;
     });
@@ -242,6 +273,12 @@ function parseInput<Schema extends z.ZodType>(
       code: issue.code,
     })),
   };
+}
+
+/** A command's output holds identifiers, versions, counts and enumerations only (KTD14), so the chain may carry it. */
+function outputForAudit(output: unknown): JsonObject {
+  const value = parseJsonValue(JSON.stringify(output));
+  return isJsonObject(value) ? value : { value };
 }
 
 function parseJson(text: string): Result<unknown, null> {

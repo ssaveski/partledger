@@ -44,6 +44,22 @@ async function errorCodeOf(work: Promise<unknown>): Promise<string | undefined> 
   }
 }
 
+/** A structurally valid chain entry and commitment; their hashes are not checked here. */
+async function insertAuditRows(client: pg.Client, tenantId: string): Promise<void> {
+  await client.query(
+    `insert into audit_entries (tenant_id, seq, prev_hash, entry_hash, canonical, actor_type, actor_id, acted_under,
+                                correlation_id, time, schema_version, payload)
+     values ($1::uuid, 1, decode(repeat('00', 32), 'hex'), sha256(convert_to($3, 'UTF8')), convert_to('{}', 'UTF8'),
+             'system', null, '{"grant": "job"}', $2, now(), 1, '{}')`,
+    [tenantId, randomUUID(), tenantId],
+  );
+  await client.query(
+    `insert into commitments (tenant_id, commitment, salt, value, created_at)
+     values ($1::uuid, sha256(convert_to($2::text, 'UTF8')), sha256(convert_to($3, 'UTF8')), 'Synthetic value', now())`,
+    [tenantId, randomUUID(), tenantId],
+  );
+}
+
 async function insertIdempotencyKey(client: pg.Client, tenantId: string, credentialId: string): Promise<void> {
   await client.query(
     `insert into idempotency_keys (tenant_id, credential_id, command, key, fingerprint, result, created_at, expires_at)
@@ -109,6 +125,7 @@ describe('row-level security as pl_app', () => {
       });
       credentialOf.set(tenant, credential.id);
       await insertIdempotencyKey(superuser, tenant, credential.id);
+      await insertAuditRows(superuser, tenant);
     }
   });
 
@@ -160,7 +177,7 @@ describe('row-level security as pl_app', () => {
   });
 
   it('with no tenant context set, tenant-owned tables return no rows', async () => {
-    for (const table of ['tenants', 'idempotency_keys', ...fixtureTables]) {
+    for (const table of ['tenants', 'idempotency_keys', 'audit_entries', 'commitments', ...fixtureTables]) {
       const result = countRows.parse((await app.query(`select count(*) from ${table}`)).rows);
       expect(result[0].count, table).toBe(0);
     }

@@ -378,4 +378,40 @@ describe('the catalog check', () => {
     );
     expect(codesOf(result)).toEqual(['insert_only_table_writable fixture_audit']);
   });
+
+  it('fails when a shipped audit table loses a guard trigger or has one disabled', async () => {
+    const result = await checkAfter(`
+      drop trigger audit_entries_refuse_truncate on audit_entries;
+      alter table commitments disable trigger commitments_erase_only;
+    `);
+    expect(codesOf(result)).toEqual([
+      'missing_insert_only_trigger audit_entries',
+      'missing_insert_only_trigger commitments',
+      'missing_insert_only_trigger commitments',
+      'trigger_disabled commitments.commitments_erase_only',
+    ]);
+  });
+
+  it('fails when pl_app may update or delete audit entries', async () => {
+    const result = await checkAfter('grant update, delete on audit_entries to pl_app');
+    expect(codesOf(result)).toEqual([
+      'unexpected_grant audit_entries',
+      'unexpected_grant audit_entries',
+      'insert_only_table_writable audit_entries',
+      'insert_only_table_writable audit_entries',
+    ]);
+  });
+
+  it('fails when the commitment store grants a table-level UPDATE beyond its erasure columns', async () => {
+    const result = await checkAfter('grant update on commitments to pl_app');
+    expect(codesOf(result)).toEqual(['unexpected_grant commitments', 'insert_only_table_writable commitments']);
+  });
+
+  it('fails when pl_portal or pl_ai_worker may read more of the chain than its head', async () => {
+    const result = await checkAfter(`
+      grant select (payload) on audit_entries to pl_portal;
+      grant select on commitments to pl_ai_worker;
+    `);
+    expect(codesOf(result)).toEqual(['unexpected_column_grant audit_entries', 'unexpected_grant commitments']);
+  });
 });
