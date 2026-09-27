@@ -19,6 +19,19 @@ const auth = {
   OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
 };
 
+/** The key service and AI settings production requires (U11). */
+const productionKeysAndAi = {
+  KEY_SERVICE_ADAPTER: 'ovh_kms',
+  OVH_KMS_ENDPOINT: 'https://ca-east-bhs.okms.ovh.net',
+  OVH_KMS_ID: '3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+  OVH_KMS_ENCRYPTION_KEY_ID: '4a2b3c5d-6e7f-4b8c-9d0e-1f2a3b4c5d6e',
+  OVH_KMS_SIGNING_KEY_ID: '5b3c4d6e-7f80-4c9d-8e1f-2a3b4c5d6e7f',
+  OVH_KMS_CLIENT_CERTIFICATE_FILE: '/run/secrets/kms-client.crt',
+  OVH_KMS_CLIENT_KEY_FILE: '/run/secrets/kms-client.key',
+  AI_PLATFORM_PROVIDER: 'none',
+  AI_WORKER_DATABASE_URL: 'postgres://pl_ai_worker:placeholder@127.0.0.1:5432/partledger',
+};
+
 function fieldsRefusedIn(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
   try {
     parseConfig(environment);
@@ -66,6 +79,8 @@ describe('API configuration', () => {
       OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
       OPERATOR_KEYCLOAK_CLIENT_ID: 'partledger-operator-console',
       OPERATOR_KEYCLOAK_AUDIENCE: 'partledger-operator-api',
+      AI_WORKER_DATABASE_POOL_SIZE: 2,
+      AI_CALL_TIMEOUT_SECONDS: 120,
     });
   });
 
@@ -192,6 +207,9 @@ describe('API configuration', () => {
       'EMAIL_ADAPTER',
       'OPERATIONAL_ALERT_FALLBACK_EMAIL',
       'DIRECTORY_REGION_URLS',
+      'KEY_SERVICE_ADAPTER',
+      'AI_PLATFORM_PROVIDER',
+      'AI_WORKER_DATABASE_URL',
     ]);
     expect(
       fieldsRefusedIn({
@@ -199,6 +217,7 @@ describe('API configuration', () => {
         ...ports,
         DATABASE_URL: databaseUrl,
         ...auth,
+        ...productionKeysAndAi,
         STAFF_APP_ORIGIN: 'https://app.example',
         PORTAL_APP_ORIGIN: 'https://suppliers.example',
         KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
@@ -215,6 +234,7 @@ describe('API configuration', () => {
       ...ports,
       DATABASE_URL: databaseUrl,
       ...auth,
+      ...productionKeysAndAi,
       STAFF_APP_ORIGIN: 'https://app.example',
       PORTAL_APP_ORIGIN: 'https://suppliers.example',
       KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
@@ -224,5 +244,62 @@ describe('API configuration', () => {
     expect(fieldsRefusedIn({ ...production, EMAIL_ADAPTER: 'local' })).toEqual(['EMAIL_ADAPTER']);
     expect(fieldsRefusedIn({ ...production, NODE_ENV: 'development', EMAIL_ADAPTER: 'local' })).toEqual([]);
     expect(fieldsRefusedIn({ ...production, NODE_ENV: 'development' })).toEqual([]);
+  });
+
+  it('refuses the local key service and the local AI adapter in production, and requires the AI worker connection', () => {
+    const production = {
+      NODE_ENV: 'production',
+      ...ports,
+      DATABASE_URL: databaseUrl,
+      ...auth,
+      ...productionKeysAndAi,
+      STAFF_APP_ORIGIN: 'https://app.example',
+      PORTAL_APP_ORIGIN: 'https://suppliers.example',
+      KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+      OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
+      OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
+      EMAIL_ADAPTER: 'local',
+    };
+    expect(
+      fieldsRefusedIn({
+        ...production,
+        KEY_SERVICE_ADAPTER: 'local',
+        AI_PLATFORM_PROVIDER: 'local',
+        AI_WORKER_DATABASE_URL: undefined,
+      }),
+    ).toEqual(['EMAIL_ADAPTER', 'KEY_SERVICE_ADAPTER', 'AI_PLATFORM_PROVIDER', 'AI_WORKER_DATABASE_URL']);
+    expect(
+      fieldsRefusedIn({
+        ...production,
+        NODE_ENV: 'development',
+        KEY_SERVICE_ADAPTER: undefined,
+        AI_PLATFORM_PROVIDER: undefined,
+        AI_WORKER_DATABASE_URL: undefined,
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses a KMS adapter without every KMS setting, and a KMS endpoint outside OVHcloud KMS', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(fieldsRefusedIn({ ...base, KEY_SERVICE_ADAPTER: 'ovh_kms' })).toEqual([
+      'OVH_KMS_ENDPOINT',
+      'OVH_KMS_ID',
+      'OVH_KMS_ENCRYPTION_KEY_ID',
+      'OVH_KMS_SIGNING_KEY_ID',
+      'OVH_KMS_CLIENT_CERTIFICATE_FILE',
+      'OVH_KMS_CLIENT_KEY_FILE',
+    ]);
+    expect(fieldsRefusedIn({ ...base, OVH_KMS_ENDPOINT: 'https://169.254.169.254' })).toEqual(['OVH_KMS_ENDPOINT']);
+  });
+
+  it('requires the model and key of a platform AI provider, and the resource and region Azure needs', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(fieldsRefusedIn({ ...base, AI_PLATFORM_PROVIDER: 'azure_openai' })).toEqual([
+      'AI_PLATFORM_MODEL',
+      'AI_PLATFORM_API_KEY',
+      'AI_PLATFORM_AZURE_RESOURCE_NAME',
+      'AI_PLATFORM_ENDPOINT_REGION',
+    ]);
+    expect(fieldsRefusedIn({ ...base, AI_PLATFORM_PROVIDER: 'none' })).toEqual([]);
   });
 });

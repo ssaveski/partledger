@@ -13,6 +13,9 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { z } from 'zod';
 
+import type { EgressNetwork } from '../../src/ai/egress-allowlist';
+import type { LocalResponder } from '../../src/ai/local-model';
+import type { SuggestionTargets } from '../../src/ai/suggestion-targets';
 import type { IdentityAdministration } from '../../src/auth/identity-administration';
 import type { IdentityProvider } from '../../src/auth/identity-provider';
 import { sessionCookieName } from '../../src/auth/session-cookie';
@@ -104,6 +107,11 @@ export interface ApiProcessOptions {
   readonly emailPort?: EmailPort;
   /** Replaces the shipped recipient directory, to reach recipients of later units. */
   readonly recipientDirectory?: RecipientDirectory;
+  /** Replaces the network AI calls use, so no AI call leaves the process. */
+  readonly aiNetwork?: EgressNetwork;
+  /** Scripts the local AI model's answers. */
+  readonly aiLocalResponder?: LocalResponder;
+  readonly suggestionTargets?: SuggestionTargets;
 }
 
 export interface ApiHarnessOptions {
@@ -127,6 +135,8 @@ export interface ApiHarnessOptions {
   readonly roles?: 'stand-in' | 'memberships';
   /** Replaces Keycloak's organizations; by default an unreachable placeholder realm. */
   readonly identityOrganizations?: IdentityOrganizations;
+  /** Connects the AI worker as `pl_ai_worker`, so AI suggestions can be stored. */
+  readonly aiWorker?: boolean;
 }
 
 /**
@@ -168,6 +178,7 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         JOBS_WORKERS: apiProcess.workers === true ? 'on' : 'off',
         // Tests move the clock by up to a day; sessions they issue must outlast that.
         ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
+        ...(options.aiWorker === true ? { AI_WORKER_DATABASE_URL: database.connectionString('pl_ai_worker') } : {}),
         ...options.environment,
       }),
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
@@ -187,6 +198,9 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         ...(apiProcess.jobs === undefined ? {} : { jobs: apiProcess.jobs }),
         ...(apiProcess.emailPort === undefined ? {} : { emailPort: apiProcess.emailPort }),
         ...(apiProcess.recipientDirectory === undefined ? {} : { recipientDirectory: apiProcess.recipientDirectory }),
+        ...(apiProcess.aiNetwork === undefined ? {} : { aiNetwork: apiProcess.aiNetwork }),
+        ...(apiProcess.aiLocalResponder === undefined ? {} : { aiLocalResponder: apiProcess.aiLocalResponder }),
+        ...(apiProcess.suggestionTargets === undefined ? {} : { suggestionTargets: apiProcess.suggestionTargets }),
         ...(apiProcess.catalogTables === undefined
           ? {}
           : {

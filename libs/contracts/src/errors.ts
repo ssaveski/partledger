@@ -12,7 +12,7 @@ export const domainErrorReasons = {
   NotFound: ['resource', 'route'],
   Conflict: ['versionMismatch', 'transitionNotAllowed', 'alreadyExists', 'lastTenantAdmin'],
   Invalid: ['request', 'idempotencyKeyRequired'],
-  Unprocessable: ['idempotencyKeyReused', 'regionNotServed'],
+  Unprocessable: ['idempotencyKeyReused', 'regionNotServed', 'aiRegionNotAllowed', 'aiOutputInvalid'],
   Forbidden: ['notPermitted', 'crossSiteRequest'],
   Unavailable: ['dependencyUnavailable'],
   StepUpRequired: ['recentAuthentication'],

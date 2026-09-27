@@ -1,5 +1,6 @@
 import { addAlertRecipientCommand, removeAlertRecipientCommand, resetSecondFactor } from '@partledger/contracts';
 
+import { aiCommands } from '../ai/ai-operations';
 import { ResetSecondFactorHandler } from '../auth/factor-reset.command';
 import { AddAlertRecipientHandler, RemoveAlertRecipientHandler } from '../notifications/alert-recipients.commands';
 import { tenantCommands } from '../tenants/tenant-operations';
@@ -15,4 +16,5 @@ export const productionCommands: readonly CommandRegistration[] = [
   registerCommand(removeAlertRecipientCommand, RemoveAlertRecipientHandler),
   registerCommand(resetSecondFactor, ResetSecondFactorHandler),
   ...tenantCommands,
+  ...aiCommands,
 ];

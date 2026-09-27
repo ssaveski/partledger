@@ -10,6 +10,8 @@ import { alertRecipientsAccess, notificationsAccess } from './notifications.ts';
 import { membershipsAccess, roleAssignmentsAccess } from './memberships.ts';
 import { operationalAlertsAccess } from './operational-alerts.ts';
 import { tenantsAccess } from './tenants.ts';
+import { aiSuggestionsAccess } from './ai-suggestions.ts';
+import { tenantAiKeysAccess } from './tenant-ai-keys.ts';
 
 export { auditActorTypes, auditEntries } from './audit-entries.ts';
 export { commitments } from './commitments.ts';
@@ -29,6 +31,14 @@ export {
 export { memberRoles, memberships, roleAssignments } from './memberships.ts';
 export { operationalAlerts } from './operational-alerts.ts';
 export { aiProviders, marketPacks, supplierListSources, tenantRegions, tenants } from './tenants.ts';
+export {
+  aiConfigurationSources,
+  aiProcessingRegions,
+  aiSuggestions,
+  suggestionStatuses,
+  suggestionTargetTypes,
+} from './ai-suggestions.ts';
+export { tenantAiKeyProviders, tenantAiKeys } from './tenant-ai-keys.ts';
 
 /** Every table in the `public` schema with its expected access; the catalog check compares them exactly. */
 export const tableAccessManifest: readonly TableAccess[] = [
@@ -45,4 +55,6 @@ export const tableAccessManifest: readonly TableAccess[] = [
   membershipsAccess,
   roleAssignmentsAccess,
   directoryEntriesAccess,
+  tenantAiKeysAccess,
+  aiSuggestionsAccess,
 ];

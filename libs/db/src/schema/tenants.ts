@@ -70,4 +70,8 @@ export const tenantsAccess = defineTableAccess({
   tenantKey: 'id',
   // Provisioning inserts the new tenant in a transaction whose app.tenant_id is its id.
   grants: { pl_app: ['SELECT', 'INSERT'] },
+  // A tenant admin changes the tenant's AI policy (U11); a trigger keeps id, slug and region fixed.
+  columnGrants: {
+    pl_app: { ai_provider: ['UPDATE'], ai_key_reference: ['UPDATE'], ai_region_restricted: ['UPDATE'] },
+  },
 });

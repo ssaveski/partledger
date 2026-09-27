@@ -123,6 +123,24 @@ async function insertMembershipRows(client: pg.Client, tenantId: string, slug: s
   return userId;
 }
 
+/** A stored tenant AI key and a pending AI suggestion (U11); the key bytes are synthetic. */
+async function insertAiRows(client: pg.Client, tenantId: string): Promise<void> {
+  await client.query(
+    `insert into tenant_ai_keys (tenant_id, key_reference, provider, model, key_service_key_id, wrapped_data_key,
+                                 sealed_secret, created_at)
+     values ($1, 'ai-key/fixture', 'mistral', 'mistral-large-latest', 'local:fixture', $2, $3, now())`,
+    [tenantId, randomBytes(60), randomBytes(60)],
+  );
+  await client.query(
+    `insert into ai_suggestions (tenant_id, request_key, kind, target_type, target_entity, target_id, target_field,
+                                 base_version, suggested_value, source_hash, confidence, model, provider,
+                                 processing_region, configuration_source, created_at)
+     values ($1, 'fixtures.suggest:1', 'fixtures.value', 'entity_field', 'fixture', $2, 'value', 1, '"x"',
+             sha256('fixture'), 0.5, 'deterministic', 'local', 'local', 'platform', now())`,
+    [tenantId, randomUUID()],
+  );
+}
+
 const tenantOwned = tableAccessManifest.filter((access) => access.tenantKey !== 'none');
 
 describe('row-level security as pl_app', () => {
@@ -190,6 +208,7 @@ describe('row-level security as pl_app', () => {
       await insertStaffSession(superuser, tenant, credential.id);
       await insertJobRows(superuser, tenant);
       await insertNotificationRows(superuser, tenant);
+      await insertAiRows(superuser, tenant);
       memberOf.set(tenant, await insertMembershipRows(superuser, tenant, slug));
     }
   });

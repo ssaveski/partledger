@@ -1,6 +1,10 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import type { CatalogExpectations } from '@partledger/db';
 
+import { AiModule } from './ai/ai.module';
+import type { EgressNetwork } from './ai/egress-allowlist';
+import type { LocalResponder } from './ai/local-model';
+import type { SuggestionTargets } from './ai/suggestion-targets';
 import { AuthModule } from './auth/auth.module';
 import type { IdentityAdministration } from './auth/identity-administration';
 import type { IdentityProvider } from './auth/identity-provider';
@@ -12,6 +16,8 @@ import { DatabaseModule } from './db/db.module';
 import { HealthController } from './health/health.controller';
 import { productionJobs } from './jobs/job-registry';
 import { JobsModule } from './jobs/job-runner.module';
+import type { KeyService } from './keys/key-service.port';
+import { KeysModule } from './keys/keys.module';
 import type { ModuleJobs } from './jobs/job.types';
 import type { EmailPort } from './notifications/email.port';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -36,6 +42,12 @@ export interface AppOverrides {
   readonly catalogExpectations?: CatalogExpectations;
   readonly emailPort?: EmailPort;
   readonly recipientDirectory?: RecipientDirectory;
+  readonly keyService?: KeyService;
+  /** Replaces the network AI calls use, so no call ever leaves the process. */
+  readonly aiNetwork?: EgressNetwork;
+  /** Scripts the local AI model's answers. */
+  readonly aiLocalResponder?: LocalResponder;
+  readonly suggestionTargets?: SuggestionTargets;
 }
 
 @Module({})
@@ -68,6 +80,15 @@ export class AppModule {
           config,
           emailPort: overrides.emailPort,
           recipientDirectory: overrides.recipientDirectory,
+        }),
+        KeysModule.register({ config, keyService: overrides.keyService }),
+        AiModule.register({
+          config,
+          clock: time,
+          network: overrides.aiNetwork,
+          localResponder: overrides.aiLocalResponder,
+          suggestionTargets: overrides.suggestionTargets,
+          catalogExpectations: overrides.catalogExpectations,
         }),
         AuthModule.register({
           config,

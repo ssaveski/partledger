@@ -14,6 +14,15 @@ const listenerPorts = ['STAFF_PORT', 'PORTAL_PORT', 'DROP_PORT', 'OPERATOR_PORT'
 
 const regions = ['ca', 'eu'] as const;
 
+const kmsSettings = [
+  'OVH_KMS_ENDPOINT',
+  'OVH_KMS_ID',
+  'OVH_KMS_ENCRYPTION_KEY_ID',
+  'OVH_KMS_SIGNING_KEY_ID',
+  'OVH_KMS_CLIENT_CERTIFICATE_FILE',
+  'OVH_KMS_CLIENT_KEY_FILE',
+] as const;
+
 const issuer = z.url({ protocol: /^https?$/ }).transform((value) => value.replace(/\/+$/, ''));
 
 /** `ca=https://ca.example,eu=https://eu.example`: each region's staff app, for the directory. */
@@ -129,6 +138,52 @@ export const envSchema = z
      * Required in production.
      */
     OPERATIONAL_ALERT_FALLBACK_EMAIL: z.email().optional(),
+    /**
+     * The key service's adapter (KTD36). `local` keeps its keys in process memory, so production
+     * refuses it and must use the region's OVHcloud KMS. Unset means `local` outside production.
+     */
+    KEY_SERVICE_ADAPTER: z.enum(['local', 'ovh_kms']).optional(),
+    /** The local adapter's key-encryption key, 32 bytes base64; unset gives each process its own. */
+    LOCAL_KEY_SERVICE_KEY: z
+      .string()
+      .regex(/^[A-Za-z0-9+/]{43}=$/, 'must be 32 bytes, base64-encoded')
+      .transform((key) => Buffer.from(key, 'base64'))
+      .optional(),
+    /** The region's OVHcloud KMS, such as `https://ca-east-bhs.okms.ovh.net`. */
+    OVH_KMS_ENDPOINT: z
+      .string()
+      .regex(/^https:\/\/[a-z0-9-]+\.okms\.ovh\.net$/, 'must be an https://<region>.okms.ovh.net origin')
+      .optional(),
+    OVH_KMS_ID: z.uuid().optional(),
+    /** The symmetric service key that wraps data keys. */
+    OVH_KMS_ENCRYPTION_KEY_ID: z.uuid().optional(),
+    /** The ECDSA P-256 service key that signs chain checkpoints (U21). */
+    OVH_KMS_SIGNING_KEY_ID: z.uuid().optional(),
+    /** Files holding the KMS domain's mutual-TLS client certificate and key, from the secret store. */
+    OVH_KMS_CLIENT_CERTIFICATE_FILE: z.string().min(1).optional(),
+    OVH_KMS_CLIENT_KEY_FILE: z.string().min(1).optional(),
+    /**
+     * The AI worker's connection (KTD17, R31): `pl_ai_worker`, which can only insert suggestions
+     * and append their audit entries. Unset, no AI suggestion can be stored; production requires it.
+     */
+    AI_WORKER_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }).optional(),
+    AI_WORKER_DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(20).default(2),
+    /**
+     * The platform default AI provider (R30, KTD25). `none` switches AI off; `local` is a
+     * deterministic development adapter that sends nothing, so production refuses it. Unset
+     * means `local` outside production.
+     */
+    AI_PLATFORM_PROVIDER: z.enum(['none', 'local', 'anthropic', 'openai', 'azure_openai', 'mistral']).optional(),
+    /** The platform model or Azure deployment, lowercase, such as `claude-sonnet-4-5`. */
+    AI_PLATFORM_MODEL: z.string().min(1).max(100).optional(),
+    /** The platform provider's API key, from the secret store. */
+    AI_PLATFORM_API_KEY: z.string().min(16).max(512).optional(),
+    /** Azure OpenAI only: the resource name, never a URL. */
+    AI_PLATFORM_AZURE_RESOURCE_NAME: z.string().min(1).max(64).optional(),
+    /** OpenAI: `us` or `eu`, its data-residency endpoint. Azure OpenAI: the resource's Azure region. */
+    AI_PLATFORM_ENDPOINT_REGION: z.string().min(1).max(40).optional(),
+    /** How long one AI call may take before it is abandoned. */
+    AI_CALL_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(600).default(120),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -140,6 +195,32 @@ export const envSchema = z
     }
     if (config.DIRECTORY_REGION_URLS[config.CELL_REGION] === undefined) {
       context.addIssue({ code: 'custom', path: ['DIRECTORY_REGION_URLS'], message: 'must name CELL_REGION' });
+    }
+    if (config.KEY_SERVICE_ADAPTER === 'ovh_kms') {
+      for (const name of kmsSettings) {
+        if (config[name] === undefined) {
+          context.addIssue({ code: 'custom', path: [name], message: 'is required by the ovh_kms key service adapter' });
+        }
+      }
+    }
+    const aiProvider = config.AI_PLATFORM_PROVIDER;
+    if (aiProvider !== undefined && aiProvider !== 'none' && aiProvider !== 'local') {
+      const required: (keyof typeof config)[] = ['AI_PLATFORM_MODEL', 'AI_PLATFORM_API_KEY'];
+      if (aiProvider === 'azure_openai') {
+        required.push('AI_PLATFORM_AZURE_RESOURCE_NAME');
+      }
+      if (aiProvider === 'openai' || aiProvider === 'azure_openai') {
+        required.push('AI_PLATFORM_ENDPOINT_REGION');
+      }
+      for (const name of required) {
+        if (config[name] === undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: [name],
+            message: `is required by AI_PLATFORM_PROVIDER=${aiProvider}`,
+          });
+        }
+      }
     }
     if (config.NODE_ENV === 'production') {
       for (const name of [
@@ -168,6 +249,23 @@ export const envSchema = z
       }
       if (Object.values(config.DIRECTORY_REGION_URLS).some((url) => !url.startsWith('https://'))) {
         context.addIssue({ code: 'custom', path: ['DIRECTORY_REGION_URLS'], message: 'must use https in production' });
+      }
+      if (config.KEY_SERVICE_ADAPTER !== 'ovh_kms') {
+        context.addIssue({
+          code: 'custom',
+          path: ['KEY_SERVICE_ADAPTER'],
+          message: 'must be ovh_kms in production; local keeps keys in memory',
+        });
+      }
+      if (config.AI_PLATFORM_PROVIDER === undefined || config.AI_PLATFORM_PROVIDER === 'local') {
+        context.addIssue({
+          code: 'custom',
+          path: ['AI_PLATFORM_PROVIDER'],
+          message: 'must name a provider, or none, in production; local is a development adapter',
+        });
+      }
+      if (config.AI_WORKER_DATABASE_URL === undefined) {
+        context.addIssue({ code: 'custom', path: ['AI_WORKER_DATABASE_URL'], message: 'is required in production' });
       }
     }
   });
