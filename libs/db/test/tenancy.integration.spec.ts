@@ -38,7 +38,7 @@ async function inTenant<T>(
   }
 }
 
-async function insertMember(client: pg.Client, tenantId: string, userId = randomUUID()): Promise<string> {
+async function insertMember(client: pg.Client, tenantId: string, userId: string = randomUUID()): Promise<string> {
   await client.query(
     `insert into memberships (tenant_id, user_id, email, display_name, invited_at)
      values ($1, $2, $3, 'Synthetic Member', now())`,
@@ -161,7 +161,8 @@ describe('tenants, memberships and the directory in the database', () => {
     const granted = await inTenant(app, tenantA, () =>
       errorOf(
         app.query(
-          `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, 'buyer', now())`,
+          `insert into role_assignments (tenant_id, membership_id, role, granted_at)
+           values ($1, (select id from memberships where user_id = $2 order by invited_at desc limit 1), 'buyer', now())`,
           [tenantA, userId],
         ),
       ),
@@ -169,11 +170,31 @@ describe('tenants, memberships and the directory in the database', () => {
     expect(granted?.message).toContain('pl.tenants.member_removed');
   });
 
+  it('a removed member can hold a new membership beside the old one, which keeps its removal', async () => {
+    const userId = await insertMember(superuser, tenantA);
+    const duplicate = await errorOf(insertMember(superuser, tenantA, userId));
+    expect(duplicate?.code).toBe('23505');
+    await superuser.query(`update memberships set removed_at = now() where user_id = $1`, [userId]);
+    expect(await errorOf(insertMember(superuser, tenantA, userId))).toBeUndefined();
+    const rows = z
+      .array(z.object({ removed: z.boolean() }))
+      .parse(
+        (
+          await superuser.query(
+            'select removed_at is not null as removed from memberships where user_id = $1 order by invited_at, removed_at nulls last',
+            [userId],
+          )
+        ).rows,
+      );
+    expect(rows.map((row) => row.removed).sort()).toEqual([false, true]);
+  });
+
   it("a role assignment for another tenant's member fails its composite foreign key", async () => {
     const memberOfB = await insertMember(superuser, tenantB);
     const failure = await errorOf(
       superuser.query(
-        `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, 'approver', now())`,
+        `insert into role_assignments (tenant_id, membership_id, role, granted_at)
+           values ($1, (select id from memberships where user_id = $2 order by invited_at desc limit 1), 'approver', now())`,
         [tenantA, memberOfB],
       ),
     );

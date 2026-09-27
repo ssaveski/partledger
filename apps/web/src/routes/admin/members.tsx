@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  currentMemberQuery,
   grantRoleCommand,
   inviteMemberCommand,
   listMembersQuery,
@@ -9,7 +10,7 @@ import {
   type Member,
   type TenantRole,
 } from '@partledger/contracts';
-import { failureMessageKey, type ClientFailure } from '@partledger/contracts/client';
+import type { ClientFailure } from '@partledger/contracts/client';
 import {
   Badge,
   Button,
@@ -36,9 +37,16 @@ import type { z } from 'zod';
 import { queryKeyOf, useApiClient, useApiQuery } from '../../api/api-client';
 import { formatDate } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
-import { useSession } from '../../shell/session-provider';
+import { sessionQueryKey, useSession } from '../../shell/session-provider';
 import { roleMessageKey } from '../../shell/session-view';
-import { inviteFormSchema, roleChanges, type InviteForm } from './member-changes';
+import {
+  createIdempotencyKeys,
+  inviteFormSchema,
+  refusalMessageKey,
+  roleChanges,
+  type IdempotencyKeys,
+  type InviteForm,
+} from './member-changes';
 
 type Notice = { readonly key: string; readonly name: string } | null;
 
@@ -64,13 +72,32 @@ function MembersPage({ members }: { members: readonly Member[] }) {
   const [inviting, setInviting] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [keys] = useState(createIdempotencyKeys);
   const inviteButton = useRef<HTMLButtonElement>(null);
   const actionButtons = useRef(new Map<string, HTMLElement>());
+  const removalOpener = useRef<HTMLElement | null>(null);
+  const removalSucceeded = useRef(false);
   const tenant = signedIn.tenant.displayName;
 
-  const refresh = async (next: Notice) => {
+  /** Reads the list again; a change to the signed-in member also re-reads their own roles and session. */
+  const refresh = async (next: Notice, target: string) => {
     setNotice(next);
-    await queryClient.invalidateQueries({ queryKey: queryKeyOf(listMembersQuery, {}) });
+    const reads = [queryClient.invalidateQueries({ queryKey: queryKeyOf(listMembersQuery, {}) })];
+    if (target === signedIn.member.userId) {
+      reads.push(
+        queryClient.invalidateQueries({ queryKey: queryKeyOf(currentMemberQuery, {}) }),
+        queryClient.invalidateQueries({ queryKey: sessionQueryKey }),
+      );
+    }
+    await Promise.all(reads);
+  };
+
+  const register = (buttons: Map<string, HTMLElement>, userId: string) => (element: HTMLElement | null) => {
+    if (element === null) {
+      buttons.delete(userId);
+    } else {
+      buttons.set(userId, element);
+    }
   };
 
   const focusBack = (userId: string | undefined): RefObject<HTMLElement | null> => ({
@@ -138,13 +165,7 @@ function MembersPage({ members }: { members: readonly Member[] }) {
                     <Button
                       variant="secondary"
                       size="sm"
-                      ref={(element) => {
-                        if (element === null) {
-                          actionButtons.current.delete(member.userId);
-                        } else {
-                          actionButtons.current.set(member.userId, element);
-                        }
-                      }}
+                      ref={register(actionButtons.current, member.userId)}
                       aria-label={translate('pl.tenants.members.changeRolesFor', { name: member.displayName })}
                       onClick={() => {
                         setEditing(member);
@@ -156,7 +177,9 @@ function MembersPage({ members }: { members: readonly Member[] }) {
                       variant="ghost"
                       size="sm"
                       aria-label={translate('pl.tenants.members.removeFor', { name: member.displayName })}
-                      onClick={() => {
+                      onClick={(event) => {
+                        removalOpener.current = event.currentTarget;
+                        removalSucceeded.current = false;
                         setRemoving(member);
                       }}
                     >
@@ -182,9 +205,10 @@ function MembersPage({ members }: { members: readonly Member[] }) {
         onClose={() => {
           setInviting(false);
         }}
-        onInvited={(name) => {
+        keys={keys}
+        onInvited={(name, userId) => {
           setInviting(false);
-          void refresh({ key: 'pl.tenants.members.invited', name });
+          void refresh({ key: 'pl.tenants.members.invited', name }, userId);
         }}
       />
       <RolesDialog
@@ -193,20 +217,28 @@ function MembersPage({ members }: { members: readonly Member[] }) {
         onClose={() => {
           setEditing(null);
         }}
+        keys={keys}
         onSaved={(member) => {
           setEditing(null);
-          void refresh({ key: 'pl.tenants.members.rolesSaved', name: member.displayName });
+          void refresh({ key: 'pl.tenants.members.rolesSaved', name: member.displayName }, member.userId);
+        }}
+        onRefused={(member) => {
+          // Changes made before the refusal stand, so the list shows them.
+          void refresh(null, member.userId);
         }}
       />
       <RemoveDialog
         member={removing}
-        returnFocusTo={inviteButton}
+        keys={keys}
+        // Back to the Remove button that opened it; once that member is gone, to Invite.
+        returnFocus={() => (removalSucceeded.current ? inviteButton.current : removalOpener.current)}
         onClose={() => {
           setRemoving(null);
         }}
         onRemoved={(member) => {
+          removalSucceeded.current = true;
           setRemoving(null);
-          void refresh({ key: 'pl.tenants.members.removed', name: member.displayName });
+          void refresh({ key: 'pl.tenants.members.removed', name: member.displayName }, member.userId);
         }}
       />
     </>
@@ -219,34 +251,26 @@ function Refusal({ failure }: { failure: ClientFailure | null }) {
   if (failure === null) {
     return null;
   }
+  const key = refusalMessageKey(failure);
   return (
     <p role="alert" className="text-sm font-medium text-danger">
-      {translate(failureMessageKey(failure))}
+      {translate(key)}
     </p>
   );
-}
-
-/** One idempotency key per attempt: a retry after a failure that may have landed reuses it (R33). */
-function useIdempotencyKey(): [string, () => void] {
-  const [key, setKey] = useState(() => crypto.randomUUID());
-  return [
-    key,
-    () => {
-      setKey(crypto.randomUUID());
-    },
-  ];
 }
 
 function InviteDialog({
   open,
   returnFocusTo,
+  keys,
   onClose,
   onInvited,
 }: {
   open: boolean;
   returnFocusTo: RefObject<HTMLElement | null>;
+  keys: IdempotencyKeys;
   onClose: () => void;
-  onInvited: (name: string) => void;
+  onInvited: (name: string, userId: string) => void;
 }) {
   const translate = useTranslate();
   return (
@@ -261,16 +285,21 @@ function InviteDialog({
       <DialogContent finalFocus={() => returnFocusTo.current ?? true}>
         <DialogTitle>{translate('pl.tenants.members.inviteDialog.title')}</DialogTitle>
         <DialogDescription>{translate('pl.tenants.members.inviteDialog.description')}</DialogDescription>
-        {open ? <InviteMemberForm onInvited={onInvited} /> : null}
+        {open ? <InviteMemberForm keys={keys} onInvited={onInvited} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function InviteMemberForm({ onInvited }: { onInvited: (name: string) => void }) {
+function InviteMemberForm({
+  keys,
+  onInvited,
+}: {
+  keys: IdempotencyKeys;
+  onInvited: (name: string, userId: string) => void;
+}) {
   const translate = useTranslate();
   const client = useApiClient();
-  const [idempotencyKey, renewKey] = useIdempotencyKey();
   const [failure, setFailure] = useState<ClientFailure | null>(null);
   const form = useForm<z.input<typeof inviteFormSchema>, unknown, InviteForm>({
     defaultValues: { email: '', displayName: '' },
@@ -285,10 +314,11 @@ function InviteMemberForm({ onInvited }: { onInvited: (name: string) => void }) 
       onSubmit={(event) => {
         void form.handleSubmit(async (invitation) => {
           setFailure(null);
-          const result = await client.command(inviteMemberCommand, invitation, idempotencyKey);
+          const change = `invite:${invitation.email}`;
+          const result = await client.command(inviteMemberCommand, invitation, keys.keyFor(change));
           if (result.ok) {
-            renewKey();
-            onInvited(invitation.displayName);
+            keys.settle(change);
+            onInvited(invitation.displayName, result.value.userId);
           } else {
             setFailure(result.failure);
           }
@@ -348,13 +378,17 @@ function TextField({
 function RolesDialog({
   member,
   returnFocusTo,
+  keys,
   onClose,
   onSaved,
+  onRefused,
 }: {
   member: Member | null;
   returnFocusTo: RefObject<HTMLElement | null>;
+  keys: IdempotencyKeys;
   onClose: () => void;
   onSaved: (member: Member) => void;
+  onRefused: (member: Member) => void;
 }) {
   const translate = useTranslate();
   return (
@@ -371,7 +405,7 @@ function RolesDialog({
           <>
             <DialogTitle>{translate('pl.tenants.members.rolesDialog.title', { name: member.displayName })}</DialogTitle>
             <DialogDescription>{translate('pl.tenants.members.rolesDialog.description')}</DialogDescription>
-            <RolesForm member={member} onSaved={onSaved} />
+            <RolesForm member={member} keys={keys} onSaved={onSaved} onRefused={onRefused} />
           </>
         )}
       </DialogContent>
@@ -379,7 +413,17 @@ function RolesDialog({
   );
 }
 
-function RolesForm({ member, onSaved }: { member: Member; onSaved: (member: Member) => void }) {
+function RolesForm({
+  member,
+  keys,
+  onSaved,
+  onRefused,
+}: {
+  member: Member;
+  keys: IdempotencyKeys;
+  onSaved: (member: Member) => void;
+  onRefused: (member: Member) => void;
+}) {
   const translate = useTranslate();
   const client = useApiClient();
   const legend = useId();
@@ -387,17 +431,6 @@ function RolesForm({ member, onSaved }: { member: Member; onSaved: (member: Memb
   const [failure, setFailure] = useState<ClientFailure | null>(null);
   const [unchanged, setUnchanged] = useState(false);
   const [working, setWorking] = useState(false);
-  // One key per role change, kept across retries of this dialog.
-  const [keys] = useState(() => new Map<string, string>());
-  const keyFor = (change: string) => {
-    const existing = keys.get(change);
-    if (existing !== undefined) {
-      return existing;
-    }
-    const created = crypto.randomUUID();
-    keys.set(change, created);
-    return created;
-  };
   return (
     <form
       noValidate
@@ -414,16 +447,15 @@ function RolesForm({ member, onSaved }: { member: Member; onSaved: (member: Memb
         void (async () => {
           for (const { role, change } of changes) {
             const declaration = change === 'grant' ? grantRoleCommand : revokeRoleCommand;
-            const result = await client.command(
-              declaration,
-              { userId: member.userId, role },
-              keyFor(`${change}:${role}`),
-            );
+            const scope = `${change}:${member.userId}:${role}`;
+            const result = await client.command(declaration, { userId: member.userId, role }, keys.keyFor(scope));
             if (!result.ok) {
               setWorking(false);
               setFailure(result.failure);
+              onRefused(member);
               return;
             }
+            keys.settle(scope);
           }
           setWorking(false);
           onSaved(member);
@@ -500,18 +532,19 @@ function RoleOption({
 
 function RemoveDialog({
   member,
-  returnFocusTo,
+  keys,
+  returnFocus,
   onClose,
   onRemoved,
 }: {
   member: Member | null;
-  returnFocusTo: RefObject<HTMLElement | null>;
+  keys: IdempotencyKeys;
+  returnFocus: () => HTMLElement | null;
   onClose: () => void;
   onRemoved: (member: Member) => void;
 }) {
   const translate = useTranslate();
   const client = useApiClient();
-  const [idempotencyKey, renewKey] = useIdempotencyKey();
   const [failure, setFailure] = useState<ClientFailure | null>(null);
   const [working, setWorking] = useState(false);
   return (
@@ -524,7 +557,7 @@ function RemoveDialog({
         }
       }}
     >
-      <DialogContent finalFocus={() => returnFocusTo.current ?? true}>
+      <DialogContent finalFocus={() => returnFocus() ?? true}>
         {member === null ? null : (
           <>
             <DialogTitle>
@@ -540,15 +573,18 @@ function RemoveDialog({
                 onClick={() => {
                   setWorking(true);
                   setFailure(null);
-                  void client.command(removeMemberCommand, { userId: member.userId }, idempotencyKey).then((result) => {
-                    setWorking(false);
-                    if (result.ok) {
-                      renewKey();
-                      onRemoved(member);
-                    } else {
-                      setFailure(result.failure);
-                    }
-                  });
+                  const change = `remove:${member.userId}`;
+                  void client
+                    .command(removeMemberCommand, { userId: member.userId }, keys.keyFor(change))
+                    .then((result) => {
+                      setWorking(false);
+                      if (result.ok) {
+                        keys.settle(change);
+                        onRemoved(member);
+                      } else {
+                        setFailure(result.failure);
+                      }
+                    });
                 }}
               >
                 {translate(working ? 'pl.tenants.members.working' : 'pl.tenants.members.removeDialog.confirm')}

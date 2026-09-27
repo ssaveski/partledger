@@ -35,6 +35,8 @@ export const catalogViolationCodes = [
   'missing_tenant_policy',
   'policy_not_tenant_scoped',
   'global_policy_mismatch',
+  'global_table_not_allowed',
+  'global_table_has_tenant_column',
   'missing_job_runner_policy',
   'job_runner_policy_mismatch',
   'missing_backup_policy',
@@ -96,6 +98,12 @@ const expectedFunctionGrants = new Map<string, readonly string[]>([[allowedDefin
  * and must find a credential before any tenant is known. The other is the job runner's on
  * pg-boss's job table (KTD16), which fetches every tenant's jobs; `checkJobQueue` pins it.
  */
+/**
+ * Tables that hold no tenant's data and are read before a tenant is known. Only the directory
+ * is one; any other table declared global is refused, so tenant data cannot escape row-level
+ * security by being declared global.
+ */
+const allowedGlobalTables = new Set(['directory_entries']);
 const resolverReadAll = { table: 'credentials', role: credentialResolverRole };
 const pinnedSearchPath = 'search_path=pg_catalog, pg_temp';
 const currentTenant = `(NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid`;
@@ -437,6 +445,12 @@ export async function checkCatalog(
     }
 
     if (access.tenantKey === 'none') {
+      if (!allowedGlobalTables.has(access.table)) {
+        report('global_table_not_allowed', access.table);
+      }
+      if (tableColumns.some((column) => column.name === 'tenant_id')) {
+        report('global_table_has_tenant_column', access.table);
+      }
       checkGlobalPolicies(access, policies, report);
     } else {
       checkPolicies(access, access.tenantKey, policies, report);

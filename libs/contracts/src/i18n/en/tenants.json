@@ -67,5 +67,7 @@
   "pl.tenants.members.removeDialog.confirm": "Remove member",
   "pl.tenants.members.removeDialog.cancel": "Keep member",
   "pl.tenants.members.removed": "{name} was removed.",
-  "pl.tenants.members.working": "Saving…"
+  "pl.tenants.members.working": "Saving…",
+  "pl.tenants.session.screen": "Your session",
+  "pl.tenants.members.stepUpUnavailable": "Changing a role needs you to confirm your identity again, and confirming it is not available yet. The role was not changed."
 }

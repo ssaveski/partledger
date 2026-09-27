@@ -10,7 +10,7 @@ import type { z } from 'zod';
 import { appendAuditEntry } from '../audit/audit-writer';
 import { auditId, auditToken } from '../audit/audit-payload';
 import { commitValue } from '../audit/commitments';
-import { TenantTransactions } from '../db/tenant-transaction';
+import { TenantTransactions, tenantIdSchema } from '../db/tenant-transaction';
 import { CommandJobs, JobQueue } from '../jobs/enqueue';
 import { enqueueTenantEnrolment } from '../jobs/tenant-enrollment.job';
 import type { PlatformOperatorPrincipal } from '../principals/principal';
@@ -67,6 +67,10 @@ export class TenantProvisioning {
     if (await this.slugTaken(tenantId, request.slug)) {
       return refuse('Conflict', 'alreadyExists');
     }
+    const leftover = await this.clearLeftoverOrganization(request.slug);
+    if (!leftover.ok) {
+      return leftover;
+    }
     const organization = await this.organizations.createOrganization({
       alias: request.slug,
       name: request.displayName,
@@ -85,16 +89,52 @@ export class TenantProvisioning {
         ? refuse('Conflict', 'alreadyExists')
         : refuse('Unavailable', 'dependencyUnavailable');
     }
-    const firstAdminUserId = admin.value;
+    const firstAdminUserId = admin.value.userId;
+    const adminCreated = admin.value.created;
     try {
       const enrolmentJobId = await this.record(request, operator, { tenantId, organizationId, firstAdminUserId });
       return success({ tenantId, organizationId, firstAdminUserId, enrolmentJobId });
     } catch (error) {
       this.logger.warn('A tenant was not provisioned; its organization and first administrator are removed again');
-      await this.organizations.deleteUser(firstAdminUserId);
+      if (adminCreated) {
+        await this.organizations.deleteUser(firstAdminUserId);
+      }
       await this.organizations.deleteOrganization(organizationId);
       throw error;
     }
+  }
+
+  /**
+   * An organization with this alias whose tenant never committed is what an interrupted
+   * provisioning leaves behind (the process stopped between Keycloak and the commit). It is
+   * removed with its first administrator's account, so the slug can be provisioned again; an
+   * organization whose tenant exists is a conflict.
+   */
+  private async clearLeftoverOrganization(slug: string): Promise<Result<void, ProvisioningFailure>> {
+    const found = await this.organizations.findOrganization(slug);
+    if (!found.ok) {
+      return refuse('Unavailable', 'dependencyUnavailable');
+    }
+    if (found.value === null) {
+      return success(undefined);
+    }
+    const { id, tenantId } = found.value;
+    const parsedTenant = tenantIdSchema.safeParse(tenantId);
+    if (parsedTenant.success && (await this.tenantExists(parsedTenant.data))) {
+      return refuse('Conflict', 'alreadyExists');
+    }
+    this.logger.warn(
+      'An organization left by an interrupted provisioning is removed before the slug is provisioned again',
+    );
+    const removed = await this.organizations.deleteOrganizationAndMembers(id);
+    return removed.ok ? success(undefined) : refuse('Unavailable', 'dependencyUnavailable');
+  }
+
+  private tenantExists(tenantId: string): Promise<boolean> {
+    return this.transactions.run(
+      tenantId,
+      async (database) => (await membershipStore.tenantOf(database, tenantId)) !== undefined,
+    );
   }
 
   /** The directory is global, so it can tell whether the slug is taken before anything is created. */
@@ -139,7 +179,7 @@ export class TenantProvisioning {
         createdAt: now,
       });
       await database.insert(directoryEntries).values({ slug: request.slug, region: request.region });
-      await membershipStore.insertMember(database, {
+      const membershipId = await membershipStore.insertMember(database, {
         tenantId,
         userId: firstAdminUserId,
         email: request.firstAdmin.email,
@@ -148,7 +188,7 @@ export class TenantProvisioning {
       });
       await membershipStore.grantRole(database, {
         tenantId,
-        userId: firstAdminUserId,
+        membershipId,
         role: 'tenant_admin',
         grantedAt: now,
       });

@@ -5,11 +5,13 @@ import { defineTableAccess } from '../table-access.ts';
 import { tenantRegions } from './tenants.ts';
 
 /**
- * The global directory (R1): a tenant's slug and the region it lives in, and nothing else, so
+ * The directory (R1): a tenant's slug and the region it lives in, and nothing else, so
  * the staff app can send a person to their region before anyone is signed in. It is a global
  * table: it holds no tenant's data and is read before any tenant is known. A tenant is added
  * in its own provisioning transaction, and the insert policy admits only the slug and region
- * of the tenant that transaction can see.
+ * of the tenant that transaction can see. In Release 1 it is cell-local: it lives in this
+ * region's database, so a slug is unique per cell; a directory shared by every cell comes before
+ * a second region goes live.
  */
 export const directoryEntries = pgTable(
   'directory_entries',

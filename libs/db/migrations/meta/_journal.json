@@ -127,6 +127,20 @@
       "when": 1790487736213,
       "tag": "0017_staff_session_step_up_security",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790493413838,
+      "tag": "0018_tenants_and_memberships",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790493414609,
+      "tag": "0019_tenants_security",
+      "breakpoints": true
     }
   ]
 }

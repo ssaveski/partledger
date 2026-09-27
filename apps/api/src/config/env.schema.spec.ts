@@ -218,6 +218,7 @@ describe('API configuration', () => {
       STAFF_APP_ORIGIN: 'https://app.example',
       PORTAL_APP_ORIGIN: 'https://suppliers.example',
       KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+      OPERATOR_KEYCLOAK_ISSUER: 'https://operators.example/realms/partledger-operators',
       OPERATIONAL_ALERT_FALLBACK_EMAIL: 'operator@platform.example',
     };
     expect(fieldsRefusedIn({ ...production, EMAIL_ADAPTER: 'local' })).toEqual(['EMAIL_ADAPTER']);

@@ -8,6 +8,7 @@ import type { AppDatabase } from '../db/tenant-transaction';
 const { memberships, roleAssignments, staffSessions, tenants } = schema;
 
 export interface StoredMember {
+  readonly membershipId: string;
   readonly userId: string;
   readonly email: string;
   readonly displayName: string;
@@ -22,9 +23,17 @@ function inRoleOrder(roles: readonly string[]): TenantRole[] {
   return tenantRoles.filter((role) => held.has(role));
 }
 
+function lockKey(tenantId: string) {
+  return sql`pg_catalog.hashtextextended(${`partledger/members:${tenantId}`}, 0)`;
+}
+
+const current = (tenantId: string, userId: string) =>
+  and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), isNull(memberships.removedAt));
+
 /**
  * The tenant's membership rows (R3, KTD20). Every call runs inside the caller's tenant
- * transaction, so row-level security confines it to that tenant.
+ * transaction, so row-level security confines it to that tenant. Roles belong to a person's
+ * current membership; a removed membership keeps none.
  */
 export const membershipStore = {
   /**
@@ -32,9 +41,15 @@ export const membershipStore = {
    * each remove the other and leave the tenant with none.
    */
   async lockTenantMembers(database: AppDatabase, tenantId: string): Promise<void> {
-    await database.execute(
-      sql`select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`partledger/members:${tenantId}`}, 0))`,
-    );
+    await database.execute(sql`select pg_catalog.pg_advisory_xact_lock(${lockKey(tenantId)})`);
+  },
+
+  /**
+   * Waits for a membership change in flight, so a sign-in never reads a membership that a
+   * concurrent removal is ending and then starts a session the removal cannot see.
+   */
+  async waitForMemberChanges(database: AppDatabase, tenantId: string): Promise<void> {
+    await database.execute(sql`select pg_catalog.pg_advisory_xact_lock_shared(${lockKey(tenantId)})`);
   },
 
   async activeRoles(database: AppDatabase, tenantId: string, userId: string): Promise<TenantRole[]> {
@@ -43,24 +58,23 @@ export const membershipStore = {
       .from(roleAssignments)
       .innerJoin(
         memberships,
-        and(eq(memberships.tenantId, roleAssignments.tenantId), eq(memberships.userId, roleAssignments.userId)),
+        and(eq(memberships.tenantId, roleAssignments.tenantId), eq(memberships.id, roleAssignments.membershipId)),
       )
-      .where(
-        and(eq(roleAssignments.tenantId, tenantId), eq(roleAssignments.userId, userId), isNull(memberships.removedAt)),
-      );
+      .where(current(tenantId, userId));
     return inRoleOrder(rows.map((row) => row.role));
   },
 
   async findActive(database: AppDatabase, tenantId: string, userId: string): Promise<StoredMember | undefined> {
     const [row] = await database
       .select({
+        membershipId: memberships.id,
         userId: memberships.userId,
         email: memberships.email,
         displayName: memberships.displayName,
         invitedAt: memberships.invitedAt,
       })
       .from(memberships)
-      .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), isNull(memberships.removedAt)));
+      .where(current(tenantId, userId));
     if (row === undefined) {
       return undefined;
     }
@@ -78,6 +92,7 @@ export const membershipStore = {
   async listActive(database: AppDatabase, tenantId: string): Promise<StoredMember[]> {
     const rows = await database
       .select({
+        membershipId: memberships.id,
         userId: memberships.userId,
         email: memberships.email,
         displayName: memberships.displayName,
@@ -87,21 +102,21 @@ export const membershipStore = {
       .from(memberships)
       .leftJoin(
         roleAssignments,
-        and(eq(roleAssignments.tenantId, memberships.tenantId), eq(roleAssignments.userId, memberships.userId)),
+        and(eq(roleAssignments.tenantId, memberships.tenantId), eq(roleAssignments.membershipId, memberships.id)),
       )
       .where(and(eq(memberships.tenantId, tenantId), isNull(memberships.removedAt)))
-      .groupBy(memberships.tenantId, memberships.userId)
+      .groupBy(memberships.tenantId, memberships.id)
       .orderBy(asc(memberships.invitedAt), asc(memberships.userId));
     return rows.map((row) => ({ ...row, roles: inRoleOrder(z.array(z.string()).parse(row.roles)) }));
   },
 
   async countActiveAdmins(database: AppDatabase, tenantId: string): Promise<number> {
     const rows = await database
-      .select({ userId: roleAssignments.userId })
+      .select({ membershipId: roleAssignments.membershipId })
       .from(roleAssignments)
       .innerJoin(
         memberships,
-        and(eq(memberships.tenantId, roleAssignments.tenantId), eq(memberships.userId, roleAssignments.userId)),
+        and(eq(memberships.tenantId, roleAssignments.tenantId), eq(memberships.id, roleAssignments.membershipId)),
       )
       .where(
         and(
@@ -113,17 +128,22 @@ export const membershipStore = {
     return rows.length;
   },
 
+  /** Records a new current membership; returns its id. */
   async insertMember(
     database: AppDatabase,
     member: { tenantId: string; userId: string; email: string; displayName: string; invitedAt: Date },
-  ): Promise<void> {
-    await database.insert(memberships).values(member);
+  ): Promise<string> {
+    const [row] = await database.insert(memberships).values(member).returning({ id: memberships.id });
+    if (row === undefined) {
+      throw new Error('The membership was not inserted');
+    }
+    return row.id;
   },
 
-  /** `false` when the member already held the role. */
+  /** `false` when the membership already held the role. */
   async grantRole(
     database: AppDatabase,
-    grant: { tenantId: string; userId: string; role: TenantRole; grantedAt: Date },
+    grant: { tenantId: string; membershipId: string; role: TenantRole; grantedAt: Date },
   ): Promise<boolean> {
     const inserted = await database
       .insert(roleAssignments)
@@ -133,31 +153,39 @@ export const membershipStore = {
     return inserted.length === 1;
   },
 
-  /** `false` when the member did not hold the role. */
-  async revokeRole(database: AppDatabase, tenantId: string, userId: string, role: TenantRole): Promise<boolean> {
+  /** `false` when the membership did not hold the role. */
+  async revokeRole(database: AppDatabase, tenantId: string, membershipId: string, role: TenantRole): Promise<boolean> {
     const deleted = await database
       .delete(roleAssignments)
       .where(
-        and(eq(roleAssignments.tenantId, tenantId), eq(roleAssignments.userId, userId), eq(roleAssignments.role, role)),
+        and(
+          eq(roleAssignments.tenantId, tenantId),
+          eq(roleAssignments.membershipId, membershipId),
+          eq(roleAssignments.role, role),
+        ),
       )
       .returning({ role: roleAssignments.role });
     return deleted.length === 1;
   },
 
   /** Revokes every role, records the removal and ends the member's sessions; returns the sessions ended. */
-  async removeMember(database: AppDatabase, tenantId: string, userId: string, now: Date): Promise<number> {
+  async removeMember(database: AppDatabase, member: StoredMember & { tenantId: string }, now: Date): Promise<number> {
     await database
       .delete(roleAssignments)
-      .where(and(eq(roleAssignments.tenantId, tenantId), eq(roleAssignments.userId, userId)));
+      .where(and(eq(roleAssignments.tenantId, member.tenantId), eq(roleAssignments.membershipId, member.membershipId)));
     await database
       .update(memberships)
       .set({ removedAt: now })
-      .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), isNull(memberships.removedAt)));
+      .where(and(eq(memberships.tenantId, member.tenantId), eq(memberships.id, member.membershipId)));
     const ended = await database
       .update(staffSessions)
       .set({ endedAt: now, endReason: 'membership_removed' })
       .where(
-        and(eq(staffSessions.tenantId, tenantId), eq(staffSessions.subjectId, userId), isNull(staffSessions.endedAt)),
+        and(
+          eq(staffSessions.tenantId, member.tenantId),
+          eq(staffSessions.subjectId, member.userId),
+          isNull(staffSessions.endedAt),
+        ),
       )
       .returning({ credentialId: staffSessions.credentialId });
     return ended.length;

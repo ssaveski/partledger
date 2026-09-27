@@ -42,6 +42,7 @@ AS $$
 BEGIN
   IF OLD.removed_at IS NOT NULL
      OR NEW.removed_at IS NULL
+     OR NEW.id IS DISTINCT FROM OLD.id
      OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
      OR NEW.user_id IS DISTINCT FROM OLD.user_id
      OR NEW.email IS DISTINCT FROM OLD.email
@@ -83,7 +84,8 @@ CREATE TRIGGER memberships_refuse_referenced_delete BEFORE DELETE ON public.memb
 ALTER TABLE public.memberships ENABLE ALWAYS TRIGGER memberships_guard_change;
 ALTER TABLE public.memberships ENABLE ALWAYS TRIGGER memberships_refuse_referenced_delete;
 
--- A removed member holds no role and can be granted none.
+-- A removed membership holds no role and can be granted none; a member invited again holds
+-- roles only through their new membership.
 CREATE FUNCTION pl_migration.refuse_role_for_removed_member() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -91,7 +93,7 @@ AS $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM public.memberships membership
-     WHERE membership.tenant_id = NEW.tenant_id AND membership.user_id = NEW.user_id
+     WHERE membership.tenant_id = NEW.tenant_id AND membership.id = NEW.membership_id
        AND membership.removed_at IS NOT NULL
   ) THEN
     RAISE EXCEPTION 'pl.tenants.member_removed: a removed member cannot hold a role'

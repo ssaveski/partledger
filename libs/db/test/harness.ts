@@ -131,7 +131,8 @@ export interface SyntheticMember {
 export async function insertMember(superuser: pg.Client, member: SyntheticMember): Promise<void> {
   await superuser.query(
     `insert into memberships (tenant_id, user_id, email, display_name, invited_at)
-     values ($1, $2, $3, $4, now()) on conflict (tenant_id, user_id) do nothing`,
+     values ($1, $2, $3, $4, now())
+     on conflict (tenant_id, user_id) where removed_at is null do nothing`,
     [
       member.tenantId,
       member.userId,
@@ -139,14 +140,22 @@ export async function insertMember(superuser: pg.Client, member: SyntheticMember
       member.displayName ?? 'Synthetic Member',
     ],
   );
-  await superuser.query(`delete from role_assignments where tenant_id = $1 and user_id = $2`, [
+  const membershipId = insertedId.parse(
+    (
+      await superuser.query(`select id from memberships where tenant_id = $1 and user_id = $2 and removed_at is null`, [
+        member.tenantId,
+        member.userId,
+      ])
+    ).rows,
+  )[0].id;
+  await superuser.query(`delete from role_assignments where tenant_id = $1 and membership_id = $2`, [
     member.tenantId,
-    member.userId,
+    membershipId,
   ]);
   for (const role of member.roles) {
     await superuser.query(
-      `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, $3, now())`,
-      [member.tenantId, member.userId, role],
+      `insert into role_assignments (tenant_id, membership_id, role, granted_at) values ($1, $2, $3, now())`,
+      [member.tenantId, membershipId, role],
     );
   }
 }

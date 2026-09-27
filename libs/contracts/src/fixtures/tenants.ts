@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 
 import type { StaffSession } from '../auth';
-import { fixtureCommand, fixtureQuery, type FixtureHandler } from '../client/fixture-adapter';
+import { fixtureCommand, fixtureQuery, type FixtureHandler, type FixtureResponse } from '../client/fixture-adapter';
 import { errorCode } from '../errors';
 import { tenantRoles, type TenantRole } from '../principals';
 import {
@@ -75,7 +75,7 @@ function inRoleOrder(roles: readonly TenantRole[]): TenantRole[] {
 export interface TenantFixtures {
   readonly queries: readonly FixtureHandler[];
   readonly commands: readonly FixtureHandler[];
-  readonly session: () => StaffSession;
+  readonly session: () => StaffSession | null;
 }
 
 export function createTenantFixtures(now: () => Date = () => new Date()): TenantFixtures {
@@ -86,11 +86,24 @@ export function createTenantFixtures(now: () => Date = () => new Date()): Tenant
   const replace = (userId: string, change: (member: Member) => Member) => {
     members = members.map((member) => (member.userId === userId ? change(member) : member));
   };
+  // Like the API: a removed member's session has ended, and only a tenant administrator manages members.
+  const signedOut = () => find(fixtureSignedInUserId) === undefined;
+  const asAdministrator = <Output>(respond: () => FixtureResponse<Output>): FixtureResponse<Output> => {
+    if (signedOut()) {
+      return { kind: 'unauthenticated' };
+    }
+    return find(fixtureSignedInUserId)?.roles.includes('tenant_admin') === true
+      ? respond()
+      : { kind: 'refused', code: errorCode('Forbidden', 'notPermitted') };
+  };
 
   const queries = [
     fixtureQuery(currentMemberQuery, () => {
       const signedIn = find(fixtureSignedInUserId);
-      if (signedIn === undefined || signedIn.roles.length === 0) {
+      if (signedIn === undefined) {
+        return { kind: 'unauthenticated' };
+      }
+      if (signedIn.roles.length === 0) {
         return { kind: 'refused', code: errorCode('Forbidden', 'notPermitted') };
       }
       return {
@@ -101,64 +114,75 @@ export function createTenantFixtures(now: () => Date = () => new Date()): Tenant
         },
       };
     }),
-    fixtureQuery(listMembersQuery, () => ({ kind: 'output', output: { members } })),
+    fixtureQuery(listMembersQuery, () => asAdministrator(() => ({ kind: 'output', output: { members } }))),
   ];
 
   const commands = [
-    fixtureCommand(inviteMemberCommand, (input) => {
-      if (members.some((member) => member.email === input.email)) {
-        return { kind: 'refused', code: errorCode('Conflict', 'alreadyExists') };
-      }
-      invitations += 1;
-      const userId = fixtureId(5200 + invitations);
-      members = [
-        ...members,
-        { userId, email: input.email, displayName: input.displayName, roles: [], invitedAt: now().toISOString() },
-      ];
-      return { kind: 'output', output: { userId } };
-    }),
-    fixtureCommand(removeMemberCommand, (input) => {
-      const member = find(input.userId);
-      if (member === undefined) {
-        return { kind: 'refused', code: errorCode('NotFound', 'resource') };
-      }
-      if (member.roles.includes('tenant_admin') && admins().length === 1) {
-        return { kind: 'refused', code: errorCode('Conflict', 'lastTenantAdmin') };
-      }
-      members = members.filter((candidate) => candidate.userId !== input.userId);
-      return { kind: 'output', output: { userId: input.userId, endedSessions: 0 } };
-    }),
-    fixtureCommand(grantRoleCommand, (input) => {
-      const member = find(input.userId);
-      if (member === undefined) {
-        return { kind: 'refused', code: errorCode('NotFound', 'resource') };
-      }
-      if (member.roles.includes(input.role)) {
-        return { kind: 'refused', code: errorCode('Conflict', 'alreadyExists') };
-      }
-      replace(input.userId, (current) => ({ ...current, roles: inRoleOrder([...current.roles, input.role]) }));
-      return { kind: 'output', output: input };
-    }),
-    fixtureCommand(revokeRoleCommand, (input) => {
-      const member = find(input.userId);
-      if (member?.roles.includes(input.role) !== true) {
-        return { kind: 'refused', code: errorCode('NotFound', 'resource') };
-      }
-      if (input.role === 'tenant_admin' && admins().length === 1) {
-        return { kind: 'refused', code: errorCode('Conflict', 'lastTenantAdmin') };
-      }
-      replace(input.userId, (current) => ({
-        ...current,
-        roles: current.roles.filter((role) => role !== input.role),
-      }));
-      return { kind: 'output', output: input };
-    }),
+    fixtureCommand(inviteMemberCommand, (input) =>
+      asAdministrator(() => {
+        if (members.some((member) => member.email === input.email)) {
+          return { kind: 'refused', code: errorCode('Conflict', 'alreadyExists') };
+        }
+        invitations += 1;
+        const userId = fixtureId(5200 + invitations);
+        members = [
+          ...members,
+          { userId, email: input.email, displayName: input.displayName, roles: [], invitedAt: now().toISOString() },
+        ];
+        return { kind: 'output', output: { userId } };
+      }),
+    ),
+    fixtureCommand(removeMemberCommand, (input) =>
+      asAdministrator(() => {
+        const member = find(input.userId);
+        if (member === undefined) {
+          return { kind: 'refused', code: errorCode('NotFound', 'resource') };
+        }
+        if (member.roles.includes('tenant_admin') && admins().length === 1) {
+          return { kind: 'refused', code: errorCode('Conflict', 'lastTenantAdmin') };
+        }
+        members = members.filter((candidate) => candidate.userId !== input.userId);
+        return { kind: 'output', output: { userId: input.userId, endedSessions: 0 } };
+      }),
+    ),
+    fixtureCommand(grantRoleCommand, (input) =>
+      asAdministrator(() => {
+        const member = find(input.userId);
+        if (member === undefined) {
+          return { kind: 'refused', code: errorCode('NotFound', 'resource') };
+        }
+        if (member.roles.includes(input.role)) {
+          return { kind: 'refused', code: errorCode('Conflict', 'alreadyExists') };
+        }
+        replace(input.userId, (current) => ({ ...current, roles: inRoleOrder([...current.roles, input.role]) }));
+        return { kind: 'output', output: input };
+      }),
+    ),
+    fixtureCommand(revokeRoleCommand, (input) =>
+      asAdministrator(() => {
+        const member = find(input.userId);
+        if (member?.roles.includes(input.role) !== true) {
+          return { kind: 'refused', code: errorCode('NotFound', 'resource') };
+        }
+        if (input.role === 'tenant_admin' && admins().length === 1) {
+          return { kind: 'refused', code: errorCode('Conflict', 'lastTenantAdmin') };
+        }
+        replace(input.userId, (current) => ({
+          ...current,
+          roles: current.roles.filter((role) => role !== input.role),
+        }));
+        return { kind: 'output', output: input };
+      }),
+    ),
   ];
 
   return {
     queries,
     commands,
     session: () => {
+      if (signedOut()) {
+        return null;
+      }
       const current = now();
       return {
         userId: fixtureSignedInUserId,

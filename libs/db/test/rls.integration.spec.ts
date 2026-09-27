@@ -115,7 +115,8 @@ async function insertMembershipRows(client: pg.Client, tenantId: string, slug: s
     [tenantId, userId, `member.${userId.slice(0, 8)}@synthetic.test`],
   );
   await client.query(
-    `insert into role_assignments (tenant_id, user_id, role, granted_at) values ($1, $2, 'buyer', now())`,
+    `insert into role_assignments (tenant_id, membership_id, role, granted_at)
+           values ($1, (select id from memberships where user_id = $2 order by invited_at desc limit 1), 'buyer', now())`,
     [tenantId, userId],
   );
   await client.query(`insert into directory_entries (slug, region) values ($1, 'ca')`, [slug]);

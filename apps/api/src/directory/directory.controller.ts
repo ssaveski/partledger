@@ -18,9 +18,14 @@ export const regionUrls = Symbol('RegionUrls');
 export type RegionUrls = Readonly<Partial<Record<TenantRegion, string>>>;
 
 /**
- * The global directory (R1): `GET /api/v1/directory/<slug>` answers which region's staff app
- * serves a tenant, and nothing else about it, before anyone signs in. An unknown slug and a
- * malformed one get the same answer. Served on the staff listener only.
+ * The directory (R1): `GET /api/v1/directory/<slug>` answers which region's staff app serves a
+ * tenant, and nothing else about it, before anyone signs in. An unknown slug and a malformed
+ * one get the same answer. Served on the staff listener only.
+ *
+ * In Release 1 the directory is cell-local: `directory_entries` lives in this region's
+ * database, so it knows only this cell's tenants, and a slug is unique per cell, not across
+ * regions. A global directory shared by every cell is a follow-up before a second region goes
+ * live (docs/runbooks/keycloak.md).
  */
 @Controller('directory')
 export class DirectoryController {

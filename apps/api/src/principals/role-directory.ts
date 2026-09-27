@@ -14,7 +14,10 @@ export interface PersonInTenant {
  */
 export interface RoleDirectory {
   rolesOf(person: PersonInTenant, database: AppDatabase): Promise<readonly TenantRole[]>;
-  /** Whether the person is a current member of the tenant; a sign-in is refused otherwise. */
+  /**
+   * Whether the person is a current member of the tenant; a sign-in is refused otherwise. It
+   * waits for a membership change in flight, so a sign-in cannot slip past a removal.
+   */
   isActiveMember(person: PersonInTenant, database: AppDatabase): Promise<boolean>;
 }
 

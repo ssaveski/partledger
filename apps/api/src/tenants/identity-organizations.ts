@@ -23,11 +23,22 @@ export interface IdentityOrganizations {
   /** Removes an organization whose tenant was never committed. */
   deleteOrganization(organizationId: string): Promise<void>;
   /**
-   * Creates a person's account as a member of one organization, and of no other; returns the
-   * user id. An email that already has an account is refused, so a person never ends up in two
-   * tenants' organizations, where every sign-in would be refused.
+   * Makes a person a member of one organization, and of no other; returns the user id and
+   * whether the account was created now. An account that already exists is adopted when it
+   * belongs to no organization or already to this one, such as a removed member invited again
+   * or an invitation retried after a failure; one that belongs to another organization is
+   * refused, since a person in two organizations could never sign in.
    */
-  createMember(organizationId: string, person: NewPerson): Promise<Result<string, OrganizationRefusal>>;
+  createMember(
+    organizationId: string,
+    person: NewPerson,
+  ): Promise<Result<{ readonly userId: string; readonly created: boolean }, OrganizationRefusal>>;
+  /** The organization with this alias, and the tenant its attribute names, if there is one. */
+  findOrganization(
+    alias: string,
+  ): Promise<Result<{ readonly id: string; readonly tenantId: string | null } | null, 'unavailable'>>;
+  /** Removes an organization left behind by a provisioning that never committed, with its members' accounts. */
+  deleteOrganizationAndMembers(organizationId: string): Promise<Result<void, 'unavailable'>>;
   /** Removes an account whose membership was never committed. */
   deleteUser(userId: string): Promise<void>;
   /** Removes a member from the organization and ends their identity provider sessions. */

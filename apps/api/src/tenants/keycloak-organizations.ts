@@ -11,6 +11,17 @@ export interface KeycloakAdminOptions {
   readonly clientSecret: string;
 }
 
+const organizationPageSize = 100;
+
+const idRows = z.array(z.object({ id: z.string().min(1) }));
+const organizationRows = z.array(
+  z.object({
+    id: z.string().min(1),
+    alias: z.string(),
+    attributes: z.record(z.string(), z.array(z.string())).optional(),
+  }),
+);
+
 const tokenSchema = z.object({ access_token: z.string().min(1), expires_in: z.number().int().positive() });
 
 const requestTimeoutMilliseconds = 5000;
@@ -38,8 +49,8 @@ export function adminBaseUrl(issuer: string): string {
  * Keycloak organizations through the API's service account (KTD20). The shipped realm gives
  * the account `manage-users` and `view-users`. Keycloak 26.4 also requires `manage-realm` for
  * creating organizations and adding or removing their members; until the owner decides to
- * grant it, those calls are refused and the commands answer as unavailable (see
- * docs/runbooks/keycloak.md). This adapter calls only the organization and user endpoints
+ * grant it, those calls are refused: provisioning and invitations answer as unavailable, and a
+ * removal's organization clean-up job keeps retrying (see docs/runbooks/keycloak.md). This adapter calls only the organization and user endpoints
  * below and never assigns a realm or client role.
  */
 export class KeycloakOrganizations implements IdentityOrganizations {
@@ -70,7 +81,10 @@ export class KeycloakOrganizations implements IdentityOrganizations {
     await this.bestEffort('delete an organization', 'DELETE', `/organizations/${encodeURIComponent(organizationId)}`);
   }
 
-  async createMember(organizationId: string, person: NewPerson): Promise<Result<string, OrganizationRefusal>> {
+  async createMember(
+    organizationId: string,
+    person: NewPerson,
+  ): Promise<Result<{ readonly userId: string; readonly created: boolean }, OrganizationRefusal>> {
     const user = await this.created('create a user', '/users', {
       username: person.email,
       email: person.email,
@@ -80,20 +94,127 @@ export class KeycloakOrganizations implements IdentityOrganizations {
       // The person sets a password on first sign-in; the invitation email follows with U34.
       requiredActions: ['UPDATE_PASSWORD'],
     });
+    if (!user.ok && user.error === 'already_exists') {
+      return this.adopt(organizationId, person.email);
+    }
     if (!user.ok) {
       return user;
     }
+    if (await this.addMember(organizationId, user.value)) {
+      return success({ userId: user.value, created: true });
+    }
+    await this.deleteUser(user.value);
+    return failure('unavailable');
+  }
+
+  async findOrganization(
+    alias: string,
+  ): Promise<Result<{ readonly id: string; readonly tenantId: string | null } | null, 'unavailable'>> {
+    // Keycloak searches organizations by name or domain, not by alias, so the pages are read in turn;
+    // a region holds one organization per tenant.
+    for (let first = 0; ; first += organizationPageSize) {
+      const page = await this.read(
+        'list organizations',
+        `/organizations?first=${first}&max=${organizationPageSize}&briefRepresentation=false`,
+        organizationRows,
+      );
+      if (!page.ok) {
+        return page;
+      }
+      const organization = page.value.find((candidate) => candidate.alias === alias);
+      if (organization !== undefined) {
+        return success({ id: organization.id, tenantId: organization.attributes?.['tenant_id']?.[0] ?? null });
+      }
+      if (page.value.length < organizationPageSize) {
+        return success(null);
+      }
+    }
+  }
+
+  async deleteOrganizationAndMembers(organizationId: string): Promise<Result<void, 'unavailable'>> {
+    const members = await this.read(
+      'list organization members',
+      `/organizations/${encodeURIComponent(organizationId)}/members`,
+      idRows,
+    );
+    if (!members.ok) {
+      return members;
+    }
+    for (const member of members.value) {
+      const organizations = await this.organizationsOf(member.id);
+      if (!organizations.ok) {
+        return organizations;
+      }
+      // Only accounts that belong to this organization alone were made for it.
+      if (organizations.value.every((organization) => organization.id === organizationId)) {
+        await this.deleteUser(member.id);
+      }
+    }
+    const deleted = await this.send(
+      'delete an organization',
+      'DELETE',
+      `/organizations/${encodeURIComponent(organizationId)}`,
+    );
+    return deleted.ok && (deleted.value.status === 204 || deleted.value.status === 404)
+      ? success(undefined)
+      : failure('unavailable');
+  }
+
+  /** An account that already exists joins the organization if it is in none, or is already in this one. */
+  private async adopt(
+    organizationId: string,
+    email: string,
+  ): Promise<Result<{ readonly userId: string; readonly created: boolean }, OrganizationRefusal>> {
+    const users = await this.read('look up a user', `/users?username=${encodeURIComponent(email)}&exact=true`, idRows);
+    if (!users.ok) {
+      return users;
+    }
+    const [user] = users.value;
+    if (user === undefined) {
+      // The conflict was on something else, such as the email of another username.
+      return failure('already_exists');
+    }
+    const organizations = await this.organizationsOf(user.id);
+    if (!organizations.ok) {
+      return organizations;
+    }
+    const joined = organizations.value.map((organization) => organization.id);
+    if (joined.length === 1 && joined[0] === organizationId) {
+      return success({ userId: user.id, created: false });
+    }
+    if (joined.length > 0) {
+      return failure('already_exists');
+    }
+    return (await this.addMember(organizationId, user.id))
+      ? success({ userId: user.id, created: false })
+      : failure('unavailable');
+  }
+
+  private async addMember(organizationId: string, userId: string): Promise<boolean> {
     const added = await this.send(
       'add an organization member',
       'POST',
       `/organizations/${encodeURIComponent(organizationId)}/members`,
-      user.value,
+      userId,
     );
-    if (added.ok && added.value.status === 201) {
-      return user;
+    return added.ok && added.value.status === 201;
+  }
+
+  private organizationsOf(userId: string): Promise<Result<z.infer<typeof idRows>, 'unavailable'>> {
+    return this.read(
+      'list a user’s organizations',
+      `/organizations/members/${encodeURIComponent(userId)}/organizations`,
+      idRows,
+    );
+  }
+
+  private async read<Rows>(what: string, path: string, rows: z.ZodType<Rows>): Promise<Result<Rows, 'unavailable'>> {
+    const response = await this.send(what, 'GET', path);
+    if (!response.ok || response.value.status !== 200) {
+      return failure('unavailable');
     }
-    await this.deleteUser(user.value);
-    return failure('unavailable');
+    const parsed = rows.safeParse(await response.value.json());
+    return parsed.success ? success(parsed.data) : failure('unavailable');
   }
 
   async deleteUser(userId: string): Promise<void> {

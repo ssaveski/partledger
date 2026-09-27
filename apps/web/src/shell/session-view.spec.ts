@@ -1,7 +1,7 @@
-import type { StaffSession } from '@partledger/contracts';
+import { formatMessage, type StaffSession } from '@partledger/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { roleMessageKey, sessionViewOf, type SignedIn } from './session-view';
+import { roleMessageKey, sessionErrorTitle, sessionViewOf, type SignedIn } from './session-view';
 
 const session: StaffSession = {
   userId: '6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
@@ -83,5 +83,12 @@ describe('the session the shell shows', () => {
   it('names roles with message keys that have no underscores', () => {
     expect(roleMessageKey('quality_engineer')).toBe('pl.tenants.role.qualityEngineer');
     expect(roleMessageKey('tenant_admin', '.description')).toBe('pl.tenants.role.tenantAdmin.description');
+  });
+
+  it('titles a session that cannot be read after the session, not after a loading message', () => {
+    const screen = formatMessage(sessionErrorTitle.screenKey);
+    expect(formatMessage('pl.web.documentTitle', { page: formatMessage(sessionErrorTitle.key, { screen }) })).toBe(
+      'Something went wrong: Your session · Partledger',
+    );
   });
 });

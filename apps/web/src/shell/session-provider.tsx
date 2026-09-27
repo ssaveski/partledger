@@ -2,13 +2,14 @@ import { currentMemberQuery } from '@partledger/contracts';
 import { failureMessageKey } from '@partledger/contracts/client';
 import { Button, ErrorState, LoadingState, NoPermissionState, useTranslate } from '@partledger/ui';
 import { LogInIcon } from 'lucide-react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { z } from 'zod';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeyOf, useAdapterKind, useApiClient } from '../api/api-client';
 import { redirectToSignIn, signInUrl } from '../auth/session';
 import { useDocumentTitle } from './document-title';
-import { sessionViewOf, type SignedIn } from './session-view';
+import { sessionErrorTitle, sessionViewOf, type SignedIn } from './session-view';
 
 export interface SessionContextValue {
   readonly signedIn: SignedIn;
@@ -27,7 +28,13 @@ export function useSession(): SessionContextValue {
   return context;
 }
 
-const sessionKey = ['session'] as const;
+/** The session read's key; a screen that changes the signed-in member reads it again. */
+export const sessionQueryKey = ['session'] as const;
+
+const unauthenticatedResult = z.object({
+  ok: z.literal(false),
+  failure: z.object({ kind: z.literal('unauthenticated') }),
+});
 
 /**
  * The staff app's session (KTD20): read through the typed client, the HTTP adapter against the
@@ -39,12 +46,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const client = useApiClient();
   const queryClient = useQueryClient();
   const [signedOut, setSignedOut] = useState(false);
-  const session = useQuery({ queryKey: sessionKey, queryFn: () => client.session(), enabled: !signedOut });
+  const session = useQuery({ queryKey: sessionQueryKey, queryFn: () => client.session(), enabled: !signedOut });
   const member = useQuery({
     queryKey: queryKeyOf(currentMemberQuery, {}),
     queryFn: () => client.query(currentMemberQuery, {}),
     enabled: !signedOut && session.data?.ok === true,
   });
+  const wasSignedIn = useRef(false);
+
+  // Once signed in, any read the API refuses as unauthenticated means the session ended, such
+  // as a member removed meanwhile: the app stops and says so rather than showing stale screens.
+  useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (
+          event.type === 'updated' &&
+          wasSignedIn.current &&
+          unauthenticatedResult.safeParse(event.query.state.data).success
+        ) {
+          queryClient.clear();
+          setSignedOut(true);
+        }
+      }),
+    [queryClient],
+  );
+
   const view = sessionViewOf({
     session: session.data,
     member: member.data,
@@ -69,6 +95,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [view.kind]);
 
   const signedIn = view.kind === 'signedIn' ? view.signedIn : null;
+  if (signedIn !== null) {
+    wasSignedIn.current = true;
+  }
   const context = useMemo(() => (signedIn === null ? null : { signedIn, signOut }), [signedIn, signOut]);
 
   switch (view.kind) {
@@ -94,6 +123,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             <SignInAgain
               titleKey="pl.tenants.session.signedOut.title"
               descriptionKey="pl.tenants.session.signedOut.description"
+              focusHeading
             />
           }
         />
@@ -115,7 +145,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     case 'unavailable':
       return (
         <SessionFrame
-          titleKey="pl.web.stateTitle.error"
+          titleKey={sessionErrorTitle.key}
           state={
             <ErrorState
               headingLevel={1}
@@ -135,7 +165,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 /** A page of its own for each session state, with the main landmark every page has. */
 function SessionFrame({ titleKey, state }: { titleKey: string; state: ReactNode }) {
   const translate = useTranslate();
-  useDocumentTitle(titleKey, { screen: translate('pl.tenants.session.checking') });
+  useDocumentTitle(titleKey, { screen: translate(sessionErrorTitle.screenKey) });
   return (
     <div className="flex min-h-screen flex-col bg-surface text-primary">
       <main id="main" className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center px-6 py-10">
@@ -145,12 +175,29 @@ function SessionFrame({ titleKey, state }: { titleKey: string; state: ReactNode 
   );
 }
 
-function SignInAgain({ titleKey, descriptionKey }: { titleKey: string; descriptionKey: string }) {
+function SignInAgain({
+  titleKey,
+  descriptionKey,
+  focusHeading = false,
+}: {
+  titleKey: string;
+  descriptionKey: string;
+  /** After signing out the page the person was on is gone, so focus starts at this heading. */
+  focusHeading?: boolean;
+}) {
   const translate = useTranslate();
   const adapterKind = useAdapterKind();
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusHeading) {
+      heading.current?.focus();
+    }
+  }, [focusHeading]);
   return (
     <div className="flex flex-col items-center gap-3 text-center">
-      <h1 className="text-xl font-semibold">{translate(titleKey)}</h1>
+      <h1 ref={heading} tabIndex={-1} className="text-xl font-semibold outline-hidden">
+        {translate(titleKey)}
+      </h1>
       <p className="max-w-prose text-sm text-muted">{translate(descriptionKey)}</p>
       <Button
         className="mt-2"

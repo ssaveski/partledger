@@ -21,7 +21,7 @@ import { KeycloakOrganizations } from '../src/tenants/keycloak-organizations';
 import { newIdempotencyKey, startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
 import { placeholderAuthEnvironment } from './support/auth-environment';
 import { internalTestRegistry } from './support/internal-test-module';
-import { clientId, realmName, startKeycloak, type StartedKeycloak } from './support/keycloak';
+import { clientId, realmName, startKeycloak, syntheticPassword, type StartedKeycloak } from './support/keycloak';
 import { createTestOrganizationAdmin, testOrganizationAdminClientId } from './support/organization-admin';
 import {
   createOperator,
@@ -124,6 +124,23 @@ describe('tenants, roles, users and the directory', () => {
     return provisionTenantOutputSchema.parse(response.body);
   }
 
+  async function eventually(check: () => Promise<boolean>, timeoutMilliseconds = 60_000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMilliseconds;
+    while (Date.now() < deadline) {
+      if (await check()) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return check();
+  }
+
+  async function usersWithEmail(email: string) {
+    return z
+      .array(z.object({ id: z.string() }))
+      .parse(await keycloak.admin.json(`/${realmName}/users?email=${encodeURIComponent(email)}&exact=true`));
+  }
+
   async function organizationsOf(userId: string) {
     return organizationRows.parse(
       await keycloak.admin.json(`/${realmName}/organizations/members/${userId}/organizations`),
@@ -190,7 +207,8 @@ describe('tenants, roles, users and the directory', () => {
       ]);
       expect(
         await harness.count(
-          `select 1 from role_assignments where tenant_id = $1 and user_id = $2 and role = 'tenant_admin'`,
+          `select 1 from role_assignments role join memberships membership on membership.id = role.membership_id
+            where role.tenant_id = $1 and membership.user_id = $2 and role.role = 'tenant_admin'`,
           [created.tenantId, created.firstAdminUserId],
         ),
       ).toBe(1);
@@ -276,6 +294,22 @@ describe('tenants, roles, users and the directory', () => {
         .parse(await keycloak.admin.json(`/${realmName}/users?email=other.admin@synthetic.test`));
       expect(users).toEqual([]);
     });
+  });
+
+  it('a leftover organization from an interrupted provisioning does not block provisioning that slug again', async () => {
+    const slug = 'synthetic-leftover';
+    const email = `admin.${slug}@synthetic.test`;
+    // What a provisioning that stopped before its commit leaves: the organization and its first administrator.
+    const leftover = await keycloak.admin.createOrganization(slug, randomUUID());
+    const stranded = await keycloak.admin.createUser({ username: email, email, password: syntheticPassword() });
+    await keycloak.admin.addMember(leftover, stranded);
+
+    const created = await provisioned(slug);
+    const organizations = organizationRows
+      .parse(await keycloak.admin.json(`/${realmName}/organizations?max=1000`))
+      .filter((organization) => organization.alias === slug);
+    expect(organizations).toEqual([expect.objectContaining({ id: created.organizationId })]);
+    expect(await usersWithEmail(email)).toEqual([{ id: created.firstAdminUserId }]);
   });
 
   it('the shipped service account can manage users but not the realm until the owner decides', async () => {
@@ -407,7 +441,13 @@ describe('tenants, roles, users and the directory', () => {
         status: 401,
         body: { error: 'StepUpRequired', message: 'pl.error.stepUpRequired.recentAuthentication' },
       });
-      expect(await harness.count('select 1 from role_assignments where user_id = $1', [userId])).toBe(0);
+      expect(
+        await harness.count(
+          `select 1 from role_assignments role join memberships membership on membership.id = role.membership_id
+            where membership.user_id = $1`,
+          [userId],
+        ),
+      ).toBe(0);
       expect(await harness.count(grants, [tenant.tenantId])).toBe(before);
     });
 
@@ -444,12 +484,85 @@ describe('tenants, roles, users and the directory', () => {
         (await harness.superuser.query('select end_reason from staff_sessions where subject_id = $1', [userId])).rows,
       );
       expect(ended).toEqual([{ end_reason: 'membership_removed' }]);
-      expect(await organizationsOf(userId)).toEqual([]);
+      // The organization is left by a job that commits with the removal.
+      expect(await eventually(async () => (await organizationsOf(userId)).length === 0)).toBe(true);
       const staffSessions = harness.api.app.get(StaffSessions);
       const identity = { subject: userId, tenantId: tenant.tenantId, organizationId: tenant.organizationId };
       expect(
         await staffSessions.start({ identity, refreshToken: JSON.stringify(identity) }, harness.clock.now()),
       ).toBeNull();
+    });
+
+    it('a removed member can be invited again and signs in with their roles granted afresh', async () => {
+      const email = 'returning.member@synthetic.test';
+      const userId = await invite(email);
+      expect(await changeRole('members.grantRole', tenant.tenantId, admin, userId, 'approver')).toMatchObject({
+        kind: 'success',
+      });
+      const removal = await harness.command(
+        'staff',
+        'members.remove',
+        { userId },
+        { token: admin.token, idempotencyKey: newIdempotencyKey() },
+      );
+      expect(removal.status).toBe(200);
+      expect(await eventually(async () => (await organizationsOf(userId)).length === 0)).toBe(true);
+
+      expect(await invite(email)).toBe(userId);
+      expect(await organizationsOf(userId)).toEqual([expect.objectContaining({ id: tenant.organizationId })]);
+      expect(await usersWithEmail(email)).toHaveLength(1);
+      const session = await harness.issue('staff_session', tenant.tenantId, { subjectId: userId });
+      // The earlier approver role stayed with the old membership.
+      expect((await harness.query('staff', 'tenants.currentMember', {}, session.token)).status).toBe(403);
+      expect(await changeRole('members.grantRole', tenant.tenantId, admin, userId, 'buyer')).toMatchObject({
+        kind: 'success',
+      });
+      expect(await harness.query('staff', 'tenants.currentMember', {}, session.token)).toMatchObject({
+        status: 200,
+        body: { member: { userId, roles: ['buyer'] } },
+      });
+      expect(
+        await harness.count('select 1 from memberships where tenant_id = $1 and user_id = $2', [
+          tenant.tenantId,
+          userId,
+        ]),
+      ).toBe(2);
+    });
+
+    it('an invitation retried after a failure that followed the account’s creation succeeds with exactly one account', async () => {
+      const email = 'retried.invitation@synthetic.test';
+      // The invitation's audit entry fails once, after Keycloak has created the account.
+      await harness.superuser.query(`
+        create sequence synthetic_invite_failures;
+        grant usage on sequence synthetic_invite_failures to pl_app;
+        create function public.synthetic_fail_first_invite() returns trigger language plpgsql as $$
+        begin
+          if new.payload ->> 'event' = 'members.invite' and nextval('synthetic_invite_failures') = 1 then
+            raise exception 'synthetic failure after the account was created';
+          end if;
+          return new;
+        end $$;
+        create trigger synthetic_fail_first_invite before insert on audit_entries
+          for each row execute function public.synthetic_fail_first_invite();
+      `);
+      const idempotencyKey = newIdempotencyKey();
+      const body = { email, displayName: 'Synthetic Retry' };
+      try {
+        const first = await harness.command('staff', 'members.invite', body, { token: admin.token, idempotencyKey });
+        expect(first.status).toBe(500);
+        expect(await usersWithEmail(email)).toHaveLength(1);
+        const retried = await harness.command('staff', 'members.invite', body, { token: admin.token, idempotencyKey });
+        expect(retried.status).toBe(200);
+        const { userId } = invited.parse(retried.body);
+        expect(await usersWithEmail(email)).toEqual([{ id: userId }]);
+        expect(await organizationsOf(userId)).toEqual([expect.objectContaining({ id: tenant.organizationId })]);
+      } finally {
+        await harness.superuser.query(`
+          drop trigger synthetic_fail_first_invite on audit_entries;
+          drop function public.synthetic_fail_first_invite();
+          drop sequence synthetic_invite_failures;
+        `);
+      }
     });
 
     it('a user whose approver role was revoked is refused on their next request', async () => {

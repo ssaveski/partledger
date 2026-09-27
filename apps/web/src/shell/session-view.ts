@@ -73,3 +73,6 @@ export function roleMessageKey(role: TenantRole, suffix = ''): string {
   const camel = role.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase());
   return `pl.tenants.role.${camel}${suffix}`;
 }
+
+/** A session that cannot be read names the session as the screen that failed, not a loading message. */
+export const sessionErrorTitle = { key: 'pl.web.stateTitle.error', screenKey: 'pl.tenants.session.screen' } as const;

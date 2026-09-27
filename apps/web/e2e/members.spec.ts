@@ -100,9 +100,67 @@ test('removing the last administrator is refused and says why', async ({ page })
   );
 });
 
-test('signing out of the preview shows the signed-out page', async ({ page }) => {
+test('signing out of the preview shows the signed-out page with focus on its heading', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('banner').getByRole('button', { name: 'Sign out' }).click();
-  await expect(page.getByRole('heading', { level: 1, name: 'You have signed out' })).toBeVisible();
+  const heading = page.getByRole('heading', { level: 1, name: 'You have signed out' });
+  await expect(heading).toBeVisible();
+  await expect(heading).toBeFocused();
   await expectNoAxeViolations(page);
+});
+
+/** Opens the roles dialog of a member, sets roles on and off, and saves. */
+async function changeRoles(page: Page, name: string, change: { on?: string[]; off?: string[] }) {
+  await page.getByRole('button', { name: `Change roles for ${name}` }).click();
+  const dialog = page.getByRole('dialog', { name: `Roles for ${name}` });
+  for (const role of change.on ?? []) {
+    await dialog.getByRole('checkbox', { name: role }).check();
+  }
+  for (const role of change.off ?? []) {
+    await dialog.getByRole('checkbox', { name: role }).uncheck();
+  }
+  await dialog.getByRole('button', { name: 'Save roles' }).click();
+  return dialog;
+}
+
+test('after a partial refusal the table shows the role that was granted', async ({ page }) => {
+  await page.goto('/admin/members');
+  // Approver is granted first; taking away the only administrator's role is then refused.
+  const dialog = await changeRoles(page, 'Avery Lindqvist', { on: ['Approver'], off: ['Tenant admin'] });
+  await expect(dialog.getByRole('alert')).toHaveText(
+    'The tenant needs at least one administrator. Make someone else an administrator first.',
+  );
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(membersTable(page).getByRole('row').filter({ hasText: 'Avery Lindqvist' })).toContainText('Approver');
+});
+
+test('removing your own tenant-admin role hides the Members link', async ({ page }) => {
+  await page.goto('/admin/members');
+  await expect(await changeRoles(page, 'Rowan Achterberg', { on: ['Tenant admin'] })).toBeHidden();
+  await expect(await changeRoles(page, 'Avery Lindqvist', { off: ['Tenant admin'] })).toBeHidden();
+  const navigation = page.getByRole('navigation', { name: 'Main' });
+  await expect(navigation.getByRole('link', { name: 'Overview' })).toBeVisible();
+  await expect(navigation.getByRole('link', { name: 'Members' })).toHaveCount(0);
+});
+
+test('removing yourself lands on the signed-out page', async ({ page }) => {
+  await page.goto('/admin/members');
+  await expect(await changeRoles(page, 'Rowan Achterberg', { on: ['Tenant admin'] })).toBeHidden();
+  await page.getByRole('button', { name: 'Remove Avery Lindqvist' }).click();
+  await page
+    .getByRole('dialog', { name: 'Remove Avery Lindqvist?' })
+    .getByRole('button', { name: 'Remove member' })
+    .click();
+  await expect(page.getByRole('heading', { level: 1, name: 'You have signed out' })).toBeVisible();
+});
+
+test('cancelling Remove returns focus to the Remove button that opened it', async ({ page }) => {
+  await page.goto('/admin/members');
+  const remove = page.getByRole('button', { name: 'Remove Jun Halvorsen' });
+  await remove.click();
+  await page
+    .getByRole('dialog', { name: 'Remove Jun Halvorsen?' })
+    .getByRole('button', { name: 'Keep member' })
+    .click();
+  await expect(remove).toBeFocused();
 });

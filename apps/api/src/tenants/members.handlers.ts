@@ -19,6 +19,7 @@ import type {
   QueryHandler,
 } from '../commands/handlers';
 import { identityOrganizations, type IdentityOrganizations } from './identity-organizations';
+import { leaveOrganizationJob } from './leave-organization.job';
 import { membershipStore } from './membership-store';
 
 /**
@@ -50,7 +51,7 @@ export class InviteMemberHandler implements CommandHandler<typeof inviteMemberCo
         ? refuse('Conflict', 'alreadyExists')
         : refuse('Unavailable', 'dependencyUnavailable');
     }
-    const userId = created.value;
+    const { userId } = created.value;
     try {
       await membershipStore.insertMember(database, { tenantId, userId, ...input, invitedAt: now });
       audit.record({
@@ -59,7 +60,10 @@ export class InviteMemberHandler implements CommandHandler<typeof inviteMemberCo
         displayName: await audit.commit(input.displayName),
       });
     } catch (error) {
-      await this.organizations.deleteUser(userId);
+      // An adopted account existed before this invitation and is left as it was.
+      if (created.value.created) {
+        await this.organizations.deleteUser(userId);
+      }
       throw error;
     }
     return success({ userId });
@@ -68,11 +72,9 @@ export class InviteMemberHandler implements CommandHandler<typeof inviteMemberCo
 
 @Injectable()
 export class RemoveMemberHandler implements CommandHandler<typeof removeMemberCommand> {
-  constructor(@Inject(identityOrganizations) private readonly organizations: IdentityOrganizations) {}
-
   async execute(
     input: InputOf<typeof removeMemberCommand>,
-    { principal, database, now, audit }: CommandContext,
+    { principal, database, now, audit, jobs }: CommandContext,
   ): Promise<HandlerResult<typeof removeMemberCommand>> {
     const { tenantId } = principal;
     await membershipStore.lockTenantMembers(database, tenantId);
@@ -83,15 +85,9 @@ export class RemoveMemberHandler implements CommandHandler<typeof removeMemberCo
     if (member.roles.includes('tenant_admin') && (await membershipStore.countActiveAdmins(database, tenantId)) <= 1) {
       return refuse('Conflict', 'lastTenantAdmin');
     }
-    const endedSessions = await membershipStore.removeMember(database, tenantId, input.userId, now);
-    const organizationId = (await membershipStore.tenantOf(database, tenantId))?.identityOrganizationId ?? null;
-    if (organizationId !== null) {
-      // Last, so a refusal here rolls back everything above.
-      const removed = await this.organizations.removeMember(organizationId, input.userId);
-      if (!removed.ok) {
-        return refuse('Unavailable', 'dependencyUnavailable');
-      }
-    }
+    const endedSessions = await membershipStore.removeMember(database, { ...member, tenantId }, now);
+    // Access ends here, in the platform; Keycloak is tidied by a retried job, so an outage there never keeps a removed member in.
+    await jobs.enqueue(leaveOrganizationJob, { userId: input.userId });
     audit.record({
       member: auditId(input.userId),
       revokedRoles: member.roles.map((role) => auditToken(role)),
@@ -109,10 +105,12 @@ export class GrantRoleHandler implements CommandHandler<typeof grantRoleCommand>
   ): Promise<HandlerResult<typeof grantRoleCommand>> {
     const { tenantId } = principal;
     await membershipStore.lockTenantMembers(database, tenantId);
-    if ((await membershipStore.findActive(database, tenantId, input.userId)) === undefined) {
+    const member = await membershipStore.findActive(database, tenantId, input.userId);
+    if (member === undefined) {
       return refuse('NotFound', 'resource');
     }
-    if (!(await membershipStore.grantRole(database, { tenantId, ...input, grantedAt: now }))) {
+    const grant = { tenantId, membershipId: member.membershipId, role: input.role, grantedAt: now };
+    if (!(await membershipStore.grantRole(database, grant))) {
       return refuse('Conflict', 'alreadyExists');
     }
     audit.record({ member: auditId(input.userId), grantedRole: auditToken(input.role) });
@@ -135,7 +133,7 @@ export class RevokeRoleHandler implements CommandHandler<typeof revokeRoleComman
     if (input.role === 'tenant_admin' && (await membershipStore.countActiveAdmins(database, tenantId)) <= 1) {
       return refuse('Conflict', 'lastTenantAdmin');
     }
-    await membershipStore.revokeRole(database, tenantId, input.userId, input.role);
+    await membershipStore.revokeRole(database, tenantId, member.membershipId, input.role);
     audit.record({ member: auditId(input.userId), revokedRole: auditToken(input.role) });
     return success(input);
   }
@@ -150,7 +148,9 @@ export class ListMembersHandler implements QueryHandler<typeof listMembersQuery>
     const members = await membershipStore.listActive(database, principal.tenantId);
     return success({
       members: members.map((member) => ({
-        ...member,
+        userId: member.userId,
+        email: member.email,
+        displayName: member.displayName,
         roles: [...member.roles],
         invitedAt: member.invitedAt.toISOString(),
       })),

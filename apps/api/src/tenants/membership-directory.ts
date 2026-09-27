@@ -8,6 +8,9 @@ import { membershipStore } from './membership-store';
 export const membershipDirectory: RoleDirectory = {
   rolesOf: (person, database) => membershipStore.activeRoles(database, person.tenantId, person.userId),
   async isActiveMember(person, database) {
+    // A sign-in asks this before it starts a session; waiting for a removal in flight means the
+    // removal either ends the new session or is seen here, never neither.
+    await membershipStore.waitForMemberChanges(database, person.tenantId);
     return (await membershipStore.findActive(database, person.tenantId, person.userId)) !== undefined;
   },
 };
