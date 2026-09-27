@@ -15,6 +15,8 @@ type StoryEntry = z.infer<typeof storyIndexSchema>['entries'][string];
 // switched off for those stories only.
 const bodyPortalTag = 'body-portal';
 
+const perStoryBudget = 4_000;
+
 async function stories(page: Page): Promise<StoryEntry[]> {
   const response = await page.request.get('/index.json');
   const index = storyIndexSchema.parse(await response.json());
@@ -38,6 +40,8 @@ for (const theme of themeNames) {
   test(`every component preview has no axe violations in the ${theme} theme`, async ({ page }) => {
     const entries = await stories(page);
     expect(entries.length).toBeGreaterThan(10);
+    // One test walks every story, so its budget grows with the story count instead of the default 30 seconds.
+    test.setTimeout(30_000 + entries.length * perStoryBudget);
     const violations: Record<string, string[]> = {};
     for (const entry of entries) {
       await test.step(entry.id, async () => {

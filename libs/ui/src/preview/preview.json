@@ -37,5 +37,14 @@
   "pl.preview.suppliersFailed": "The supplier list could not be loaded (status {status}).",
   "pl.preview.recovered": "The page rendered again after the retry.",
   "pl.preview.notesHint": "Suppliers see these notes with the request for quotation.",
-  "pl.preview.notesError": "Keep the notes under 2,000 characters."
+  "pl.preview.notesError": "Keep the notes under 2,000 characters.",
+  "pl.preview.partsGrid": "Parts on this request",
+  "pl.preview.catalogueGrid": "Parts catalogue",
+  "pl.preview.revision": "Revision",
+  "pl.preview.description": "Description",
+  "pl.preview.material": "Material",
+  "pl.preview.status": "Status",
+  "pl.preview.selectedCount": "{count} selected",
+  "pl.preview.quantityInvalid": "Enter a whole number greater than zero.",
+  "pl.preview.editCount": "{count} edits saved"
 }

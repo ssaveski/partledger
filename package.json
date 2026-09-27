@@ -30,6 +30,7 @@
     "drizzle-orm": "~0.45.3",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
+    "happy-dom": "^20.14.5",
     "nx": "^23.2.1",
     "prettier": "^3.9.9",
     "typescript": "~6.0.3",

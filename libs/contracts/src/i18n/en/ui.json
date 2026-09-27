@@ -1,5 +1,11 @@
 {
   "pl.ui.dialog.close": "Close",
+  "pl.ui.grid.legend": "Legend",
+  "pl.ui.grid.selectAll": "Select all rows",
+  "pl.ui.grid.selectRow": "Select",
+  "pl.ui.grid.editHint": "Press Enter to edit.",
+  "pl.ui.grid.editorHint": "Press Enter to save or Escape to cancel.",
+  "pl.ui.grid.editRejected": "This value was not saved. Check it and try again.",
   "pl.ui.select.placeholder": "Choose an option",
   "pl.ui.state.loading.label": "Loading…",
   "pl.ui.state.error.title": "Something went wrong",
