@@ -100,7 +100,7 @@ describe('the audit entry of every command', () => {
       type: 'person',
       tenantId: harness.tenantA,
       userId: approver.subjectId,
-      stepUp: { level: 'synthetic-step-up', authenticatedAt: harness.clock.now() },
+      stepUp: { level: 'step-up', authenticatedAt: harness.clock.now() },
       actedUnder: { grant: 'staff_session', credentialId: approver.credentialId },
       adapter: 'staff',
       correlationId: randomUUID(),

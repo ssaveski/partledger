@@ -34,7 +34,14 @@ const staffClaimsSchema = z.object({
   typ: z.string(),
   azp: z.string().optional(),
   nonce: z.string().optional(),
+  acr: z.unknown().optional(),
+  auth_time: z.unknown().optional(),
 });
+
+/** An `acr` the session may record: a short token, as the realm's `acr.loa.map` names its levels. */
+const authenticationLevelSchema = z.string().regex(/^[A-Za-z0-9._:-]{1,64}$/);
+
+const authenticationTimeSchema = z.number().int().positive();
 
 /** Keycloak marks tokens issued through impersonation; RFC 8693 marks delegated ones with `act`. */
 const delegationClaims = ['impersonator', 'act'] as const;
@@ -48,6 +55,12 @@ export interface StaffIdentity {
   readonly subject: string;
   readonly tenantId: string;
   readonly organizationId: string;
+  /**
+   * How and when the person last authenticated, from the token's `acr` and `auth_time`
+   * (KTD20); `null` when the token does not carry a usable value, which no step-up accepts.
+   */
+  readonly authenticationLevel: string | null;
+  readonly authenticatedAt: Date | null;
 }
 
 export type TokenRefusal =
@@ -116,10 +129,14 @@ export async function verifyStaffToken(
   if (!organization.ok) {
     return organization;
   }
+  const level = authenticationLevelSchema.safeParse(claims.data.acr);
+  const authenticatedAt = authenticationTimeSchema.safeParse(claims.data.auth_time);
   return success({
     subject: claims.data.sub,
     tenantId: organization.value.tenant_id[0],
     organizationId: organization.value.id,
+    authenticationLevel: level.success ? level.data : null,
+    authenticatedAt: authenticatedAt.success ? new Date(authenticatedAt.data * 1000) : null,
   });
 }
 

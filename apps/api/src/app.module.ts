@@ -2,6 +2,7 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import type { CatalogExpectations } from '@partledger/db';
 
 import { AuthModule } from './auth/auth.module';
+import type { IdentityAdministration } from './auth/identity-administration';
 import type { IdentityProvider } from './auth/identity-provider';
 import type { OperationRegistry } from './commands/handlers';
 import { OperationsModule } from './commands/operations.module';
@@ -24,6 +25,7 @@ export interface AppOverrides {
   readonly roleDirectory?: RoleDirectory;
   readonly clock?: Clock;
   readonly identityProvider?: IdentityProvider;
+  readonly identityAdministration?: IdentityAdministration;
   readonly jobs?: ModuleJobs;
   readonly jobPollingIntervalSeconds?: number;
   /** Tables a test created beside the shipped schema, which the boot-time catalog check must know. */
@@ -62,7 +64,12 @@ export class AppModule {
           emailPort: overrides.emailPort,
           recipientDirectory: overrides.recipientDirectory,
         }),
-        AuthModule.register({ config, clock: time, identityProvider: overrides.identityProvider }),
+        AuthModule.register({
+          config,
+          clock: time,
+          identityProvider: overrides.identityProvider,
+          identityAdministration: overrides.identityAdministration,
+        }),
         OperationsModule.register({
           registry: overrides.registry ?? productionRegistry,
           roleDirectory: overrides.roleDirectory ?? noRoleAssignments,

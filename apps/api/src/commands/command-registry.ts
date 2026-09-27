@@ -1,5 +1,6 @@
-import { addAlertRecipientCommand, removeAlertRecipientCommand } from '@partledger/contracts';
+import { addAlertRecipientCommand, removeAlertRecipientCommand, resetSecondFactor } from '@partledger/contracts';
 
+import { ResetSecondFactorHandler } from '../auth/factor-reset.command';
 import { AddAlertRecipientHandler, RemoveAlertRecipientHandler } from '../notifications/alert-recipients.commands';
 import { registerCommand, type CommandRegistration } from './handlers';
 
@@ -11,4 +12,5 @@ import { registerCommand, type CommandRegistration } from './handlers';
 export const productionCommands: readonly CommandRegistration[] = [
   registerCommand(addAlertRecipientCommand, AddAlertRecipientHandler),
   registerCommand(removeAlertRecipientCommand, RemoveAlertRecipientHandler),
+  registerCommand(resetSecondFactor, ResetSecondFactorHandler),
 ];

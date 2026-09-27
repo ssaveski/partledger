@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { insertTenant, startTestDatabase } from '@partledger/db/testing';
 
 import { e2eStaffUserFile, e2eStaffUserSchema, staffStackPorts } from './staff-stack-contract.ts';
-import { clientId, startKeycloak, syntheticPassword } from '../support/keycloak.ts';
+import { adminClientId, clientId, startKeycloak, syntheticPassword } from '../support/keycloak.ts';
 
 /**
  * The stack the staff app's end-to-end sign-in test runs against, started by Playwright as a
@@ -63,6 +63,7 @@ try {
       KEYCLOAK_ISSUER: keycloak.issuer,
       KEYCLOAK_CLIENT_ID: clientId,
       KEYCLOAK_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(clientId),
+      KEYCLOAK_ADMIN_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(adminClientId),
       SESSION_TOKEN_KEY: randomBytes(32).toString('base64'),
     },
     stdio: 'inherit',

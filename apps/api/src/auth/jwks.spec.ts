@@ -63,6 +63,24 @@ describe('staff token validation', () => {
     expect(result).toMatchObject({ ok: true, value: { subject, tenantId } });
   });
 
+  it('reads the authentication level and time from acr and auth_time', async () => {
+    const token = await sign(current, accessClaims({ acr: 'step-up', auth_time: nowSeconds - 30 }));
+    expect(await verifyStaffToken(token, expectations)).toMatchObject({
+      ok: true,
+      value: { authenticationLevel: 'step-up', authenticatedAt: new Date((nowSeconds - 30) * 1000) },
+    });
+  });
+
+  it('records no authentication level or time when acr or auth_time is missing or malformed', async () => {
+    for (const claims of [{}, { acr: 'step up', auth_time: 'yesterday' }, { acr: 2, auth_time: -5 }]) {
+      const token = await sign(current, accessClaims(claims));
+      expect(await verifyStaffToken(token, expectations), JSON.stringify(claims)).toMatchObject({
+        ok: true,
+        value: { authenticationLevel: null, authenticatedAt: null },
+      });
+    }
+  });
+
   it('refuses a token from another issuer', async () => {
     const token = await sign(current, accessClaims({ iss: 'https://id.synthetic.test/realms/other' }));
     expect(await verifyStaffToken(token, expectations)).toEqual({ ok: false, error: 'invalid_token' });

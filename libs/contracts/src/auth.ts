@@ -16,6 +16,11 @@ export const staffAuthPaths = {
   session: `${apiBasePath}/auth/session`,
   /** POST, with the request header below: ends the session. */
   signOut: `${apiBasePath}/auth/sign-out`,
+  /**
+   * GET, a top-level navigation with a session: re-authenticates at the step-up level (KTD20)
+   * and returns to `returnTo`, with the parameter below when the step-up did not complete.
+   */
+  stepUp: `${apiBasePath}/auth/step-up`,
 } as const;
 
 /**
@@ -33,6 +38,13 @@ export const returnToSchema = z
   .describe('A path on the staff app, such as /rfqs; never an absolute or protocol-relative URL.');
 
 export const signInQuerySchema = z.object({ returnTo: returnToSchema.optional() }).describe('Starts a staff sign-in.');
+
+export const stepUpQuerySchema = z
+  .object({ returnTo: returnToSchema.optional() })
+  .describe('Starts a step-up re-authentication for the current session.');
+
+/** The query parameter the API adds to the return path when a step-up did not complete. */
+export const stepUpFailedParameter = { name: 'stepUp', value: 'failed' } as const;
 
 /** The query parameter the API adds to the staff app's URL when a sign-in did not complete. */
 export const signInFailedParameter = { name: 'signIn', value: 'failed' } as const;

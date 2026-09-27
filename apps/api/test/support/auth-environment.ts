@@ -10,6 +10,7 @@ export function placeholderAuthEnvironment(overrides: Readonly<Record<string, st
     STAFF_APP_ORIGIN: 'http://127.0.0.1:5173',
     KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger',
     KEYCLOAK_CLIENT_SECRET: randomBytes(24).toString('base64url'),
+    KEYCLOAK_ADMIN_CLIENT_SECRET: randomBytes(24).toString('base64url'),
     SESSION_TOKEN_KEY: randomBytes(32).toString('base64'),
     ...overrides,
   };

@@ -11,6 +11,8 @@ const clientId = 'partledger-api';
 const tenantId = '0d7f5a8e-3b1c-4c3e-9a51-2f6d8e4b1a01';
 const subject = '6a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 
+const authenticatedAt = new Date(Math.floor(Date.now() / 1000 - 60) * 1000);
+
 type CertsBehaviour = 'serve' | 'fail' | 'hang';
 
 /** A stand-in realm: discovery, a token endpoint that always refreshes, and a JWKS endpoint whose behaviour the test sets. */
@@ -29,6 +31,8 @@ describe('the Keycloak identity provider', () => {
       iat: now,
       exp: now + 300,
       [organizationClaim]: { synthetic: { id: randomUUID(), tenant_id: [tenantId] } },
+      acr: 'step-up',
+      auth_time: authenticatedAt.getTime() / 1000,
       ...claims,
     })
       .setProtectedHeader({ alg: 'RS256', kid: 'realm-key' })
@@ -100,6 +104,22 @@ describe('the Keycloak identity provider', () => {
     expect(await provider().refresh('synthetic-refresh-token', new Date())).toMatchObject({
       kind: 'refreshed',
       identity: { subject, tenantId },
+    });
+  });
+
+  it('asks for the step-up level with acr_values only when a step-up requests it', async () => {
+    const request = { state: 's', nonce: 'n', codeChallenge: 'c', redirectUri: 'http://127.0.0.1:5173/cb' };
+    const signIn = await provider().authorizationUrl(request);
+    const stepUp = await provider().authorizationUrl({ ...request, acrValues: 'step-up' });
+    expect(signIn.ok && signIn.value.searchParams.has('acr_values')).toBe(false);
+    expect(stepUp.ok && stepUp.value.searchParams.get('acr_values')).toBe('step-up');
+  });
+
+  it('refreshes with the level and time the refreshed token carries', async () => {
+    certs = 'serve';
+    expect(await provider().refresh('synthetic-refresh-token', new Date())).toMatchObject({
+      kind: 'refreshed',
+      identity: { authenticationLevel: 'step-up', authenticatedAt: authenticatedAt },
     });
   });
 

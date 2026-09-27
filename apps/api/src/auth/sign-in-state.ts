@@ -16,6 +16,17 @@ export interface SignInState {
   readonly codeVerifier: string;
   readonly returnTo: string;
   readonly startedAt: number;
+  /**
+   * Set when this is a step-up of an existing session (KTD20). The callback cannot read the
+   * SameSite=Strict session cookie on the identity provider's cross-site redirect, so the
+   * session it steps up travels here, sealed, from the step-up request that carried it.
+   */
+  readonly stepUpOf?: SteppedUpSession;
+}
+
+export interface SteppedUpSession {
+  readonly tenantId: string;
+  readonly credentialId: string;
 }
 
 export const signInStateLifetimeSeconds = 600;
@@ -28,20 +39,22 @@ const signInStateSchema = z.object({
   codeVerifier: z.string().min(43),
   returnTo: returnToSchema,
   startedAt: z.number().int(),
+  stepUpOf: z.object({ tenantId: z.uuid(), credentialId: z.uuid() }).strict().optional(),
 });
 
 function randomValue(): string {
   return randomBytes(32).toString('base64url');
 }
 
-export function newSignInState(returnTo: string, now: Date): SignInState {
-  return {
+export function newSignInState(returnTo: string, now: Date, stepUpOf?: SteppedUpSession): SignInState {
+  const signIn = {
     state: randomValue(),
     nonce: randomValue(),
     codeVerifier: randomValue(),
     returnTo,
     startedAt: now.getTime(),
   };
+  return stepUpOf === undefined ? signIn : { ...signIn, stepUpOf };
 }
 
 /** RFC 7636 S256. */

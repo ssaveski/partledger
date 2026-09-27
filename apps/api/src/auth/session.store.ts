@@ -12,7 +12,15 @@ export interface StoredSession {
   readonly refreshTokenCiphertext: Buffer;
   readonly lastSeenAt: Date;
   readonly refreshedAt: Date;
+  readonly authenticationLevel: string | null;
+  readonly authenticatedAt: Date | null;
   readonly endedAt: Date | null;
+}
+
+/** The identity provider's `acr` and `auth_time` as the session last received them (KTD20). */
+export interface SessionAuthentication {
+  readonly authenticationLevel: string | null;
+  readonly authenticatedAt: Date | null;
 }
 
 interface SessionKey {
@@ -36,7 +44,12 @@ export const sessionStore = {
 
   async insert(
     database: AppDatabase,
-    session: SessionKey & { readonly subjectId: string; readonly refreshTokenCiphertext: Buffer; readonly now: Date },
+    session: SessionKey &
+      SessionAuthentication & {
+        readonly subjectId: string;
+        readonly refreshTokenCiphertext: Buffer;
+        readonly now: Date;
+      },
   ): Promise<void> {
     await database.insert(staffSessions).values({
       tenantId: session.tenantId,
@@ -46,6 +59,8 @@ export const sessionStore = {
       startedAt: session.now,
       lastSeenAt: session.now,
       refreshedAt: session.now,
+      authenticationLevel: session.authenticationLevel,
+      authenticatedAt: session.authenticatedAt,
     });
   },
 
@@ -58,6 +73,8 @@ export const sessionStore = {
         refreshTokenCiphertext: staffSessions.refreshTokenCiphertext,
         lastSeenAt: staffSessions.lastSeenAt,
         refreshedAt: staffSessions.refreshedAt,
+        authenticationLevel: staffSessions.authenticationLevel,
+        authenticatedAt: staffSessions.authenticatedAt,
         endedAt: staffSessions.endedAt,
       })
       .from(staffSessions)
@@ -75,19 +92,47 @@ export const sessionStore = {
     return updated.length === 1;
   },
 
-  /** Stores a refreshed token; `false` when the session has ended meanwhile. */
+  /** Stores a refreshed token, from a refresh or a step-up; `false` when the session has ended meanwhile. */
   async recordRefresh(
     database: AppDatabase,
     key: SessionKey,
     refreshTokenCiphertext: Buffer,
+    authentication: SessionAuthentication,
     now: Date,
   ): Promise<boolean> {
     const updated = await database
       .update(staffSessions)
-      .set({ refreshTokenCiphertext, refreshedAt: now, lastSeenAt: now })
+      .set({
+        refreshTokenCiphertext,
+        refreshedAt: now,
+        lastSeenAt: now,
+        authenticationLevel: authentication.authenticationLevel,
+        authenticatedAt: authentication.authenticatedAt,
+      })
       .where(and(matching(key), isNull(staffSessions.endedAt)))
       .returning({ credentialId: staffSessions.credentialId });
     return updated.length === 1;
+  },
+
+  /** Ends every open session of one person in the tenant; returns how many it ended. */
+  async endAllOf(
+    database: AppDatabase,
+    person: { readonly tenantId: string; readonly subjectId: string },
+    reason: StaffSessionEndReason,
+    now: Date,
+  ): Promise<number> {
+    const updated = await database
+      .update(staffSessions)
+      .set({ endedAt: now, endReason: reason })
+      .where(
+        and(
+          eq(staffSessions.tenantId, person.tenantId),
+          eq(staffSessions.subjectId, person.subjectId),
+          isNull(staffSessions.endedAt),
+        ),
+      )
+      .returning({ credentialId: staffSessions.credentialId });
+    return updated.length;
   },
 
   /** Ends the session once; `false` when it had already ended. */

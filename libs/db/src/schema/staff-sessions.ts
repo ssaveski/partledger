@@ -13,6 +13,7 @@ export const staffSessionEndReasons = [
   'refresh_failed',
   'identity_changed',
   'membership_removed',
+  'second_factor_reset',
 ] as const;
 
 export type StaffSessionEndReason = (typeof staffSessionEndReasons)[number];
@@ -35,6 +36,13 @@ export const staffSessions = pgTable(
     startedAt: timestamptz('started_at').notNull(),
     lastSeenAt: timestamptz('last_seen_at').notNull(),
     refreshedAt: timestamptz('refreshed_at').notNull(),
+    /**
+     * The identity provider's latest `acr` and `auth_time` for the session, from its sign-in,
+     * step-ups and refreshes (KTD20); step-up commands compare them with the configured level
+     * and freshness window.
+     */
+    authenticationLevel: text('authentication_level'),
+    authenticatedAt: timestamptz('authenticated_at'),
     endedAt: timestamptz('ended_at'),
     endReason: text('end_reason', { enum: staffSessionEndReasons }),
   },
@@ -49,10 +57,11 @@ export const staffSessions = pgTable(
     index('staff_sessions_subject_index').on(table.tenantId, table.subjectId),
     check(
       'staff_sessions_end_reason_check',
-      sql`${table.endReason} in ('signed_out', 'idle_timeout', 'refresh_failed', 'identity_changed', 'membership_removed')`,
+      sql`${table.endReason} in ('signed_out', 'idle_timeout', 'refresh_failed', 'identity_changed', 'membership_removed', 'second_factor_reset')`,
     ),
     check('staff_sessions_ended_check', sql`(${table.endedAt} is null) = (${table.endReason} is null)`),
     check('staff_sessions_ciphertext_check', sql`octet_length(${table.refreshTokenCiphertext}) > 28`),
+    check('staff_sessions_authentication_level_check', sql`${table.authenticationLevel} ~ '^[A-Za-z0-9._:-]{1,64}$'`),
   ],
 );
 
@@ -66,6 +75,8 @@ export const staffSessionsAccess = defineTableAccess({
       refresh_token_ciphertext: ['UPDATE'],
       last_seen_at: ['UPDATE'],
       refreshed_at: ['UPDATE'],
+      authentication_level: ['UPDATE'],
+      authenticated_at: ['UPDATE'],
       ended_at: ['UPDATE'],
       end_reason: ['UPDATE'],
     },

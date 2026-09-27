@@ -13,6 +13,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
 import { z } from 'zod';
 
+import type { IdentityAdministration } from '../../src/auth/identity-administration';
 import type { IdentityProvider } from '../../src/auth/identity-provider';
 import { sessionCookieName } from '../../src/auth/session-cookie';
 import { StaffSessions } from '../../src/auth/staff-sessions';
@@ -30,6 +31,9 @@ import { placeholderAuthEnvironment } from './auth-environment';
 import { internalTestNotesTable, internalTestRegistry } from './internal-test-module';
 
 const countRows = z.tuple([z.object({ count: z.number().int() })]);
+
+/** The `STEP_UP_ACR` default, which the realm's `acr.loa.map` names. */
+export const defaultStepUpLevel = 'step-up';
 
 /** A clock the test can move forward. */
 export interface MovableClock extends Clock {
@@ -55,11 +59,18 @@ export interface ApiHarness {
   readonly clock: MovableClock;
   readonly tenantA: string;
   readonly tenantB: string;
-  /** Issues a credential whose subject holds `roles` (people only). */
+  /**
+   * Issues a credential whose subject holds `roles` (people only); a staff session issued with
+   * `steppedUpAt` carries a step-up at the default level from that time.
+   */
   issue(
     kind: CredentialKind,
     tenantId: string,
-    options?: { readonly roles?: readonly TenantRole[]; readonly expiresInMilliseconds?: number },
+    options?: {
+      readonly roles?: readonly TenantRole[];
+      readonly expiresInMilliseconds?: number;
+      readonly steppedUpAt?: Date;
+    },
   ): Promise<IssuedToken>;
   command(
     adapter: HttpEntryAdapter,
@@ -102,6 +113,8 @@ export interface ApiHarnessOptions {
   readonly process?: ApiProcessOptions;
   /** Further settings for every API process, such as the operator's alert fallback address. */
   readonly environment?: Readonly<Record<string, string>>;
+  /** The admin API adapter; by default Keycloak at the configured realm. */
+  readonly identityAdministration?: IdentityAdministration;
 }
 
 /**
@@ -148,6 +161,9 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         clock,
         identityProvider:
           options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
+        ...(options.identityAdministration === undefined
+          ? {}
+          : { identityAdministration: options.identityAdministration }),
         jobPollingIntervalSeconds: 0.5,
         ...(apiProcess.jobs === undefined ? {} : { jobs: apiProcess.jobs }),
         ...(apiProcess.emailPort === undefined ? {} : { emailPort: apiProcess.emailPort }),
@@ -195,7 +211,13 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
       const expiresAt = new Date(clock.now().getTime() + (options.expiresInMilliseconds ?? 3_600_000));
       if (kind === 'staff_session') {
         // Staff sessions start the way a sign-in starts them, with a stand-in refresh token.
-        const identity = { subject: subjectId, tenantId, organizationId: 'harness' };
+        const identity = {
+          subject: subjectId,
+          tenantId,
+          organizationId: 'harness',
+          authenticationLevel: options.steppedUpAt === undefined ? null : defaultStepUpLevel,
+          authenticatedAt: options.steppedUpAt ?? null,
+        };
         const started = await staffSessions.start(
           { identity, refreshToken: JSON.stringify(identity) },
           clock.now(),
@@ -262,7 +284,13 @@ export function credentialHeaders(adapter: HttpEntryAdapter, token: string | und
  * Stands in for Keycloak: every refresh succeeds with the same identity. Sign-in against a
  * real Keycloak is covered by the auth integration tests.
  */
-export const stubIdentity = z.object({ subject: z.uuid(), tenantId: z.uuid(), organizationId: z.string() });
+export const stubIdentity = z.object({
+  subject: z.uuid(),
+  tenantId: z.uuid(),
+  organizationId: z.string(),
+  authenticationLevel: z.string().nullable().default(null),
+  authenticatedAt: z.coerce.date().nullable().default(null),
+});
 
 export const stubIdentityProvider: IdentityProvider = {
   authorizationUrl: () => Promise.resolve({ ok: false, error: 'unavailable' }),

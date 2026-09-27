@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { returnToSchema } from '@partledger/contracts';
 import { describe, expect, it } from 'vitest';
@@ -17,6 +17,15 @@ describe('the sign-in state cookie', () => {
     expect(openSignInState(cipher, sealed, newSignInState('/rfqs', now).state, now)).toBeNull();
     expect(openSignInState(cipher, sealed, undefined, now)).toBeNull();
     expect(openSignInState(cipher, undefined, signIn.state, now)).toBeNull();
+  });
+
+  it('carries the session a step-up re-authenticates, sealed with the rest of the state', () => {
+    const stepUpOf = { tenantId: '0d7f5a8e-3b1c-4c3e-9a51-2f6d8e4b1a01', credentialId: randomUUID() };
+    const signIn = newSignInState('/rfqs', now, stepUpOf);
+    const sealed = sealSignInState(cipher, signIn);
+    expect(openSignInState(cipher, sealed, signIn.state, now)?.stepUpOf).toEqual(stepUpOf);
+    expect(Buffer.from(sealed, 'base64url').toString('latin1')).not.toContain(stepUpOf.credentialId);
+    expect(newSignInState('/rfqs', now).stepUpOf).toBeUndefined();
   });
 
   it('refuses a cookie that was tampered with, sealed by another key or kept past ten minutes', () => {
