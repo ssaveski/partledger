@@ -10,7 +10,7 @@
   "verifyEmail": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": true,
+  "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
   "bruteForceStrategy": "MULTIPLE",
@@ -40,7 +40,7 @@
       "enabled": true,
       "serviceAccountClientId": "partledger-api-admin",
       "clientRoles": {
-        "realm-management": ["view-users", "manage-users"]
+        "realm-management": ["manage-users"]
       }
     }
   ],
@@ -104,7 +104,7 @@
     {
       "clientId": "partledger-api-admin",
       "name": "Partledger API administration",
-      "description": "The API's service account for the admin API: second-factor resets and ending a user's sessions (U29), organization membership (U8).",
+      "description": "The API's service account: second-factor resets. Keycloak's manage-users is wider; see docs/runbooks/keycloak.md.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -347,7 +347,7 @@
     },
     {
       "alias": "partledger reset credentials",
-      "description": "Forgot-password resets the password only; it never removes or replaces a second factor.",
+      "description": "Forgot-password (off: resetPasswordAllowed) resets a password-account's password only; never a second factor. Other accounts, such as SSO users, are refused.",
       "providerId": "basic-flow",
       "topLevel": true,
       "builtIn": false,
@@ -367,10 +367,41 @@
           "authenticatorFlow": false
         },
         {
-          "requirement": "REQUIRED",
+          "requirement": "CONDITIONAL",
           "priority": 30,
           "userSetupAllowed": false,
+          "authenticatorFlow": true,
+          "flowAlias": "partledger refuse reset without password account"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 40,
+          "userSetupAllowed": false,
           "authenticator": "reset-password",
+          "authenticatorFlow": false
+        }
+      ]
+    },
+    {
+      "alias": "partledger refuse reset without password account",
+      "description": "An account without the password-account role, such as one of a customer identity provider, never gets a password by e-mail.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "userSetupAllowed": false,
+          "authenticator": "conditional-user-role",
+          "authenticatorFlow": false,
+          "authenticatorConfig": "partledger not a password account"
+        },
+        {
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "userSetupAllowed": false,
+          "authenticator": "deny-access-authenticator",
           "authenticatorFlow": false
         }
       ]
@@ -404,13 +435,30 @@
         "loa-condition-level": "2",
         "loa-max-age": "0"
       }
+    },
+    {
+      "alias": "partledger not a password account",
+      "config": {
+        "condUserRole": "password-account",
+        "negate": "true"
+      }
     }
   ],
   "clientScopeMappings": {
     "realm-management": [
       {
         "client": "partledger-api-admin",
-        "roles": ["view-users", "manage-users"]
+        "roles": ["manage-users"]
+      }
+    ]
+  },
+  "roles": {
+    "realm": [
+      {
+        "name": "password-account",
+        "description": "A Keycloak-password account (U8 invitations). Only these may reset a password by e-mail; customer SSO accounts never hold it.",
+        "composite": false,
+        "clientRole": false
       }
     ]
   }

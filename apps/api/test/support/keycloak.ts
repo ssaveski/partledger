@@ -68,6 +68,7 @@ export interface KeycloakAdmin {
   addMember(organizationId: string, userId: string): Promise<void>;
   setUserEnabled(userId: string, enabled: boolean): Promise<void>;
   userSessionCount(userId: string): Promise<number>;
+  grantRealmRole(userId: string, role: string): Promise<void>;
 }
 
 export async function startKeycloak(extraRealmFiles: readonly string[] = []): Promise<StartedKeycloak> {
@@ -180,6 +181,11 @@ export async function startKeycloak(extraRealmFiles: readonly string[] = []): Pr
     async setUserEnabled(userId, enabled) {
       const response = await request('PUT', `/${realmName}/users/${userId}`, { enabled });
       await expectOk(response, 'change a user');
+    },
+    async grantRealmRole(userId, role) {
+      const representation = await admin.json(`/${realmName}/roles/${encodeURIComponent(role)}`);
+      const response = await request('POST', `/${realmName}/users/${userId}/role-mappings/realm`, [representation]);
+      await expectOk(response, 'grant a realm role');
     },
     async userSessionCount(userId) {
       const sessions = await admin.json(`/${realmName}/users/${userId}/sessions`);

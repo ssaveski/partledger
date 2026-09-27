@@ -11,6 +11,7 @@ import { internalTestRegistry } from './support/internal-test-module';
 import {
   adminClientId,
   clientId,
+  formOn,
   internalBaseUrl,
   linkOn,
   realmName,
@@ -19,7 +20,7 @@ import {
   type StartedKeycloak,
   type SyntheticUser,
 } from './support/keycloak';
-import { Authenticator, StaffBrowser, startMailCatcher, type MailCatcher } from './support/staff-browser';
+import { Authenticator, StaffBrowser, startMailCatcher, type MailCatcher, type Settled } from './support/staff-browser';
 
 const staffAppOrigin = 'http://127.0.0.1:5173';
 const refreshIntervalSeconds = 10;
@@ -55,6 +56,7 @@ describe('step-up authentication against Keycloak', () => {
   let harness: ApiHarness;
   let staff: string;
   let organizationA: string;
+  let adminClientSecret: string;
 
   beforeAll(async () => {
     [keycloak, mail] = await Promise.all([
@@ -65,6 +67,7 @@ describe('step-up authentication against Keycloak', () => {
       smtpServer: { host: mail.smtpHost, port: mail.smtpPort, from: 'keycloak@synthetic.test' },
     });
     expect(smtp.status).toBe(204);
+    adminClientSecret = await keycloak.admin.regenerateClientSecret(adminClientId);
     harness = await startApiHarness({
       identityProvider: 'keycloak',
       process: {
@@ -79,7 +82,7 @@ describe('step-up authentication against Keycloak', () => {
         STAFF_APP_ORIGIN: staffAppOrigin,
         KEYCLOAK_ISSUER: keycloak.issuer,
         KEYCLOAK_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(clientId),
-        KEYCLOAK_ADMIN_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret(adminClientId),
+        KEYCLOAK_ADMIN_CLIENT_SECRET: adminClientSecret,
         KEYCLOAK_JWKS_COOLDOWN_SECONDS: '0',
         STAFF_SESSION_REFRESH_INTERVAL_SECONDS: String(refreshIntervalSeconds),
         STEP_UP_FRESHNESS_SECONDS: String(freshnessSeconds),
@@ -238,30 +241,39 @@ describe('step-up authentication against Keycloak', () => {
     ).toBe(entriesBefore + 1);
   });
 
-  it('a brokered SSO user is asked to enrol a factor before the first step-up succeeds', async () => {
-    const brokerSecret = await keycloak.admin.regenerateClientSecret('partledger-broker', 'customer-idp');
-    const identityProvider = await keycloak.admin.request('POST', `/${realmName}/identity-provider/instances`, {
-      alias: 'customer-idp',
-      providerId: 'oidc',
-      enabled: true,
-      trustEmail: false,
-      firstBrokerLoginFlowAlias: 'first broker login',
-      postBrokerLoginFlowAlias: 'partledger post broker login',
-      config: {
-        clientId: 'partledger-broker',
-        clientSecret: brokerSecret,
-        clientAuthMethod: 'client_secret_post',
-        authorizationUrl: `${keycloak.baseUrl}/realms/customer-idp/protocol/openid-connect/auth`,
-        tokenUrl: `${internalBaseUrl}/realms/customer-idp/protocol/openid-connect/token`,
-        disableUserInfo: 'true',
-        validateSignature: 'false',
-        defaultScope: 'openid email profile',
-        syncMode: 'IMPORT',
-      },
-    });
-    expect(identityProvider.status).toBe(201);
+  let identityProviderReady: Promise<void> | undefined;
 
-    // The customer's user, and the linked Partledger account a tenant admin invited (U8): no password, no factor.
+  /** The customer realm as an identity provider, set up as the runbook requires. */
+  function customerIdentityProvider(): Promise<void> {
+    identityProviderReady ??= (async () => {
+      const brokerSecret = await keycloak.admin.regenerateClientSecret('partledger-broker', 'customer-idp');
+      const created = await keycloak.admin.request('POST', `/${realmName}/identity-provider/instances`, {
+        alias: 'customer-idp',
+        providerId: 'oidc',
+        enabled: true,
+        trustEmail: false,
+        firstBrokerLoginFlowAlias: 'first broker login',
+        postBrokerLoginFlowAlias: 'partledger post broker login',
+        config: {
+          clientId: 'partledger-broker',
+          clientSecret: brokerSecret,
+          clientAuthMethod: 'client_secret_post',
+          authorizationUrl: `${keycloak.baseUrl}/realms/customer-idp/protocol/openid-connect/auth`,
+          tokenUrl: `${internalBaseUrl}/realms/customer-idp/protocol/openid-connect/token`,
+          disableUserInfo: 'true',
+          validateSignature: 'false',
+          defaultScope: 'openid email profile',
+          syncMode: 'IMPORT',
+        },
+      });
+      expect(created.status).toBe(201);
+    })();
+    return identityProviderReady;
+  }
+
+  /** A customer's user, and the linked Partledger account a tenant admin invited (U8): no password, no factor. */
+  async function brokeredApprover(): Promise<{ readonly customerUser: SyntheticUser; readonly id: string }> {
+    await customerIdentityProvider();
     const suffix = randomUUID().slice(0, 8);
     const customerUser = {
       username: `synthetic.sso.${suffix}`,
@@ -277,18 +289,52 @@ describe('step-up authentication against Keycloak', () => {
       enabled: true,
       emailVerified: true,
     });
-    const brokeredId = invited.headers.get('location')?.split('/').pop() ?? '';
-    const linked = await keycloak.admin.request(
-      'POST',
-      `/${realmName}/users/${brokeredId}/federated-identity/customer-idp`,
-      { identityProvider: 'customer-idp', userId: customerUserId, userName: customerUser.username },
-    );
+    const id = invited.headers.get('location')?.split('/').pop() ?? '';
+    const linked = await keycloak.admin.request('POST', `/${realmName}/users/${id}/federated-identity/customer-idp`, {
+      identityProvider: 'customer-idp',
+      userId: customerUserId,
+      userName: customerUser.username,
+    });
     expect(linked.status).toBe(204);
-    await keycloak.admin.addMember(organizationA, brokeredId);
-    harness.grantRoles(brokeredId, ['approver']);
-    expect(credentialRows.parse(await keycloak.admin.json(`/${realmName}/users/${brokeredId}/credentials`))).toEqual(
-      [],
-    );
+    await keycloak.admin.addMember(organizationA, id);
+    harness.grantRoles(id, ['approver']);
+    return { customerUser, id };
+  }
+
+  async function credentialsOf(userId: string) {
+    return credentialRows.parse(await keycloak.admin.json(`/${realmName}/users/${userId}/credentials`));
+  }
+
+  /**
+   * Runs the realm's forgot-password flow for `username` with forgot-password switched on for
+   * the test, as someone who controls the mailbox would, up to the page the e-mailed link opens.
+   */
+  async function forgotPassword(session: StaffBrowser, username: string, email: string): Promise<Settled> {
+    const enabled = await keycloak.admin.request('PUT', `/${realmName}`, { resetPasswordAllowed: true });
+    expect(enabled.status).toBe(204);
+    try {
+      const identify = await session.startSignIn();
+      const passwordPage = await session.submit(
+        await identify.response.text(),
+        /login-actions\/authenticate/,
+        { username },
+        identify.url,
+      );
+      const forgot = linkOn(await passwordPage.response.text(), /login-actions\/reset-credentials/);
+      expect(forgot).not.toBeNull();
+      const resetUrl = new URL(forgot ?? '', passwordPage.url).toString();
+      const resetForm = await session.settle(await session.browser.get(resetUrl), resetUrl);
+      await session.submit(await resetForm.response.text(), /reset-credentials/, { username }, resetUrl);
+      const link = /(http\S+action-token\S+)/.exec(await mail.latestTextTo(email))?.[1] ?? '';
+      return await session.settle(await session.browser.get(link), link);
+    } finally {
+      await keycloak.admin.request('PUT', `/${realmName}`, { resetPasswordAllowed: false });
+    }
+  }
+
+  it('a brokered SSO user is asked to enrol a factor before the first step-up succeeds', async () => {
+    const { customerUser, id: brokeredId } = await brokeredApprover();
+    expect(await credentialsOf(brokeredId)).toEqual([]);
 
     const session = browser();
     await session.signInThroughBroker(customerUser, 'customer-idp');
@@ -305,6 +351,54 @@ describe('step-up authentication against Keycloak', () => {
     expect((await approve(session, noteId, newIdempotencyKey())).status).toBe(200);
   });
 
+  it('the sign-in pages offer no forgot-password, and the reset flow has no second-factor reset', async () => {
+    const person = await approver();
+    const session = browser();
+    const identify = await session.startSignIn();
+    const identifyHtml = await identify.response.text();
+    expect(linkOn(identifyHtml, /reset-credentials/)).toBeNull();
+    const passwordPage = await session.submit(
+      identifyHtml,
+      /login-actions\/authenticate/,
+      { username: person.username },
+      identify.url,
+    );
+    const passwordHtml = await passwordPage.response.text();
+    expect(formOn(passwordHtml, /login-actions\/authenticate/)?.fields).toHaveProperty('password');
+    expect(linkOn(passwordHtml, /reset-credentials/)).toBeNull();
+    const direct = await session.browser.get(
+      `${keycloak.issuer}/login-actions/reset-credentials?client_id=${clientId}`,
+    );
+    expect(await direct.text()).not.toContain('name="username"');
+
+    const realm = z
+      .object({ resetPasswordAllowed: z.boolean(), resetCredentialsFlow: z.string() })
+      .parse(await keycloak.admin.json(`/${realmName}`));
+    expect(realm).toEqual({ resetPasswordAllowed: false, resetCredentialsFlow: 'partledger reset credentials' });
+    const executions = flowExecutions.parse(
+      await keycloak.admin.json(`/${realmName}/authentication/flows/partledger%20reset%20credentials/executions`),
+    );
+    const providers = executions.map((execution) => execution.providerId);
+    expect(providers).not.toContain('reset-otp');
+    expect(providers).toEqual(
+      expect.arrayContaining(['reset-credentials-choose-user', 'reset-credential-email', 'reset-password']),
+    );
+  });
+
+  it('a brokered user cannot obtain a Keycloak password through the reset flow, even with forgot-password on', async () => {
+    const { customerUser, id: brokeredId } = await brokeredApprover();
+    const attacker = browser();
+    const landing = await forgotPassword(attacker, customerUser.username, customerUser.email);
+    // The e-mailed link ends in Keycloak's access-denied page instead of the new-password form.
+    expect(landing.response.status).toBe(401);
+    const page = await landing.response.text();
+    expect(page).toContain('data-page-id="login-error"');
+    expect(formOn(page, /required-action/)?.fields['password-new']).toBeUndefined();
+    expect(landing.url.startsWith(staffAppOrigin)).toBe(false);
+    expect(await credentialsOf(brokeredId)).toEqual([]);
+    expect(attacker.sessionCookie()).toBeUndefined();
+  });
+
   it('the forgot-password flow cannot remove or replace a second factor', async () => {
     const person = await approver();
     const first = browser();
@@ -312,33 +406,12 @@ describe('step-up authentication against Keycloak', () => {
     const { authenticator } = await first.stepUp('/notes');
     const factorsBefore = await secondFactorsOf(person.id);
     expect(factorsBefore).toHaveLength(1);
+    // A local account, invited with the password-account role (U8).
+    await keycloak.admin.grantRealmRole(person.id, 'password-account');
 
-    const executions = flowExecutions.parse(
-      await keycloak.admin.json(`/${realmName}/authentication/flows/partledger%20reset%20credentials/executions`),
-    );
-    expect(executions.map((execution) => execution.providerId)).toEqual([
-      'reset-credentials-choose-user',
-      'reset-credential-email',
-      'reset-password',
-    ]);
-
-    // Someone who controls the mailbox resets the password from the login page.
+    // Someone who controls the mailbox resets the password, were forgot-password switched on.
     const other = browser();
-    const identify = await other.startSignIn();
-    const passwordPage = await other.submit(
-      await identify.response.text(),
-      /login-actions\/authenticate/,
-      { username: person.username },
-      identify.url,
-    );
-    const passwordHtml = await passwordPage.response.text();
-    const forgot = linkOn(passwordHtml, /login-actions\/reset-credentials/);
-    expect(forgot).not.toBeNull();
-    const resetUrl = new URL(forgot ?? '', passwordPage.url).toString();
-    const resetForm = await other.settle(await other.browser.get(resetUrl), resetUrl);
-    await other.submit(await resetForm.response.text(), /reset-credentials/, { username: person.username }, resetUrl);
-    const link = /(http\S+action-token\S+)/.exec(await mail.latestTextTo(person.email))?.[1] ?? '';
-    const update = await other.settle(await other.browser.get(link), link);
+    const update = await forgotPassword(other, person.username, person.email);
     const newPassword = syntheticPassword();
     const afterReset = await other.submit(
       await update.response.text(),
@@ -349,8 +422,7 @@ describe('step-up authentication against Keycloak', () => {
     expect(await other.deliverCallback(afterReset)).not.toBeNull();
 
     // The password changed; the second factor did not, and the new session holds no step-up.
-    const factorsAfter = await secondFactorsOf(person.id);
-    expect(factorsAfter).toEqual(factorsBefore);
+    expect(await secondFactorsOf(person.id)).toEqual(factorsBefore);
     const noteId = await draftNote();
     expect((await approve(other, noteId, newIdempotencyKey())).body).toEqual(stepUpError);
     // The reset counts for no level, so Keycloak asks for the new password, then a code from the old factor.
@@ -426,7 +498,7 @@ describe('step-up authentication against Keycloak', () => {
     expect((await again.startStepUp('/notes')).kind).toBe('enrol');
   });
 
-  it("a second-factor reset refuses the admin's own factor and users outside the admin's tenant", async () => {
+  it("a second-factor reset refuses the admin's own factor, users outside the admin's tenant and users of several tenants", async () => {
     const admin = await member('synthetic.admin');
     harness.grantRoles(admin.id, ['tenant_admin']);
     const adminSession = browser();
@@ -436,6 +508,26 @@ describe('step-up authentication against Keycloak', () => {
     const own = await adminSession.command('auth.resetSecondFactor', { userId: admin.id }, newIdempotencyKey());
     expect(own.status).toBe(403);
     const organizationB = await keycloak.admin.createOrganization('tenant-b', harness.tenantB);
+
+    // A user of this tenant who also belongs to another keeps their sessions there, so the reset is refused.
+    const shared = await approver();
+    await browser().signIn(shared);
+    await keycloak.admin.addMember(organizationB, shared.id);
+    const refusedShared = await adminSession.command(
+      'auth.resetSecondFactor',
+      { userId: shared.id },
+      newIdempotencyKey(),
+    );
+    expect(refusedShared.status).toBe(403);
+    expect(refusedShared.body).toEqual({
+      error: 'Forbidden',
+      message: 'pl.error.forbidden.notPermitted',
+      params: { resource: 'user' },
+    });
+    expect(
+      await harness.count('select 1 from staff_sessions where subject_id = $1 and ended_at is not null', [shared.id]),
+    ).toBe(0);
+
     const stranger = await member('synthetic.stranger', organizationB);
     const elsewhere = await adminSession.command(
       'auth.resetSecondFactor',
@@ -454,6 +546,43 @@ describe('step-up authentication against Keycloak', () => {
         [admin.id],
       ),
     ).toBe(0);
+  });
+
+  it("the API's service account can reset second factors but cannot change the realm, its clients or organizations", async () => {
+    const tokenResponse = await fetch(`${keycloak.issuer}/protocol/openid-connect/token`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`${adminClientId}:${adminClientSecret}`).toString('base64')}`,
+      },
+      body: new URLSearchParams({ grant_type: 'client_credentials' }),
+    });
+    const serviceToken = z.object({ access_token: z.string() }).parse(await tokenResponse.json()).access_token;
+    const call = (method: string, path: string, body?: unknown) =>
+      fetch(`${keycloak.baseUrl}/admin/realms/${realmName}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${serviceToken}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+    const person = await approver();
+
+    // What the second-factor reset uses.
+    expect((await call('GET', `/users/${person.id}/credentials`)).status).toBe(200);
+    expect((await call('POST', `/users/${person.id}/logout`)).status).toBe(204);
+    expect((await call('GET', `/organizations/members/${person.id}/organizations`)).status).toBe(200);
+
+    // Beyond users: the realm, its flows, clients, identity providers, roles and organizations.
+    expect((await call('PUT', '', { resetPasswordAllowed: true })).status).toBe(403);
+    expect((await call('GET', '/authentication/flows')).status).toBe(403);
+    expect((await call('GET', '/clients')).status).toBe(403);
+    expect((await call('GET', '/identity-provider/instances')).status).toBe(403);
+    expect((await call('POST', '/roles', { name: 'synthetic-role' })).status).toBe(403);
+    expect((await call('POST', `/organizations/${organizationA}/members`, person.id)).status).toBe(403);
+    expect((await call('POST', '/organizations', { name: 'Synthetic', alias: 'synthetic-rogue' })).status).toBe(403);
+    expect((await call('POST', `/users/${person.id}/impersonation`)).ok).toBe(false);
+    expect(await keycloak.admin.userSessionCount(person.id)).toBe(0);
   });
 
   it('a step-up of a session that has ended is refused without re-authenticating', async () => {

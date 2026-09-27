@@ -2,8 +2,9 @@ import type { Result } from '@partledger/domain';
 
 /**
  * What the API changes in the staff identity provider through its admin API (KTD20), a port
- * with Keycloak as its adapter. The API's service account may manage users; it cannot change
- * the realm. U8 adds organization membership here.
+ * with Keycloak as its adapter. The API's service account holds `manage-users`, which is wider
+ * than these calls and cannot change the realm; adding organization members would need
+ * `manage-realm` (docs/runbooks/keycloak.md).
  */
 export interface IdentityAdministration {
   /** The tenants the user belongs to through their organizations; empty for an unknown user. */

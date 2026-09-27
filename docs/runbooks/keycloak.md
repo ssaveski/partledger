@@ -43,13 +43,31 @@ Users brokered from a customer's identity provider never see the password form. 
 
 ### Forgot-password and lost second factors
 
-`resetPasswordAllowed` is on and the realm binds `partledger reset credentials`: Choose User, Send Reset Email, Reset Password, and nothing else. The built-in flow's `Reset - Conditional OTP` (Reset OTP) is left out, so a forgot-password e-mail can change the password but never remove or replace a second factor, and a reset password counts for no level: the next step-up asks for the password and then a code from the existing factor. The realm needs SMTP settings per environment (Realm settings > Email) for the reset e-mail.
+Forgot-password is off (`resetPasswordAllowed: false`): the sign-in pages offer no reset link and the reset endpoint refuses. Were it switched on, a user of a customer's identity provider could otherwise give themselves a Keycloak password by e-mail, sign in without the customer's identity provider (after the customer had disabled them), enrol their own second factor at the first step-up, and approve.
 
-A lost second factor is reset only by the `auth.resetSecondFactor` command: a tenant admin with a fresh step-up names a user of their own tenant (not themselves); the API ends the user's staff sessions (`second_factor_reset`) and, in the same transaction, appends an audit entry whose actor is the admin and whose payload holds only ids and counts, and enqueues the `auth.resetSecondFactor` job (KTD16). Once the command has committed, the job removes the user's `otp` credentials and ends their Keycloak sessions through the admin API, retrying every 30 seconds while Keycloak is unreachable, and appends its own `auth.secondFactorRemoved` entry. Until the job has run, the user has no staff session but could still sign in again with the old factor; a failed job shows in the job runner's failed jobs (`docs/runbooks/jobs.md`). The user enrols a new factor at their next step-up. Until U8 stores tenant roles, the role directory grants nobody `tenant_admin`, so the command is refused in production; U8 replaces the placeholder with membership rows.
+The realm still binds its own reset-credentials flow, `partledger reset credentials`, so switching forgot-password on later cannot reopen that hole or touch a second factor:
+
+| Execution | Requirement | Why |
+|---|---|---|
+| Choose User, Send Reset Email | required | As built in; an unknown user gets the same page and no e-mail. |
+| `partledger refuse reset without password account`: Condition - user role (`password-account`, negated), Deny access | conditional | After the e-mailed link, an account without the realm role `password-account` ends on Keycloak's access-denied page and gets no password. |
+| Reset Password | required | The new password. |
+
+The built-in flow's `Reset - Conditional OTP` (Reset OTP) is left out, so the flow never removes or replaces a second factor, and a reset password counts for no level: the next step-up asks for the password and then a code from the existing factor. `password-account` is an allow-list rather than a check for a federated link, which Keycloak 26.4 has no flow condition for: accounts created by a customer's identity provider never hold it, so an account nobody marked is refused. U8 gives it to the local accounts a tenant admin invites; never give it to an account linked to an identity provider. Switching forgot-password on also needs SMTP settings per environment (Realm settings > Email).
+
+A lost second factor is reset only by the `auth.resetSecondFactor` command: a tenant admin with a fresh step-up names a user of their own tenant who belongs to no other tenant (not themselves; a user of several tenants would keep their staff sessions in the others, so the reset is refused with `pl.error.forbidden.notPermitted`); the API ends the user's staff sessions (`second_factor_reset`) and, in the same transaction, appends an audit entry whose actor is the admin and whose payload holds only ids and counts, and enqueues the `auth.resetSecondFactor` job (KTD16). Once the command has committed, the job removes the user's `otp` credentials and ends their Keycloak sessions through the admin API, retrying every 30 seconds while Keycloak is unreachable, and appends its own `auth.secondFactorRemoved` entry. Until the job has run, the user has no staff session but could still sign in again with the old factor; a failed job shows in the job runner's failed jobs (`docs/runbooks/jobs.md`). The user enrols a new factor at their next step-up. Until U8 stores tenant roles, the role directory grants nobody `tenant_admin`, so the command is refused in production; U8 replaces the placeholder with membership rows.
 
 ### The API's service account
 
-The client `partledger-api-admin` is confidential, has only the service-account grant, and its scope holds exactly `realm-management` `view-users` and `manage-users` (`fullScopeAllowed` is off; the roles reach the token through the client's scope mapping). The API uses it for second-factor resets and, from U8, organization membership. It cannot change the realm, and impersonation is disabled. Regenerate its secret after an import, like the API client's, and put it in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
+The client `partledger-api-admin` is confidential, has only the service-account grant, and its scope holds exactly one role, `realm-management` `manage-users` (`fullScopeAllowed` is off; the role reaches the token through the client's scope mapping). The API uses it for the second-factor reset: it reads a user's organizations and credentials, deletes `otp` credentials and ends the user's Keycloak sessions. Regenerate its secret after an import, like the API client's, and put it in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
+
+**Residual scope (a KTD20 decision for the owner).** KTD20 has the service account manage membership only; Keycloak 26.4 cannot narrow it that far:
+
+- Deleting a credential and ending a user's sessions need `manage` on that user, and Keycloak grants `manage` on users only whole: with `manage-users` the account can also set any user's password, change their e-mail, add federated identity links, send required-action e-mails, and create or delete users, in every tenant of the realm. `view-users` is not needed and is not granted.
+- Fine-grained admin permissions v2 (probed on 26.4 with `adminPermissionsEnabled`) give the same `manage` scope on users: a permission on all users allowed the same calls, a `manage`-only permission without `view` allowed none of them, and a negative permission on the `reset-password` scope denied the users entirely rather than that one call. Its target is a fixed list of users or group members, not an organization, so it cannot confine the account to one tenant either.
+- Adding organization members needs `manage-realm` (probed: no narrower role allows it; with `manage-users` the call answers 403). U8 must not grant it to this account without the owner's decision, since `manage-realm` can change the realm's flows, identity providers and settings.
+
+What the account cannot do, checked by `step-up.integration.spec.ts`: change the realm or read its flows, clients or identity providers, create roles, create organizations or add their members, or impersonate anyone. The API calls only the endpoints above, and the admin events Keycloak records show every call the account makes.
 
 ### Why the refresh token is stored
 
@@ -86,10 +104,11 @@ Refreshing at a short interval is how a disabled user or a removed membership lo
 | `firstBrokerLoginFlow` | built-in `first broker login`, no `idp-auto-link` | A brokered login whose email matches an existing account is never linked automatically; the person must confirm and re-authenticate. Keep `trustEmail` off on every identity provider. |
 | `adminEventsEnabled`, `adminEventsDetailsEnabled`, `eventsEnabled` | `true` | Admin and login events are recorded (KTD41); production ships them to the in-region log store. |
 | `registrationAllowed` | `false` | Accounts are invited (U8). |
-| `resetPasswordAllowed`, `resetCredentialsFlow` | `true`, `partledger reset credentials` | Forgot-password changes the password only; it has no conditional OTP reset (see Step-up). |
+| `resetPasswordAllowed`, `resetCredentialsFlow` | `false`, `partledger reset credentials` | No forgot-password; the bound flow has no OTP reset and refuses accounts without `password-account` (see Step-up). |
+| Realm role `password-account` | given by U8 to invited local accounts only | The only accounts the reset flow would serve. |
 | `browserFlow`, `acr.loa.map` | `partledger browser`, `{"sign-in":1,"step-up":2}` | Levels of authentication for step-up (see Step-up). |
 | `partledger post broker login` | set as every identity provider's post login flow | Brokered logins count as sign-in and can step up. |
-| Client `partledger-api-admin` | service account, `view-users` and `manage-users` only | Second-factor resets (U29) and membership (U8). |
+| Client `partledger-api-admin` | service account, `manage-users` only | Second-factor resets (U29); its residual scope is described under Step-up. |
 | `redirectUris` | the local staff app only | Each environment sets its own origin; nothing else may receive codes. |
 
 Keycloak itself runs with `--features-disabled=impersonation`, and the API refuses any token with an `impersonator` claim as a second line.

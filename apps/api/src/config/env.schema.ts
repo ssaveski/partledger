@@ -39,7 +39,7 @@ export const envSchema = z
     KEYCLOAK_CLIENT_SECRET: z.string().min(16),
     /**
      * The API's service-account client for the realm's admin API: it resets second factors
-     * and ends users' Keycloak sessions (U29), and manages organization membership (U8).
+     * and ends users' Keycloak sessions (U29). Its residual scope is in docs/runbooks/keycloak.md.
      */
     KEYCLOAK_ADMIN_CLIENT_ID: z.string().min(1).default('partledger-api-admin'),
     KEYCLOAK_ADMIN_CLIENT_SECRET: z.string().min(16),

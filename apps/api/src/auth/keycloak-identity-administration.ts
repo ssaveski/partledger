@@ -6,7 +6,7 @@ import type { IdentityAdministration } from './identity-administration';
 export interface KeycloakAdministrationOptions {
   /** The realm URL, such as `https://id.example/realms/partledger`. */
   readonly issuer: string;
-  /** The service-account client; its scope holds only `view-users` and `manage-users`. */
+  /** The service-account client; its scope holds only `manage-users` (see docs/runbooks/keycloak.md). */
   readonly clientId: string;
   readonly clientSecret: string;
 }
