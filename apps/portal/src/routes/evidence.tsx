@@ -126,7 +126,8 @@ function RequestCard({ request }: { request: EvidenceRequest }) {
           {/* U31 adds uploads through the scanned upload pipeline; until then the action says so. */}
           <Button variant="secondary" disabled focusableWhenDisabled aria-describedby={uploadReasonId}>
             <FileUpIcon aria-hidden />
-            {translate('pl.portal.evidence.upload', { type: typeName })}
+            {translate('pl.portal.evidence.upload')}
+            <span className="sr-only">{translate('pl.portal.evidence.uploadContext', { type: typeName })}</span>
           </Button>
           <p id={uploadReasonId} className="text-sm text-muted">
             {translate('pl.portal.evidence.uploadUnavailable')}

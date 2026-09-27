@@ -51,11 +51,11 @@ export function createFixtureConnection(
     client: createApiClient(createFixtureAdapter(portalFixtureHandlers(store.read), { latency })),
     async exchange(linkId, secret) {
       await latency();
-      if (!exchangeFixtureLink(linkId, secret)) {
-        return 'refused';
+      const outcome = exchangeFixtureLink(linkId, secret);
+      if (outcome === 'opened') {
+        store.open(linkId);
       }
-      store.open(linkId);
-      return 'opened';
+      return outcome;
     },
   };
 }

@@ -30,14 +30,44 @@ const ownLineIds = new Set(
 
 const otherLines = portalFixtureOutputs.allLines.filter((line) => !line.assignedToSessionSupplier);
 
+/**
+ * Everything in a read that belongs to another supplier: a line not assigned to the session's
+ * supplier, another line's id anywhere in the body, or the other supplier's name. Empty means
+ * the read is isolated.
+ */
+function isolationLeaks(value: unknown): string[] {
+  const leaks: string[] = [];
+  const lines: unknown = typeof value === 'object' && value !== null && 'lines' in value ? value.lines : [];
+  const entries: readonly unknown[] = Array.isArray(lines) ? lines : [];
+  for (const line of entries) {
+    const lineId: unknown = typeof line === 'object' && line !== null && 'lineId' in line ? line.lineId : null;
+    if (typeof lineId !== 'string' || !ownLineIds.has(lineId)) {
+      leaks.push(`line ${String(lineId)} is not assigned to the supplier`);
+    }
+  }
+  const body = JSON.stringify(value);
+  for (const other of otherLines) {
+    if (body.includes(other.lineId)) {
+      leaks.push(`the body names line ${other.lineId}`);
+    }
+  }
+  if (body.includes('Kestrel')) {
+    leaks.push('the body names another supplier');
+  }
+  return leaks;
+}
+
 describe('the synthetic supplier links', () => {
   it('open a session only with the right secret of an active link', () => {
     const open = portalFixtureLinks.open;
-    expect(exchangeFixtureLink(open.linkId, open.secret)).toBe(true);
-    expect(exchangeFixtureLink(open.linkId, portalFixtureLinks.closed.secret)).toBe(false);
-    expect(exchangeFixtureLink(portalFixtureLinks.expired.linkId, portalFixtureLinks.expired.secret)).toBe(false);
-    expect(exchangeFixtureLink(portalFixtureLinks.revoked.linkId, portalFixtureLinks.revoked.secret)).toBe(false);
-    expect(exchangeFixtureLink('00000000-0000-4000-8000-000000000000', open.secret)).toBe(false);
+    expect(exchangeFixtureLink(open.linkId, open.secret)).toBe('opened');
+    expect(exchangeFixtureLink(open.linkId, portalFixtureLinks.closed.secret)).toBe('refused');
+    expect(exchangeFixtureLink(portalFixtureLinks.expired.linkId, portalFixtureLinks.expired.secret)).toBe('refused');
+    expect(exchangeFixtureLink(portalFixtureLinks.revoked.linkId, portalFixtureLinks.revoked.secret)).toBe('refused');
+    expect(exchangeFixtureLink('00000000-0000-4000-8000-000000000000', open.secret)).toBe('refused');
+    expect(exchangeFixtureLink(portalFixtureLinks.checkFails.linkId, portalFixtureLinks.checkFails.secret)).toBe(
+      'unavailable',
+    );
   });
 
   it('refuse every read without an active session, as the uniform 401 would', async () => {
@@ -106,15 +136,19 @@ describe('what the session supplier receives', () => {
       }
       const lines = 'lines' in read.value ? read.value.lines : [];
       expect(lines.length).toBeGreaterThan(0);
-      for (const line of lines) {
-        expect(ownLineIds.has(line.lineId), line.partNumber).toBe(true);
-      }
-      const body = JSON.stringify(read.value);
-      expect(body).not.toContain('Kestrel');
-      for (const other of otherLines) {
-        expect(body).not.toContain(other.lineId);
-      }
+      expect(isolationLeaks(read.value)).toEqual([]);
     }
+  });
+
+  // A negative control: the isolation check above would catch a projection that forgot to filter.
+  it('reports the leak when a read carries every line of the request, unfiltered', () => {
+    const unfiltered = { lines: portalFixtureOutputs.allLines.filter((line) => line.scenario === 'open') };
+    const leaked = otherLines.filter((line) => line.scenario === 'open').map((line) => line.lineId);
+    expect(leaked).toHaveLength(2);
+    expect(isolationLeaks(unfiltered)).toEqual([
+      ...leaked.map((lineId) => `line ${lineId} is not assigned to the supplier`),
+      ...leaked.map((lineId) => `the body names line ${lineId}`),
+    ]);
   });
 
   it('is the outcome of its own lines only, with nothing about who else won', async () => {
@@ -129,12 +163,20 @@ describe('what the session supplier receives', () => {
     ]);
   });
 
-  it('marks a submitted line the buyer changed afterwards', () => {
-    const open = submissionReadSchema.parse(portalFixtureOutputs.submissions[0]);
-    if (open.availability !== 'submitted') {
-      throw new Error('The open request has a submission');
-    }
-    expect(open.lines.filter((line) => line.changedSince).map((line) => line.lineNumber)).toEqual([3]);
+  it('marks a submitted line the buyer changed afterwards, before and after close', () => {
+    const changedLines = (index: number) => {
+      const read = submissionReadSchema.parse(portalFixtureOutputs.submissions[index]);
+      if (read.availability !== 'submitted') {
+        throw new Error('The request has a submission');
+      }
+      return {
+        state: read.rfqState,
+        lines: read.lines.filter((line) => line.changedSince).map((line) => line.lineNumber),
+      };
+    };
+    expect(changedLines(0)).toEqual({ state: 'open', lines: [3] });
+    expect(changedLines(1)).toEqual({ state: 'closed', lines: [4] });
+    expect(changedLines(2)).toEqual({ state: 'sealed', lines: [] });
   });
 
   it('lists the evidence requests of an evidence link in every status', async () => {

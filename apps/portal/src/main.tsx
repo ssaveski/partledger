@@ -9,6 +9,7 @@ import { createRoot } from 'react-dom/client';
 
 import { adapterKindFrom, ConnectionProvider, createConnection } from './api/connection';
 import { createPortalRouter } from './router';
+import { supplierUnexpectedErrorKey } from './shell/route-error';
 
 const container = document.getElementById('root');
 if (container === null) {
@@ -30,7 +31,7 @@ const router = createPortalRouter();
 
 createRoot(container).render(
   <StrictMode>
-    <RootErrorBoundary>
+    <RootErrorBoundary messageKey={supplierUnexpectedErrorKey}>
       <ConnectionProvider connection={connection}>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>

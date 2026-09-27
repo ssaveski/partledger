@@ -44,11 +44,13 @@ export const portalFixtureScenarios = [
   'revoked',
   'slow',
   'unavailable',
+  'checkFails',
 ] as const;
 
 export type PortalFixtureScenario = (typeof portalFixtureScenarios)[number];
 
-type LinkStatus = 'active' | 'expired' | 'revoked';
+/** `unreachable` stands for a link whose check cannot be answered, as when the API is down. */
+type LinkStatus = 'active' | 'expired' | 'revoked' | 'unreachable';
 
 interface FixtureLink {
   readonly scenario: PortalFixtureScenario;
@@ -66,6 +68,7 @@ const linkStatuses: Readonly<Record<PortalFixtureScenario, LinkStatus>> = {
   revoked: 'revoked',
   slow: 'active',
   unavailable: 'active',
+  checkFails: 'unreachable',
 };
 
 const links: readonly FixtureLink[] = portalFixtureScenarios.map((scenario, index) => ({
@@ -93,15 +96,19 @@ export const portalFixtureLinks = {
   revoked: linkOf('revoked'),
   slow: linkOf('slow'),
   unavailable: linkOf('unavailable'),
+  checkFails: linkOf('checkFails'),
 } as const satisfies Readonly<Record<PortalFixtureScenario, { linkId: string; secret: string }>>;
 
 /**
  * Stands in for the exchange U17 adds: a wrong secret, an expired link and a revoked link are
  * refused alike, as the API's one uniform 401 will be.
  */
-export function exchangeFixtureLink(linkId: string, secret: string): boolean {
+export function exchangeFixtureLink(linkId: string, secret: string): 'opened' | 'refused' | 'unavailable' {
   const link = links.find((candidate) => candidate.linkId === linkId);
-  return link !== undefined && link.secret === secret && link.status === 'active';
+  if (link?.status === 'unreachable') {
+    return 'unavailable';
+  }
+  return link !== undefined && link.secret === secret && link.status === 'active' ? 'opened' : 'refused';
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -303,11 +310,12 @@ const closedLines: readonly FixtureLine[] = [
     lineNumber: 4,
     partNumber: 'PN-40213',
     revision: 'C',
-    description: 'Manifold block, anodised',
+    description: 'Manifold block, anodised, thread callout revised in version 2',
     quantity: 60,
     requiredBy: '2026-12-10',
     quantityBreaks: [60, 120],
     assigned: ['birchfield', 'kestrel'],
+    changed: { version: 2, changedAt: '2026-09-18T19:55:00Z' },
     submitted: {
       birchfield: {
         kind: 'alternate',
@@ -433,7 +441,7 @@ const rfqs = {
     reference: 'RFQ-1055',
     title: 'Hydraulic fittings, fourth quarter',
     state: 'closed',
-    version: 1,
+    version: 2,
     deadline: '2026-09-18T20:00:00Z',
     currency: 'CAD',
     lines: closedLines,
@@ -464,6 +472,7 @@ const rfqOfScenario: Readonly<Record<PortalFixtureScenario, FixtureRfq | null>> 
   revoked: rfqs.open,
   slow: rfqs.open,
   unavailable: rfqs.open,
+  checkFails: rfqs.open,
 };
 
 const timeZone = 'America/Toronto';
@@ -503,6 +512,11 @@ function sessionOf(rfq: FixtureRfq | null): SessionOutput {
   };
 }
 
+/** A line changed after a submission when the buyer's change is to a later RFQ version than it answered. */
+function changedSince(line: FixtureLine, submission: FixtureRfq['submission']): boolean {
+  return line.changed !== undefined && submission !== null && line.changed.version > submission.rfqVersion;
+}
+
 function responseOf(rfq: FixtureRfq, supplier: SupplierKey): ResponseOutput {
   return {
     reference: rfq.reference,
@@ -517,7 +531,10 @@ function responseOf(rfq: FixtureRfq, supplier: SupplierKey): ResponseOutput {
       ...lineFields(line),
       requiredBy: line.requiredBy,
       quantityBreaks: [...line.quantityBreaks],
-      changed: line.changed === undefined || line.submitted?.[supplier] === undefined ? null : { ...line.changed },
+      changed:
+        line.changed !== undefined && line.submitted?.[supplier] !== undefined && changedSince(line, rfq.submission)
+          ? { ...line.changed }
+          : null,
       draft: line.drafts?.[supplier] ?? null,
     })),
     allowedTransitions: ['saveDraft', 'submit'],
@@ -547,7 +564,7 @@ function submissionOf(rfq: FixtureRfq, supplier: SupplierKey): SubmissionOutput 
     lines: answered.map(({ line, answer }) => ({
       ...lineFields(line),
       answer,
-      changedSince: line.changed !== undefined && line.changed.version > submission.rfqVersion,
+      changedSince: changedSince(line, submission),
     })),
   };
 }
@@ -626,10 +643,13 @@ export const portalFixtureOutputs = {
   outcomes: [outcomeOf(rfqs.sealed, sessionSupplier)],
   evidence: [evidenceRequests],
   /** Every line of every fixture RFQ, including those assigned only to other suppliers. */
-  allLines: [...openLines, ...closedLines, ...sealedLines].map((line) => ({
-    ...lineFields(line),
-    assignedToSessionSupplier: line.assigned.includes(sessionSupplier),
-  })),
+  allLines: (['open', 'closed', 'sealed'] as const).flatMap((scenario) =>
+    rfqs[scenario].lines.map((line) => ({
+      ...lineFields(line),
+      scenario,
+      assignedToSessionSupplier: line.assigned.includes(sessionSupplier),
+    })),
+  ),
 };
 
 /**

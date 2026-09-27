@@ -15,6 +15,7 @@ const scenarios: readonly PortalFixtureScenario[] = [
   'revoked',
   'slow',
   'unavailable',
+  'checkFails',
 ];
 
 /** Suppliers arrive through links, so the portal's front page only says where to find one. */

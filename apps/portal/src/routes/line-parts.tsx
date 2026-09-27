@@ -49,16 +49,20 @@ export function LineFacts({ line, requiredBy }: { line: LinePart; requiredBy?: s
 
 /**
  * A line the buyer changed after the supplier last submitted (R16). It is its own indicator,
- * separate from the draft-saved status, because saving a draft does not resubmit the line.
+ * separate from the draft-saved status, because saving a draft does not resubmit the line. While
+ * the request is open it asks for a resubmission; after close it only says the answer is to the
+ * earlier version, since nothing can be resubmitted any more.
  */
 export function ChangedLineNotice({
   id,
   change,
   timeZone,
+  canResubmit,
 }: {
   id: string;
   change: { version: number; changedAt: string } | null;
   timeZone: string;
+  canResubmit: boolean;
 }) {
   const translate = useTranslate();
   return (
@@ -68,7 +72,9 @@ export function ChangedLineNotice({
     >
       <HistoryIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
       <p className="flex flex-col gap-0.5">
-        <strong className="font-semibold">{translate('pl.portal.line.changed')}</strong>
+        <strong className="font-semibold">
+          {translate(canResubmit ? 'pl.portal.line.changed' : 'pl.portal.line.changedAfterSubmission')}
+        </strong>
         {change === null ? null : (
           <span className="text-muted">
             {translate('pl.portal.line.changedDetail', {

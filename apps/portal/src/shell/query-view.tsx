@@ -1,10 +1,21 @@
-import { failureMessageKey, isPermissionFailure, type ClientResult } from '@partledger/contracts/client';
+import {
+  failureMessageKey,
+  isPermissionFailure,
+  type ClientFailure,
+  type ClientResult,
+} from '@partledger/contracts/client';
 import { ErrorState, LoadingState, NoPermissionState, useTranslate } from '@partledger/ui';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
 import { useDocumentTitle } from './document-title';
 import { LinkUnavailableState } from './link-unavailable';
+import { supplierUnexpectedErrorKey } from './route-error';
+
+/** The message of a failed read, with the supplier wording where the shared one would name an administrator. */
+export function supplierFailureMessageKey(failure: ClientFailure): string {
+  return failure.kind === 'malformed' ? supplierUnexpectedErrorKey : failureMessageKey(failure);
+}
 
 type ViewState = 'loading' | 'linkUnavailable' | 'noPermission' | 'error' | 'ready';
 
@@ -69,7 +80,7 @@ export function QueryView<Value>({
         <ErrorState
           headingLevel={1}
           messageKey={
-            result === undefined || result.ok ? 'pl.ui.state.error.unexpected' : failureMessageKey(result.failure)
+            result === undefined || result.ok ? supplierUnexpectedErrorKey : supplierFailureMessageKey(result.failure)
           }
           onRetry={() => {
             void query.refetch();

@@ -109,7 +109,12 @@ function Submitted({ submission }: { submission: PortalSubmission }) {
                 </h3>
                 <LineFacts line={line} />
                 {line.changedSince ? (
-                  <ChangedLineNotice id={`change-${line.lineId}`} change={null} timeZone={session.timeZone} />
+                  <ChangedLineNotice
+                    id={`change-${line.lineId}`}
+                    change={null}
+                    timeZone={session.timeZone}
+                    canResubmit={submission.rfqState === 'open'}
+                  />
                 ) : null}
                 <AnswerSummary answer={line.answer} unit={line.unit} />
               </article>

@@ -34,9 +34,15 @@ export function LinkLanding() {
   const navigate = useNavigate();
   const [secret] = useState(() => linkSecretFromFragment(window.location.hash));
   const [state, setState] = useState<LandingState>('ready');
-  useDocumentTitle('pl.portal.landing.title');
+  const unavailableLink = !linkIdSchema.safeParse(linkId).success || secret === null || state === 'refused';
+  // The link-unavailable state names the tab itself; this only names the landing and its error.
+  useDocumentTitle(
+    state === 'unavailable' ? 'pl.portal.stateTitle.error' : 'pl.portal.landing.title',
+    { screen: translate('pl.portal.landing.title') },
+    !unavailableLink,
+  );
 
-  if (!linkIdSchema.safeParse(linkId).success || secret === null || state === 'refused') {
+  if (unavailableLink) {
     return <LinkUnavailableState />;
   }
 

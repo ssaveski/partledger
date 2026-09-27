@@ -38,6 +38,7 @@ import {
 import { useApiQuery, useConnection } from '../api/connection';
 import { useDocumentTitle } from '../shell/document-title';
 import { formatInstantIn, formatInstantUtc } from '../shell/format';
+import { countKey } from '../shell/plural';
 import { QueryView } from '../shell/query-view';
 import { usePortalSession } from '../shell/session-layout';
 import { ChangedLineNotice, LineFacts, LineTitle, quantityLabel } from './line-parts';
@@ -136,7 +137,10 @@ function ResponseForm({ response }: { response: PortalResponse }) {
           </span>
         </h1>
         <p className="max-w-prose text-sm text-muted">
-          {translate('pl.portal.respond.intro', { count: response.lines.length, buyer: response.buyerName })}
+          {translate(countKey('pl.portal.respond.intro', response.lines.length), {
+            count: response.lines.length,
+            buyer: response.buyerName,
+          })}
         </p>
         <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm [&_dd]:font-medium [&_dt]:text-muted">
           <div className="flex flex-col gap-0.5">
@@ -160,7 +164,12 @@ function ResponseForm({ response }: { response: PortalResponse }) {
           </div>
           <div className="flex flex-col gap-0.5">
             <dt>{translate('pl.portal.respond.progress')}</dt>
-            <dd>{translate('pl.portal.respond.answeredCount', { answered, total: response.lines.length })}</dd>
+            <dd>
+              {translate(countKey('pl.portal.respond.answeredCount', response.lines.length), {
+                answered,
+                total: response.lines.length,
+              })}
+            </dd>
           </div>
           <div className="flex flex-col gap-0.5">
             <dt>{translate('pl.portal.respond.draft')}</dt>
@@ -348,7 +357,7 @@ function LineFieldset({
         <LineTitle line={line} />
       </legend>
       <LineFacts line={line} requiredBy={line.requiredBy} />
-      {changed ? <ChangedLineNotice id={changeId} change={line.changed} timeZone={timeZone} /> : null}
+      {changed ? <ChangedLineNotice id={changeId} change={line.changed} timeZone={timeZone} canResubmit /> : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <SelectField
           control={control}

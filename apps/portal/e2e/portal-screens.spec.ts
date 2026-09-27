@@ -6,7 +6,17 @@ function fixtureId(serial: number): string {
   return `00000000-0000-4000-8000-${serial.toString().padStart(12, '0')}`;
 }
 
-const scenarios = ['open', 'closed', 'sealed', 'evidence', 'expired', 'revoked', 'slow', 'unavailable'] as const;
+const scenarios = [
+  'open',
+  'closed',
+  'sealed',
+  'evidence',
+  'expired',
+  'revoked',
+  'slow',
+  'unavailable',
+  'checkFails',
+] as const;
 
 type Scenario = (typeof scenarios)[number];
 
@@ -98,7 +108,9 @@ test.describe('the link landing page', () => {
       await page.goto(url);
       await page.getByRole('button', { name: 'Continue' }).click();
       await expect(page.getByRole('heading', { level: 1, name: linkUnavailable })).toBeVisible();
-      await expect(page.getByRole('main')).toContainText('Contact the buyer who sent it and ask them for a new link.');
+      await expect(page.getByRole('main')).toContainText(
+        "Open the link in the buyer's email again. If it still does not work, contact the buyer for a new link.",
+      );
       await expect(page.getByRole('main').getByRole('button')).toHaveCount(0);
       await expect(page.getByRole('main').getByRole('link')).toHaveCount(0);
       await expect(page).toHaveTitle(`${linkUnavailable} · Partledger supplier portal`);
@@ -108,9 +120,37 @@ test.describe('the link landing page', () => {
   test('a link without its secret shows the link no longer available state without sending anything', async ({
     page,
   }) => {
+    const requests: Request[] = [];
+    page.on('request', (request) => {
+      requests.push(request);
+    });
     await page.goto(`/link/${linkId('open')}`);
     await expect(page.getByRole('heading', { level: 1, name: linkUnavailable })).toBeVisible();
     await expect(page.getByRole('main').getByRole('button')).toHaveCount(0);
+    await expect(page).toHaveTitle(`${linkUnavailable} · Partledger supplier portal`);
+    await page.waitForLoadState('networkidle');
+    expect(requests.filter((request) => request.method() !== 'GET')).toEqual([]);
+    expect(requests.filter((request) => new URL(request.url()).pathname.startsWith('/api/'))).toEqual([]);
+    expect(await page.evaluate(() => window.sessionStorage.length)).toBe(0);
+  });
+
+  test('an address that cannot name a link shows the link no longer available state and names the tab after it', async ({
+    page,
+  }) => {
+    await page.goto(`/link/not-a-link#${secret('open')}`);
+    await expect(page.getByRole('heading', { level: 1, name: linkUnavailable })).toBeVisible();
+    await expect(page).toHaveTitle(`${linkUnavailable} · Partledger supplier portal`);
+  });
+
+  test('a link that cannot be checked shows an error state with a retry, named in the tab', async ({ page }) => {
+    await page.goto(linkUrl('checkFails'));
+    await expect(page).toHaveTitle('Open your secure link · Partledger supplier portal');
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('We could not check your link just now.');
+    await expect(page).toHaveTitle('Something went wrong: Open your secure link · Partledger supplier portal');
+    await page.getByRole('button', { name: 'Try again' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Something went wrong' })).toBeVisible();
   });
 
   test('a screen opened without a session shows the link no longer available state', async ({ page }) => {
@@ -226,6 +266,11 @@ test.describe('read-only views', () => {
     await expect(page.getByRole('article')).toHaveCount(3);
     await expect(main).toContainText('No capacity before the date needed');
     await expect(main).toContainText('PN-40213-H, hard-anodised finish');
+    // After close nothing can be resubmitted, so a line changed since says only that the answer is to the earlier version.
+    const changedLine = page.getByRole('article', { name: /Line 4/ });
+    await expect(changedLine).toContainText('Changed after you submitted — this answer is to the earlier version');
+    await expect(main).not.toContainText('review and resubmit');
+    await expect(page.getByText('Changed after you submitted')).toHaveCount(1);
     await expect(main).toContainText('US$142.00');
     await expect(main).not.toContainText('PN-40212');
     for (const role of ['textbox', 'combobox', 'checkbox', 'spinbutton'] as const) {
@@ -243,7 +288,7 @@ test.describe('read-only views', () => {
     await expect(lines.filter({ hasText: 'PN-55121' })).toContainText('Awarded to you');
     await expect(lines.filter({ hasText: 'PN-55124' })).toContainText('Not awarded to you');
     const main = page.getByRole('main');
-    await expect(main).toContainText('1 of your 3 lines were awarded to your organisation.');
+    await expect(main).toContainText('Lines awarded to your organisation: 1 of 3.');
     await expect(main).toContainText('This shows the outcome of your own lines only.');
     // Lines 3 and 4 went to another supplier, whose name and prices never reach this one.
     await expect(main).not.toContainText('PN-55122');
@@ -274,9 +319,11 @@ test.describe('read-only views', () => {
     const rejected = page.getByRole('article', { name: 'Forced-labour attestation' });
     await expect(rejected).toContainText('Rejected');
     await expect(rejected).toContainText('The attestation is not signed.');
-    await expect(rejected.getByRole('button', { name: 'Upload Forced-labour attestation' })).toBeDisabled();
     await expect(
-      rejected.getByRole('button', { name: 'Upload Forced-labour attestation' }),
+      rejected.getByRole('button', { name: 'Upload document for Forced-labour attestation' }),
+    ).toBeDisabled();
+    await expect(
+      rejected.getByRole('button', { name: 'Upload document for Forced-labour attestation' }),
     ).toHaveAccessibleDescription('Uploading documents is not available yet.');
     const accepted = page.getByRole('article', { name: 'Certificate of insurance' });
     await expect(accepted).toContainText('Accepted');
@@ -366,6 +413,28 @@ test.describe('accessibility in both themes', () => {
         await expectNoAxeViolations(page);
       });
     }
+  }
+});
+
+test.describe('narrow screens', () => {
+  const views: readonly (readonly [string, (page: Page) => Promise<void>])[] = [
+    ['link landing', (page) => page.goto(linkUrl('open')).then(() => undefined)],
+    ['response form', (page) => openLink(page, 'open')],
+    ['last submission', (page) => openLink(page, 'closed')],
+    ['outcome', (page) => openLink(page, 'sealed')],
+    ['evidence requests', (page) => openLink(page, 'evidence')],
+  ];
+  for (const [name, open] of views) {
+    test(`the ${name} fits a 360 pixel wide screen without scrolling sideways`, async ({ page }) => {
+      await page.setViewportSize({ width: 360, height: 800 });
+      await open(page);
+      await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /^Loading|^Opening/ })).toHaveCount(0);
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow).toBe(0);
+    });
   }
 });
 

@@ -3,6 +3,9 @@ import type { ErrorComponentProps } from '@tanstack/react-router';
 
 import { useDocumentTitle } from './document-title';
 
+/** Suppliers have no administrator of ours to ask, so the unexpected-error message points to the buyer. */
+export const supplierUnexpectedErrorKey = 'pl.portal.error.unexpected';
+
 /**
  * The router catches rendering failures before the root error boundary can, so it shows the same
  * designed error state: in place of the whole shell when the shell itself failed, and inside the
@@ -11,13 +14,13 @@ import { useDocumentTitle } from './document-title';
 export function ShellError({ reset }: ErrorComponentProps) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-surface">
-      <ErrorState messageKey="pl.ui.state.error.unexpected" onRetry={reset} headingLevel={1} focusHeading />
+      <ErrorState messageKey={supplierUnexpectedErrorKey} onRetry={reset} headingLevel={1} focusHeading />
     </main>
   );
 }
 
 export function ScreenError({ reset }: ErrorComponentProps) {
-  return <ErrorState messageKey="pl.ui.state.error.unexpected" onRetry={reset} headingLevel={1} focusHeading />;
+  return <ErrorState messageKey={supplierUnexpectedErrorKey} onRetry={reset} headingLevel={1} focusHeading />;
 }
 
 /** Suppliers arrive only through links, so an unknown address points back to the email, not to a menu. */

@@ -13,11 +13,12 @@ Requirements covered: R17, R20, R35, R36, and the screen side of R16, R18, R19 a
 | Fixture link | What it shows |
 | --- | --- |
 | Open request (RFQ-1060) | The response form: three of five lines assigned, two with drafts, line 3 changed in version 2 after the last submission |
-| Closed request (RFQ-1055) | The last submission, read-only: a quote, a no-quote with a reason, and an alternate in USD |
+| Closed request (RFQ-1055) | The last submission, read-only: a quote, a no-quote with a reason, and an alternate in USD on a line the buyer changed after it was submitted |
 | Decided request (RFQ-1047) | The outcome of the supplier's three lines (one awarded), plus its last submission |
 | Evidence request | Four requested documents: requested, under review, accepted, rejected with a reason |
 | Expired link, revoked link | "This link is no longer available" |
 | Slow connection, service unavailable | The loading and error states of the response form |
+| Link check fails | The landing page's error state with a retry, when the link cannot be checked |
 
 ## Flows
 
@@ -29,9 +30,10 @@ Requirements covered: R17, R20, R35, R36, and the screen side of R16, R18, R19 a
 
 ## Decisions
 
-- **The draft status and the changed-line indicator are separate.** The draft status (in the header, a live status region) reports only whether typed answers are kept: "Draft saved", "Changes not saved yet", or "No draft saved yet". A line the buyer changed after the last submission carries its own amber "This line changed — review and resubmit" notice with the version and time of the change, and the line's field set is described by it. Saving a draft does not clear it; submitting does.
-- **One state for every refused link.** A wrong secret, an expired or revoked link, and a missing or ended session all get the API's uniform 401, so they share "This link is no longer available", which tells the supplier to contact the buyer for a new link. It offers no retry, because retrying cannot help. A link without a secret shows it without sending anything.
+- **The draft status and the changed-line indicator are separate.** The draft status (in the header, a live status region) reports only whether typed answers are kept: "Draft saved", "Changes not saved yet", or "No draft saved yet". A line the buyer changed after the last submission carries its own amber "This line changed — review and resubmit" notice with the version and time of the change, and the line's field set is described by it. Saving a draft does not clear it; submitting does. After close or the seal nothing can be resubmitted, so the last submission marks such a line "Changed after you submitted — this answer is to the earlier version" instead.
+- **One state for every refused link.** A wrong secret, an expired or revoked link, and a missing or ended session all get the API's uniform 401, so they share "This link is no longer available", which tells the supplier to open the link in the buyer's email again and, if it still does not work, to contact the buyer for a new link. That covers an ended session or a reload after the secret was removed as well as a dead link. It offers no retry, because retrying cannot help. A link without a secret shows it without sending anything.
 - **The server decides which screens a link opens.** The session read lists the views the RFQ state allows (answer while open, read after close, outcome after the seal); the navigation shows only those, and a screen the link does not open now reads as not permitted and shows the no-permission state with the supplier wording ("Ask the buyer who invited you").
+- **Errors point to the buyer.** The portal's unexpected-error message (route errors, the root boundary, an unreadable response) says to contact the buyer who sent the link, since suppliers have no administrator of ours to ask.
 - **Suppliers arrive only through links**, so the front page and the page-not-found state point to the email rather than to a menu.
 - **Times follow the supplier.** Deadlines, change and receipt times are shown in the supplier's IANA time zone (from the session) with the zone abbreviation, and the deadline also in UTC, because the server decides lateness in UTC (R19). Amounts use Canadian English formatting, so a USD price reads `US$142.00`.
 - **AI-generated content.** Nothing on these screens is AI-generated yet. When a later unit shows AI-extracted values to suppliers (for example a quote read from a PDF), the screen must say so beside those values (CLAUDE.md); the contracts will carry that as a field rather than inferring it in the UI.
