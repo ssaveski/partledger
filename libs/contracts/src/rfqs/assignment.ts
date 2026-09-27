@@ -31,7 +31,9 @@ export const assignmentCandidateSchema = z
       .boolean()
       .describe("Whether the supplier's active approval covers the line's part category; the server decides."),
     approval: supplierApprovalSchema,
-    evidence: supplierEvidenceStatusSchema,
+    evidence: supplierEvidenceStatusSchema
+      .nullable()
+      .describe('The supplier’s evidence status, or null until the evidence vault has assessed the supplier.'),
   })
   .strict()
   .describe('A supplier that could be invited to one line.');

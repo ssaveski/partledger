@@ -4,8 +4,8 @@ import { defineQuery } from '../define';
 import { listInputSchema, listReadErrors, staffListReaders } from '../reads';
 
 /**
- * The parts list behind the parts screen and the RFQ builder (U27). U10 implements it on the
- * API; until then the fixture adapter serves synthetic parts in this shape.
+ * The parts list behind the parts screen and the RFQ builder (U27), served by the API (U10) and,
+ * in the preview, by the fixture adapter with synthetic parts in the same shape.
  */
 
 export const partCategories = ['castings', 'machinedParts', 'fasteners', 'seals', 'sheetMetal', 'electronics'] as const;
@@ -17,6 +17,8 @@ export const partCategorySchema = z
 export type PartCategory = z.infer<typeof partCategorySchema>;
 
 export const partUnits = ['each', 'kilogram', 'metre'] as const;
+
+export const partUnitSchema = z.enum(partUnits).describe('The unit quantities of this part are counted in.');
 
 export const partSources = ['erp', 'platform'] as const;
 
@@ -33,7 +35,7 @@ export const partSummarySchema = z
     revision: z.string().min(1).describe('The current revision.'),
     description: z.string().describe('The part description.'),
     category: partCategorySchema,
-    unit: z.enum(partUnits).describe('The unit quantities of this part are counted in.'),
+    unit: partUnitSchema,
     source: partSourceSchema,
     active: z
       .boolean()
@@ -44,6 +46,11 @@ export const partSummarySchema = z
       .nonnegative()
       .describe('How many suppliers hold an active approval whose scope covers the part category.'),
     updatedAt: z.iso.datetime().describe('When the part last changed.'),
+    version: z
+      .number()
+      .int()
+      .min(1)
+      .describe('The part’s version, which a change to the part names as its expected version.'),
   })
   .strict()
   .describe('One part of the tenant parts list.');

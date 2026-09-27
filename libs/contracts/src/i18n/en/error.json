@@ -17,6 +17,8 @@
   "pl.error.unprocessable.uploadContentMismatch": "The file's content does not match its type or name, or it contains something that is not allowed, such as macros. Save it again in the listed format and upload it again.",
   "pl.error.unprocessable.uploadTooLarge": "The file is larger than the {maximumMegabytes} MB allowed for this type.",
   "pl.error.unprocessable.uploadQuotaExceeded": "The upload limit has been reached. Contact the buyer or your administrator if you need to upload more files.",
+  "pl.error.unprocessable.sourceOwned": "Your ERP owns this information, so it is read-only here. Change it in the ERP and the next export brings it across.",
+  "pl.error.unprocessable.approvedListErpOwned": "Your approved-supplier list mirrors your ERP, so approvals are read-only here. Change the approval in the ERP.",
   "pl.error.forbidden.notPermitted": "You do not have permission to do this.",
   "pl.error.forbidden.crossSiteRequest": "This request did not come from the Partledger app, so it was refused. Reload the page and try again.",
   "pl.error.unavailable.dependencyUnavailable": "A service this action needs is unavailable. Try again shortly.",

@@ -21,6 +21,8 @@ export const domainErrorReasons = {
     'uploadContentMismatch',
     'uploadTooLarge',
     'uploadQuotaExceeded',
+    'sourceOwned',
+    'approvedListErpOwned',
   ],
   Forbidden: ['notPermitted', 'crossSiteRequest'],
   Unavailable: ['dependencyUnavailable'],

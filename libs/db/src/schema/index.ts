@@ -13,6 +13,9 @@ import { tenantsAccess } from './tenants.ts';
 import { aiSuggestionsAccess } from './ai-suggestions.ts';
 import { tenantAiKeysAccess } from './tenant-ai-keys.ts';
 import { uploadsAccess } from './uploads.ts';
+import { approvedSupplierEntriesAccess } from './approved-suppliers.ts';
+import { partsAccess } from './parts.ts';
+import { supplierContactsAccess, supplierIdentityChecksAccess, suppliersAccess } from './suppliers.ts';
 
 export { auditActorTypes, auditEntries } from './audit-entries.ts';
 export { commitments } from './commitments.ts';
@@ -41,6 +44,17 @@ export {
 } from './ai-suggestions.ts';
 export { tenantAiKeyProviders, tenantAiKeys } from './tenant-ai-keys.ts';
 export { uploadPurposes, uploads, uploadScanFindings, uploadScanStatuses } from './uploads.ts';
+export { approvalStatuses, approvedSupplierEntries } from './approved-suppliers.ts';
+export { partCategories, parts, partUnits, recordSources } from './parts.ts';
+export {
+  contactRoles,
+  identityCheckResults,
+  identityRegisters,
+  supplierContacts,
+  supplierIdentityChecks,
+  suppliers,
+  supplierStatuses,
+} from './suppliers.ts';
 
 /** Every table in the `public` schema with its expected access; the catalog check compares them exactly. */
 export const tableAccessManifest: readonly TableAccess[] = [
@@ -60,4 +74,9 @@ export const tableAccessManifest: readonly TableAccess[] = [
   tenantAiKeysAccess,
   aiSuggestionsAccess,
   uploadsAccess,
+  partsAccess,
+  suppliersAccess,
+  supplierContactsAccess,
+  supplierIdentityChecksAccess,
+  approvedSupplierEntriesAccess,
 ];

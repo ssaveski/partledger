@@ -2,6 +2,8 @@ import { staffAlertsQuery, uploadStatusQuery } from '@partledger/contracts';
 
 import { aiQueries } from '../ai/ai-operations';
 import { StaffAlertsHandler } from '../notifications/alerts.query';
+import { partQueryRegistrations } from '../parts/part-operations';
+import { supplierQueryRegistrations } from '../suppliers/supplier-operations';
 import { tenantQueries } from '../tenants/tenant-operations';
 import { UploadStatusHandler } from '../uploads/upload-status.query';
 import { registerQuery, type OperationRegistry, type QueryRegistration } from './handlers';
@@ -13,6 +15,8 @@ export const productionQueries: readonly QueryRegistration[] = [
   ...tenantQueries,
   ...aiQueries,
   registerQuery(uploadStatusQuery, UploadStatusHandler),
+  ...partQueryRegistrations,
+  ...supplierQueryRegistrations,
 ];
 
 export const productionRegistry: OperationRegistry = { commands: productionCommands, queries: productionQueries };

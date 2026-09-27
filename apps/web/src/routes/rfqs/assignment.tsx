@@ -18,8 +18,7 @@ import { ActionButton } from '../../shell/action-button';
 import { useDocumentTitle } from '../../shell/document-title';
 import { formatDate, formatInstantUtc, formatNumber } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
-import { approvalStates, inScopeState, outOfScopeState } from '../suppliers/supplier-states';
-import { evidenceStates } from './comparison-states';
+import { approvalStates, evidenceStateOf, inScopeState, outOfScopeState } from '../suppliers/supplier-states';
 import {
   assignmentFormFrom,
   assignmentFormSchema,
@@ -295,7 +294,7 @@ function CandidateOption({
         {candidate.approval.status === 'approved' ? null : (
           <StateBadge state={approvalStates[candidate.approval.status]} showLabel />
         )}
-        <StateBadge state={evidenceStates[candidate.evidence]} showLabel />
+        <StateBadge state={evidenceStateOf(candidate.evidence)} showLabel />
       </span>
     </div>
   );

@@ -16,6 +16,9 @@ export function placeholderAuthEnvironment(overrides: Readonly<Record<string, st
     DIRECTORY_REGION_URLS: 'ca=http://127.0.0.1:5173,eu=http://127.0.0.1:6173',
     KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: randomBytes(24).toString('base64url'),
     OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger-operators',
+    // Tests never reach the real registers; a test that checks identities starts its own.
+    VIES_API_URL: 'http://127.0.0.1:1/vies',
+    GLEIF_API_URL: 'http://127.0.0.1:1/gleif',
     ...overrides,
   };
 }

@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+import { gleifDefaultBaseUrl } from '../identity-checks/gleif.client';
+import { viesDefaultBaseUrl } from '../identity-checks/vies.client';
+
 const port = z.coerce.number().int().min(1).max(65535);
 
 /** A bare origin such as `https://app.example`, with no path, query or trailing slash. */
@@ -227,6 +230,18 @@ export const envSchema = z
     /** How many files, and how many bytes, one tenant may upload in any 24 hours. */
     UPLOAD_TENANT_DAILY_QUOTA_FILES: z.coerce.number().int().min(1).max(1_000_000).default(2_000),
     UPLOAD_TENANT_DAILY_QUOTA_BYTES: byteCount.default(4 * 1024 * 1024 * 1024),
+    /** The EU VAT register's REST API that supplier VAT ids are checked against (R10). */
+    VIES_API_URL: z
+      .url({ protocol: /^https?$/ })
+      .transform((value) => value.replace(/\/+$/, ''))
+      .default(viesDefaultBaseUrl),
+    /** The LEI register's API that supplier LEIs are checked against (R10). */
+    GLEIF_API_URL: z
+      .url({ protocol: /^https?$/ })
+      .transform((value) => value.replace(/\/+$/, ''))
+      .default(gleifDefaultBaseUrl),
+    /** How long one register question may take before the check records "not checked". */
+    IDENTITY_CHECK_TIMEOUT_MILLISECONDS: z.coerce.number().int().min(100).max(60_000).default(10_000),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -271,6 +286,8 @@ export const envSchema = z
         'PORTAL_APP_ORIGIN',
         'KEYCLOAK_ISSUER',
         'OPERATOR_KEYCLOAK_ISSUER',
+        'VIES_API_URL',
+        'GLEIF_API_URL',
       ] as const) {
         if (!config[name].startsWith('https://')) {
           context.addIssue({ code: 'custom', path: [name], message: 'must use https in production' });
