@@ -1,3 +1,4 @@
+import type { MessageParams } from '@partledger/contracts';
 import {
   createColumnHelper,
   createSortedRowModel,
@@ -32,7 +33,7 @@ import { Checkbox } from '../components/checkbox';
 import { Input } from '../components/input';
 import { useTranslate } from '../i18n/translation';
 import { cn, focusRing, raisedSurface } from '../lib/cn';
-import { gridRowHeight, rowWindow, scrollTopRevealing, windowingThreshold } from './row-window';
+import { gridRowHeight, rowItems, rowWindow, scrollTopRevealing, windowingThreshold } from './row-window';
 import { gridCellAttribute, useGridKeyboard, type GridPosition } from './use-grid-keyboard';
 
 /** Per-column options the grid reads from `meta`. */
@@ -67,6 +68,13 @@ export interface GridCellEdit {
   readonly value: string;
 }
 
+/** Whether an edit was accepted; a refusal names a message key the editor shows while it stays open. */
+export type GridEditResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly messageKey: string; readonly params?: MessageParams | undefined };
+
+type GridEditRejection = Extract<GridEditResult, { ok: false }>;
+
 export interface DataGridProps<TData extends RowData> {
   /** The grid's accessible name, already translated. */
   label: string;
@@ -77,7 +85,8 @@ export interface DataGridProps<TData extends RowData> {
   /** Adds a checkbox column for selecting rows. */
   selectable?: boolean;
   onSelectionChange?: (selectedRowIds: readonly string[]) => void;
-  onCellEdit?: (edit: GridCellEdit) => void;
+  /** Validates and stores an edit; the editor closes only when the result is `ok`. */
+  onCellEdit?: (edit: GridCellEdit) => GridEditResult | Promise<GridEditResult>;
   /** Rows that PageUp and PageDown move; default 10. */
   pageSize?: number;
   /** Size the scroll container, for example `max-h-96`; the header stays in view while the body scrolls. */
@@ -116,50 +125,102 @@ const ariaSortValues = { asc: 'ascending', desc: 'descending' } as const;
 
 function SortIcon({ direction }: { direction: false | 'asc' | 'desc' }) {
   const Icon = direction === 'asc' ? ArrowUpIcon : direction === 'desc' ? ArrowDownIcon : ArrowUpDownIcon;
-  return <Icon aria-hidden className={cn('size-3.5 shrink-0', direction === false && 'opacity-60')} />;
+  // No opacity: the icon keeps the header's text colour, whose contrast `pnpm contrast:check` covers.
+  return <Icon aria-hidden className="size-3.5 shrink-0" />;
+}
+
+function translateOrNull(format: () => string): string | null {
+  try {
+    return format();
+  } catch {
+    return null;
+  }
 }
 
 function CellEditor({
   initialValue,
   labelledBy,
-  describedBy,
-  onDone,
+  hintId,
+  errorId,
+  save,
+  close,
 }: {
   initialValue: string;
   labelledBy: string;
-  describedBy: string;
-  /** Called once: with the new value when committed, with `null` when cancelled. */
-  onDone: (value: string | null) => void;
+  hintId: string;
+  errorId: string;
+  save: (value: string) => GridEditResult | Promise<GridEditResult>;
+  /** `returnFocus` is true when Enter or Escape closed the editor, false when focus had already left it. */
+  close: (returnFocus: boolean) => void;
 }) {
+  const translate = useTranslate();
   const [value, setValue] = useState(initialValue);
-  const finished = useRef(false);
-  const finish = (result: string | null) => {
-    if (!finished.current) {
-      finished.current = true;
-      onDone(result);
+  const [rejection, setRejection] = useState<GridEditRejection | null>(null);
+  const saving = useRef(false);
+  const closed = useRef(false);
+
+  const commit = async (returnFocus: boolean) => {
+    if (saving.current || closed.current) {
+      return;
     }
+    if (value !== initialValue) {
+      saving.current = true;
+      const result = await save(value);
+      saving.current = false;
+      if (!result.ok) {
+        setRejection(result);
+        return;
+      }
+    }
+    closed.current = true;
+    close(returnFocus);
   };
+
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter' || event.key === 'Escape') {
+    if (event.key === 'Enter') {
       event.preventDefault();
       event.stopPropagation();
-      finish(event.key === 'Enter' ? value : null);
+      void commit(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closed.current = true;
+      close(true);
     }
   };
+
+  const message =
+    rejection === null
+      ? null
+      : (translateOrNull(() => translate(rejection.messageKey, rejection.params)) ??
+        translate('pl.ui.grid.editRejected'));
+
   return (
-    <Input
-      value={value}
-      onChange={(event) => {
-        setValue(event.currentTarget.value);
-      }}
-      onKeyDown={onKeyDown}
-      onBlur={() => {
-        finish(value);
-      }}
-      aria-labelledby={labelledBy}
-      aria-describedby={describedBy}
-      className="h-7 px-2 font-[inherit]"
-    />
+    <>
+      <Input
+        value={value}
+        onChange={(event) => {
+          setValue(event.currentTarget.value);
+        }}
+        onKeyDown={onKeyDown}
+        onBlur={() => {
+          void commit(false);
+        }}
+        aria-labelledby={labelledBy}
+        aria-describedby={message === null ? hintId : `${errorId} ${hintId}`}
+        aria-invalid={message === null ? undefined : true}
+        className="h-7 px-2 font-[inherit]"
+      />
+      {message === null ? null : (
+        <p
+          id={errorId}
+          role="alert"
+          className="absolute top-full left-0 z-40 mt-0.5 w-64 rounded-md border border-danger bg-surface-overlay px-2 py-1 text-left font-sans text-xs whitespace-normal text-danger shadow-md"
+        >
+          {message}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -195,6 +256,7 @@ export function DataGrid<TData extends RowData>({
   const selectLabelId = selectLabelElementId(gridId);
   const editHintId = `${gridId}-edit-hint`;
   const editorHintId = `${gridId}-editor-hint`;
+  const editorErrorId = `${gridId}-editor-error`;
 
   const columns = useMemo<GridColumns<TData>>(() => {
     if (!selectable) {
@@ -239,12 +301,13 @@ export function DataGrid<TData extends RowData>({
     onSelectionChange?.(Object.keys(selection));
   }, [selection, onSelectionChange]);
 
+  const bodyRowKeys = useMemo(() => rows.map((row) => row.id), [rows]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState<ScrollState>({ top: 0, height: 0 });
   const windowed = rows.length > windowingThreshold;
-  const { start, end } = rowWindow({ rowCount: rows.length, scrollTop: scroll.top, viewportHeight: scroll.height });
 
-  const [editing, setEditing] = useState<GridPosition | null>(null);
+  // By row and column id, so an open editor stays with its row when the rows reorder.
+  const [editing, setEditing] = useState<{ rowId: string; columnId: string } | null>(null);
 
   const revealRow = useCallback(
     (position: GridPosition) => {
@@ -269,19 +332,32 @@ export function DataGrid<TData extends RowData>({
     return position.row > 0 && onCellEdit !== undefined && header?.column.columnDef.meta?.editable === true;
   };
 
+  const startEditing = (position: GridPosition): boolean => {
+    const row = rows[position.row - 1];
+    const header = headers[position.column];
+    if (!isEditable(position) || row === undefined || header === undefined) {
+      return false;
+    }
+    setEditing({ rowId: row.id, columnId: header.column.id });
+    keyboard.focusCell(position);
+    return true;
+  };
+
   const keyboard = useGridKeyboard({
-    bounds: { rowCount: rows.length + 1, columnCount: headers.length, pageSize },
+    bodyRowKeys,
+    columnCount: headers.length,
+    pageSize,
     isEditing: editing !== null,
-    onActivateCell: (position) => {
-      if (!isEditable(position)) {
-        return false;
-      }
-      setEditing(position);
-      keyboard.focusCell(position);
-      return true;
-    },
+    onActivateCell: startEditing,
     onBeforeMove: revealRow,
   });
+
+  const activeBodyRow = keyboard.active.row > 0 ? keyboard.active.row - 1 : null;
+  const items = rowItems(
+    rowWindow({ rowCount: rows.length, scrollTop: scroll.top, viewportHeight: scroll.height }),
+    rows.length,
+    activeBodyRow,
+  );
 
   // Scroll padding keeps a focused cell clear of the sticky header and pinned columns (WCAG 2.4.11).
   useLayoutEffect(() => {
@@ -303,14 +379,17 @@ export function DataGrid<TData extends RowData>({
     }
   });
 
-  const finishEditing = (position: GridPosition, row: Row<GridFeatures, TData>, columnId: string) => {
-    return (value: string | null) => {
-      setEditing(null);
-      keyboard.focusCell(position);
-      if (value !== null && value !== cellText(row.getValue(columnId))) {
-        onCellEdit?.({ rowId: row.id, columnId, value });
-      }
-    };
+  const saveEdit =
+    (row: Row<GridFeatures, TData>, columnId: string) =>
+    (value: string): GridEditResult | Promise<GridEditResult> =>
+      onCellEdit?.({ rowId: row.id, columnId, value }) ?? { ok: true };
+
+  const closeEditor = (row: Row<GridFeatures, TData>, columnIndex: number) => (returnFocus: boolean) => {
+    setEditing(null);
+    // A blur leaves focus where the person moved it; the tab stop stays on the edited cell.
+    if (returnFocus) {
+      keyboard.focusRow(row.id, columnIndex);
+    }
   };
 
   const renderHeader = (header: (typeof headers)[number], columnIndex: number): ReactNode => {
@@ -365,7 +444,7 @@ export function DataGrid<TData extends RowData>({
     const meta = column.columnDef.meta;
     const isRowHeader = columnIndex === pinnedCount - 1;
     const editable = isEditable(position);
-    const isEditing = editing !== null && editing.row === rowIndex && editing.column === columnIndex;
+    const isEditing = editing !== null && editing.rowId === row.id && editing.columnId === column.id;
     const Element = isRowHeader ? 'th' : 'td';
     return (
       <Element
@@ -377,8 +456,7 @@ export function DataGrid<TData extends RowData>({
         onDoubleClick={
           editable
             ? () => {
-                setEditing(position);
-                keyboard.focusCell(position);
+                startEditing(position);
               }
             : undefined
         }
@@ -392,14 +470,17 @@ export function DataGrid<TData extends RowData>({
           meta?.numeric === true && 'text-right font-mono tabular-nums',
           editable && 'cursor-text',
           isEditing && 'px-1',
+          isEditing && columnIndex >= pinnedCount && 'relative',
         )}
       >
         {isEditing ? (
           <CellEditor
             initialValue={cellText(cell.getValue())}
             labelledBy={`${headerId(column.id)} ${rowHeaderId(row)}`}
-            describedBy={editorHintId}
-            onDone={finishEditing(position, row, column.id)}
+            hintId={editorHintId}
+            errorId={editorErrorId}
+            save={saveEdit(row, column.id)}
+            close={closeEditor(row, columnIndex)}
           />
         ) : editable ? (
           <span className="underline decoration-line-strong decoration-dotted underline-offset-4">
@@ -411,8 +492,6 @@ export function DataGrid<TData extends RowData>({
       </Element>
     );
   };
-
-  const visibleRows = rows.slice(start, end);
 
   return (
     <div
@@ -448,13 +527,19 @@ export function DataGrid<TData extends RowData>({
           <tr aria-rowindex={windowed ? 1 : undefined}>{headers.map(renderHeader)}</tr>
         </thead>
         <tbody>
-          {windowed && start > 0 ? (
-            <tr aria-hidden>
-              <td colSpan={headers.length} style={{ height: start * gridRowHeight }} className="p-0" />
-            </tr>
-          ) : null}
-          {visibleRows.map((row, offset) => {
-            const rowIndex = start + offset + 1;
+          {items.map((item) => {
+            if (item.kind === 'spacer') {
+              return (
+                <tr key={`pl-spacer-${item.firstIndex}`} aria-hidden>
+                  <td colSpan={headers.length} style={{ height: item.height }} className="p-0" />
+                </tr>
+              );
+            }
+            const row = rows[item.index];
+            if (row === undefined) {
+              return null;
+            }
+            const rowIndex = item.index + 1;
             return (
               <tr
                 key={row.id}
@@ -467,11 +552,6 @@ export function DataGrid<TData extends RowData>({
               </tr>
             );
           })}
-          {windowed && end < rows.length ? (
-            <tr aria-hidden>
-              <td colSpan={headers.length} style={{ height: (rows.length - end) * gridRowHeight }} className="p-0" />
-            </tr>
-          ) : null}
         </tbody>
       </table>
     </div>

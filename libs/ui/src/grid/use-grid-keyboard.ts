@@ -130,13 +130,39 @@ function syncTabStops(grid: HTMLElement, active: GridPosition): void {
   }
 }
 
+/** The header row has no row key; body rows are keyed by their row id. */
+export type GridRowKey = string | null;
+
+/** The active cell, remembered by row key so it follows its row when sorting or edits reorder the rows. */
+export interface ActiveCell {
+  readonly rowKey: GridRowKey;
+  readonly column: number;
+  /** Where the row last was, used when the row itself disappears. */
+  readonly lastRow: number;
+}
+
+/** Maps a remembered active cell onto the current rows. */
+export function resolveActiveCell(
+  active: ActiveCell,
+  bodyRowKeys: readonly string[],
+  columnCount: number,
+): GridPosition {
+  const bodyIndex = active.rowKey === null ? -1 : bodyRowKeys.indexOf(active.rowKey);
+  const row = active.rowKey === null ? 0 : bodyIndex >= 0 ? bodyIndex + 1 : active.lastRow;
+  return clampGridPosition({ row, column: active.column }, { rowCount: bodyRowKeys.length + 1, columnCount });
+}
+
 export interface GridKeyboardOptions {
-  readonly bounds: GridBounds;
+  /** Row ids of the body rows in display order. */
+  readonly bodyRowKeys: readonly string[];
+  readonly columnCount: number;
+  /** How many rows PageUp and PageDown move. */
+  readonly pageSize: number;
   /** While a cell is being edited its editor owns the keyboard, so the grid ignores keys. */
   readonly isEditing: boolean;
   /** Called for Enter or F2 on a cell (not on a widget inside it). Returns true when it handled the key. */
   readonly onActivateCell: (position: GridPosition) => boolean;
-  /** Called before focus moves to a position, so a windowed grid can render and scroll to the row. */
+  /** Called before focus moves to a position, so a windowed grid can scroll to the row. */
   readonly onBeforeMove?: ((position: GridPosition) => void) | undefined;
 }
 
@@ -147,19 +173,24 @@ export interface GridKeyboard {
   readonly onFocus: (event: FocusEvent<HTMLElement>) => void;
   /** Moves the active cell and focuses it after the next render. */
   readonly focusCell: (position: GridPosition) => void;
+  /** Focuses a cell of the row with this key, wherever that row is after the next render. */
+  readonly focusRow: (rowKey: GridRowKey, column: number) => void;
 }
 
 /** Roving-tabindex keyboard navigation for an ARIA grid (APG grid pattern, KTD28). */
 export function useGridKeyboard({
-  bounds,
+  bodyRowKeys,
+  columnCount,
+  pageSize,
   isEditing,
   onActivateCell,
   onBeforeMove,
 }: GridKeyboardOptions): GridKeyboard {
   const gridRef = useRef<HTMLTableElement>(null);
-  const [storedActive, setActive] = useState<GridPosition>({ row: 0, column: 0 });
+  const [storedActive, setActive] = useState<ActiveCell>({ rowKey: null, column: 0, lastRow: 0 });
   const focusPending = useRef(false);
-  const active = clampGridPosition(storedActive, bounds);
+  const active = resolveActiveCell(storedActive, bodyRowKeys, columnCount);
+  const bounds: GridBounds = { rowCount: bodyRowKeys.length + 1, columnCount, pageSize };
 
   useLayoutEffect(() => {
     const grid = gridRef.current;
@@ -176,44 +207,56 @@ export function useGridKeyboard({
     }
   });
 
+  const rowKeyAt = useCallback(
+    (row: number): GridRowKey => (row === 0 ? null : (bodyRowKeys[row - 1] ?? null)),
+    [bodyRowKeys],
+  );
+
+  const focusRow = useCallback((rowKey: GridRowKey, column: number) => {
+    focusPending.current = true;
+    setActive((current) => ({ rowKey, column, lastRow: current.lastRow }));
+  }, []);
+
   const focusCell = useCallback(
     (position: GridPosition) => {
       onBeforeMove?.(position);
       focusPending.current = true;
-      setActive(position);
+      setActive({ rowKey: rowKeyAt(position.row), column: position.column, lastRow: position.row });
     },
-    [onBeforeMove],
+    [onBeforeMove, rowKeyAt],
   );
 
-  const onKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLElement>) => {
-      if (isEditing || event.altKey) {
-        return;
-      }
-      const next = nextGridPosition(active, event, bounds);
-      if (next !== null) {
-        event.preventDefault();
-        focusCell(next);
-        return;
-      }
-      const onCell = event.target instanceof HTMLElement && event.target.hasAttribute(gridCellAttribute);
-      if ((event.key === 'Enter' || event.key === 'F2') && onCell && onActivateCell(active)) {
-        event.preventDefault();
-      }
-    },
-    [active, bounds, focusCell, isEditing, onActivateCell],
-  );
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (isEditing || event.altKey) {
+      return;
+    }
+    const next = nextGridPosition(active, event, bounds);
+    if (next !== null) {
+      event.preventDefault();
+      focusCell(next);
+      return;
+    }
+    const onCell = event.target instanceof HTMLElement && event.target.hasAttribute(gridCellAttribute);
+    if ((event.key === 'Enter' || event.key === 'F2') && onCell && onActivateCell(active)) {
+      event.preventDefault();
+    }
+  };
 
-  const onFocus = useCallback((event: FocusEvent<HTMLElement>) => {
+  const onFocus = (event: FocusEvent<HTMLElement>) => {
     if (!(event.target instanceof HTMLElement)) {
       return;
     }
     const cell = event.target.closest(`[${gridCellAttribute}]`);
     const position = parseCellPosition(cell?.getAttribute(gridCellAttribute) ?? null);
     if (position !== null) {
-      setActive((current) => (current.row === position.row && current.column === position.column ? current : position));
+      const rowKey = rowKeyAt(position.row);
+      setActive((current) =>
+        current.rowKey === rowKey && current.column === position.column
+          ? current
+          : { rowKey, column: position.column, lastRow: position.row },
+      );
     }
-  }, []);
+  };
 
-  return { gridRef, active, onKeyDown, onFocus, focusCell };
+  return { gridRef, active, onKeyDown, onFocus, focusCell, focusRow };
 }

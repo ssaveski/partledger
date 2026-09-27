@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from 'react';
+import { act, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -7,7 +7,13 @@ import { TranslationProvider } from '../i18n/translation';
 import { previewCatalogue } from '../preview/catalogue';
 import { sampleParts, type SamplePartRow } from '../preview/sample-data';
 import { samplePartStates } from '../preview/sample-states';
-import { createGridColumnHelper, DataGrid, type DataGridProps } from './data-grid';
+import {
+  createGridColumnHelper,
+  DataGrid,
+  type DataGridProps,
+  type GridCellEdit,
+  type GridEditResult,
+} from './data-grid';
 import { GridLegend, StateBadge } from './state-badge';
 
 const helper = createGridColumnHelper<SamplePartRow>();
@@ -190,18 +196,67 @@ describe('data grid keyboard', () => {
     expect(focusedCell()).toBe('3:2');
     expect(tabStops(container)).toEqual([document.activeElement]);
   });
+});
 
+function accepting() {
+  return vi.fn<(edit: GridCellEdit) => GridEditResult | Promise<GridEditResult>>(() => ({ ok: true }));
+}
+
+function openEditor(container: HTMLElement, cell: string): HTMLInputElement {
+  act(() => {
+    query(container, `[data-grid-cell="${cell}"]`).focus();
+  });
+  press('Enter');
+  const editor = query(container, `[data-grid-cell="${cell}"] input`);
+  if (!(editor instanceof HTMLInputElement)) {
+    throw new Error('The editor is not an input');
+  }
+  return editor;
+}
+
+function typeInto(editor: HTMLInputElement, value: string): void {
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(editor, value);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+async function pressAndSettle(key: string): Promise<void> {
+  const target = document.activeElement ?? document.body;
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    await Promise.resolve();
+  });
+}
+
+/** A grid that owns its data, as a screen does, so accepted edits change the rows. */
+function EditableParts() {
+  const [parts, setParts] = useState(() => sampleParts(3));
+  return (
+    <DataGrid
+      label="Parts"
+      data={parts}
+      columns={columns}
+      getRowId={getPartId}
+      onCellEdit={(edit) => {
+        setParts((current) =>
+          current.map((part) => (part.id === edit.rowId ? { ...part, quantity: Number(edit.value) } : part)),
+        );
+        return { ok: true };
+      }}
+    />
+  );
+}
+
+describe('data grid editing', () => {
   it('enters edit mode on Enter and returns to the cell on Escape without reporting an edit', () => {
-    const onCellEdit = vi.fn();
+    const onCellEdit = accepting();
     const container = mountGrid({ onCellEdit });
-    act(() => {
-      query(container, '[data-grid-cell="1:2"]').focus();
-    });
-    press('Enter');
-    const editor = query(container, '[data-grid-cell="1:2"] input');
+    const editor = openEditor(container, '1:2');
     expect(document.activeElement).toBe(editor);
     press('ArrowLeft');
     expect(document.activeElement).toBe(editor);
+    typeInto(editor, '40');
     press('Escape');
     expect(container.querySelector('input')).toBeNull();
     expect(focusedCell()).toBe('1:2');
@@ -209,26 +264,100 @@ describe('data grid keyboard', () => {
     expect(onCellEdit).not.toHaveBeenCalled();
   });
 
-  it('reports the new value when an edit is committed with Enter', () => {
-    const onCellEdit = vi.fn();
+  it('reports the new value when an edit is committed with Enter and returns focus to the cell', async () => {
+    const onCellEdit = accepting();
     const container = mountGrid({ onCellEdit });
-    act(() => {
-      query(container, '[data-grid-cell="1:2"]').focus();
-    });
-    press('Enter');
-    const editor = query(container, '[data-grid-cell="1:2"] input');
-    if (!(editor instanceof HTMLInputElement)) {
-      throw new Error('The editor is not an input');
-    }
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(editor, '40');
-      editor.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    press('Enter');
+    typeInto(openEditor(container, '1:2'), '40');
+    await pressAndSettle('Enter');
     expect(onCellEdit).toHaveBeenCalledExactlyOnceWith({ rowId: 'part-1', columnId: 'quantity', value: '40' });
+    expect(container.querySelector('input')).toBeNull();
     expect(focusedCell()).toBe('1:2');
   });
 
+  it('commits once when focus leaves the editor and leaves focus where it went', async () => {
+    const onCellEdit = accepting();
+    const container = mount(
+      <>
+        <DataGrid label="Parts" data={sampleParts(3)} columns={columns} getRowId={getPartId} onCellEdit={onCellEdit} />
+        <input aria-label="Outside" />
+      </>,
+    );
+    typeInto(openEditor(container, '1:2'), '40');
+    const outside = query(container, 'input[aria-label="Outside"]');
+    await act(async () => {
+      outside.focus();
+      await Promise.resolve();
+    });
+    expect(onCellEdit).toHaveBeenCalledExactlyOnceWith({ rowId: 'part-1', columnId: 'quantity', value: '40' });
+    expect(container.querySelector('[role="grid"] input')).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    expect(tabStops(container).map((element) => element.getAttribute('data-grid-cell'))).toEqual(['1:2']);
+  });
+
+  it('keeps a refused edit open, marked invalid and described by the translated message', async () => {
+    const onCellEdit = vi.fn<(edit: GridCellEdit) => GridEditResult>(({ value }) =>
+      value === 'abc' ? { ok: false, messageKey: 'pl.preview.quantityInvalid' } : { ok: true },
+    );
+    const container = mountGrid({ onCellEdit });
+    const editor = openEditor(container, '1:2');
+    typeInto(editor, 'abc');
+    await pressAndSettle('Enter');
+    expect(document.activeElement).toBe(editor);
+    expect(editor.getAttribute('aria-invalid')).toBe('true');
+    const [errorId] = (editor.getAttribute('aria-describedby') ?? '').split(' ');
+    const error = document.getElementById(errorId ?? '');
+    expect(error?.textContent).toBe('Enter a whole number greater than zero.');
+    expect(error?.getAttribute('role')).toBe('alert');
+
+    typeInto(editor, '30');
+    await pressAndSettle('Enter');
+    expect(container.querySelector('input')).toBeNull();
+    expect(onCellEdit).toHaveBeenLastCalledWith({ rowId: 'part-1', columnId: 'quantity', value: '30' });
+  });
+
+  it('shows the generic refusal when the message key is unknown', async () => {
+    const container = mountGrid({ onCellEdit: () => ({ ok: false, messageKey: 'pl.preview.noSuchMessage' }) });
+    typeInto(openEditor(container, '1:2'), '7');
+    await pressAndSettle('Enter');
+    expect(query(container, '[role="alert"]').textContent).toBe('This value was not saved. Check it and try again.');
+  });
+
+  it('waits for an asynchronous result before closing the editor', async () => {
+    let resolve: (result: GridEditResult) => void = () => undefined;
+    const container = mountGrid({
+      onCellEdit: () =>
+        new Promise<GridEditResult>((settle) => {
+          resolve = settle;
+        }),
+    });
+    typeInto(openEditor(container, '1:2'), '40');
+    await pressAndSettle('Enter');
+    expect(container.querySelector('input')).not.toBeNull();
+    await act(async () => {
+      resolve({ ok: true });
+      await Promise.resolve();
+    });
+    expect(container.querySelector('input')).toBeNull();
+    expect(focusedCell()).toBe('1:2');
+  });
+
+  it('keeps focus on the edited row when the edit moves it in a sorted grid', async () => {
+    const container = mount(<EditableParts />);
+    const quantityHeader = query(container, 'thead th:nth-child(3) button');
+    act(() => {
+      quantityHeader.click();
+    });
+    expect(query(container, 'tbody th').textContent).toBe('PL-10001');
+    typeInto(openEditor(container, '1:2'), '9999');
+    await pressAndSettle('Enter');
+    expect(query(container, 'tbody tr:last-child th').textContent).toBe('PL-10001');
+    expect(focusedCell()).toBe('3:2');
+    expect(document.activeElement?.closest('tr')?.querySelector('th')?.textContent).toBe('PL-10001');
+    expect(document.activeElement?.textContent).toBe('9999');
+  });
+});
+
+describe('data grid editing affordances', () => {
   it('does not open an editor for a cell that is not editable', () => {
     const container = mountGrid({ onCellEdit: vi.fn() });
     act(() => {

@@ -1,6 +1,41 @@
 import { describe, expect, it } from 'vitest';
 
-import { gridRowHeight, rowWindow, scrollTopRevealing, windowingThreshold } from './row-window';
+import { gridRowHeight, rowItems, rowWindow, scrollTopRevealing, windowingThreshold } from './row-window';
+
+describe('rendered row items', () => {
+  it('renders every row without spacers when the window covers them all', () => {
+    expect(rowItems({ start: 0, end: 3 }, 3, 1)).toEqual([
+      { kind: 'row', index: 0 },
+      { kind: 'row', index: 1 },
+      { kind: 'row', index: 2 },
+    ]);
+  });
+
+  it('keeps an active row below the window, with spacers standing in for the rows around it', () => {
+    expect(rowItems({ start: 0, end: 2 }, 10, 6)).toEqual([
+      { kind: 'row', index: 0 },
+      { kind: 'row', index: 1 },
+      { kind: 'spacer', firstIndex: 2, height: 4 * gridRowHeight },
+      { kind: 'row', index: 6 },
+      { kind: 'spacer', firstIndex: 7, height: 3 * gridRowHeight },
+    ]);
+  });
+
+  it('keeps an active row above the window', () => {
+    expect(rowItems({ start: 5, end: 7 }, 8, 1)).toEqual([
+      { kind: 'spacer', firstIndex: 0, height: gridRowHeight },
+      { kind: 'row', index: 1 },
+      { kind: 'spacer', firstIndex: 2, height: 3 * gridRowHeight },
+      { kind: 'row', index: 5 },
+      { kind: 'row', index: 6 },
+      { kind: 'spacer', firstIndex: 7, height: gridRowHeight },
+    ]);
+  });
+
+  it('adds nothing for the header row or an active row inside the window', () => {
+    expect(rowItems({ start: 2, end: 4 }, 5, null)).toEqual(rowItems({ start: 2, end: 4 }, 5, 3));
+  });
+});
 
 describe('row windowing', () => {
   it('renders every row of a grid at the threshold', () => {

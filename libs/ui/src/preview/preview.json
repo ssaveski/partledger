@@ -44,5 +44,7 @@
   "pl.preview.description": "Description",
   "pl.preview.material": "Material",
   "pl.preview.status": "Status",
-  "pl.preview.selectedCount": "{count} selected"
+  "pl.preview.selectedCount": "{count} selected",
+  "pl.preview.quantityInvalid": "Enter a whole number greater than zero.",
+  "pl.preview.editCount": "{count} edits saved"
 }

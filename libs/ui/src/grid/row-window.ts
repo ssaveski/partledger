@@ -51,3 +51,40 @@ export function scrollTopRevealing(
   }
   return scrollTop;
 }
+
+export type RowItem =
+  | { readonly kind: 'row'; readonly index: number }
+  | { readonly kind: 'spacer'; readonly firstIndex: number; readonly height: number };
+
+/**
+ * The body rows to render in order, with spacers standing in for the rows left out. The active row is
+ * always included, so a focused row survives being scrolled out of the window.
+ */
+export function rowItems(rendered: RowWindow, rowCount: number, activeRow: number | null): RowItem[] {
+  const indexes: number[] = [];
+  for (let index = rendered.start; index < rendered.end; index += 1) {
+    indexes.push(index);
+  }
+  const activeOutside =
+    activeRow !== null &&
+    activeRow >= 0 &&
+    activeRow < rowCount &&
+    (activeRow < rendered.start || activeRow >= rendered.end);
+  if (activeOutside) {
+    indexes.push(activeRow);
+    indexes.sort((first, second) => first - second);
+  }
+  const items: RowItem[] = [];
+  let next = 0;
+  for (const index of indexes) {
+    if (index > next) {
+      items.push({ kind: 'spacer', firstIndex: next, height: (index - next) * gridRowHeight });
+    }
+    items.push({ kind: 'row', index });
+    next = index + 1;
+  }
+  if (next < rowCount) {
+    items.push({ kind: 'spacer', firstIndex: next, height: (rowCount - next) * gridRowHeight });
+  }
+  return items;
+}

@@ -3,10 +3,12 @@ import { useCallback, useMemo, useState } from 'react';
 import { z } from 'zod';
 
 import { Mono } from '../components/display';
+import { Field, FieldLabel } from '../components/field';
+import { Input } from '../components/input';
 import { useTranslate, type Translate } from '../i18n/translation';
 import { sampleParts, type SamplePartRow } from '../preview/sample-data';
 import { samplePartStates } from '../preview/sample-states';
-import { createGridColumnHelper, DataGrid, type GridCellEdit } from './data-grid';
+import { createGridColumnHelper, DataGrid, type GridCellEdit, type GridEditResult } from './data-grid';
 import { GridLegend, StateBadge } from './state-badge';
 
 const meta = { title: 'Grid' } satisfies Meta;
@@ -50,12 +52,17 @@ function PartsGridPreview() {
   const translate = useTranslate();
   const [parts, setParts] = useState(() => sampleParts(40));
   const [selectedCount, setSelectedCount] = useState(0);
+  const [editCount, setEditCount] = useState(0);
   const columns = useMemo(() => partColumns(translate), [translate]);
-  const onCellEdit = useCallback(({ rowId, value }: GridCellEdit) => {
+  // Refuses anything but a positive whole number, such as `abc`, to show the editor's rejected state.
+  const onCellEdit = useCallback(({ rowId, value }: GridCellEdit): GridEditResult => {
     const quantity = quantitySchema.safeParse(value);
-    if (quantity.success) {
-      setParts((current) => current.map((part) => (part.id === rowId ? { ...part, quantity: quantity.data } : part)));
+    if (!quantity.success) {
+      return { ok: false, messageKey: 'pl.preview.quantityInvalid' };
     }
+    setParts((current) => current.map((part) => (part.id === rowId ? { ...part, quantity: quantity.data } : part)));
+    setEditCount((count) => count + 1);
+    return { ok: true };
   }, []);
   const onSelectionChange = useCallback((ids: readonly string[]) => {
     setSelectedCount(ids.length);
@@ -76,6 +83,11 @@ function PartsGridPreview() {
       <p className="text-sm text-muted" role="status">
         {translate('pl.preview.selectedCount', { count: selectedCount })}
       </p>
+      <p className="text-sm text-muted">{translate('pl.preview.editCount', { count: editCount })}</p>
+      <Field className="max-w-md">
+        <FieldLabel>{translate('pl.preview.notes')}</FieldLabel>
+        <Input />
+      </Field>
     </div>
   );
 }

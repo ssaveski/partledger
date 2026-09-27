@@ -32,6 +32,7 @@ export {
   type DataGridProps,
   type GridCellEdit,
   type GridColumnMeta,
+  type GridEditResult,
   type GridColumns,
   type GridFeatures,
 } from './grid/data-grid';

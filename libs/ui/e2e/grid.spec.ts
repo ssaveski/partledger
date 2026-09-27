@@ -142,7 +142,7 @@ test('an editable cell enters edit mode on Enter and returns to grid navigation 
   await page.keyboard.press('Control+A');
   await page.keyboard.type('400');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(grid(page).getByRole('textbox')).toHaveCount(0);
   expect(await page.evaluate(() => document.activeElement?.getAttribute('data-grid-cell'))).toBe('1:6');
   expect(await focusedText(page)).toBe('400');
 });
@@ -321,7 +321,7 @@ for (const theme of themeNames) {
       await page.keyboard.press('ArrowRight');
     }
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('textbox')).toBeFocused();
+    await expect(grid(page).getByRole('textbox')).toBeFocused();
     expect(await axeViolations(page)).toEqual([]);
   });
 
@@ -331,5 +331,214 @@ for (const theme of themeNames) {
     await page.keyboard.press('Control+End');
     await expect(page.getByRole('rowheader', { name: 'PL-44994' })).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
+  });
+
+  test(`axe finds no violations with a refused edit showing its message in the ${theme} theme`, async ({ page }) => {
+    await openStory(page, 'grid--parts', theme);
+    await openFirstQuantityEditor(page);
+    await page.keyboard.type('abc');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('alert')).toBeVisible();
+    expect(await axeViolations(page)).toEqual([]);
+  });
+}
+
+async function focusedCellPosition(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () => document.activeElement?.closest('[data-grid-cell]')?.getAttribute('data-grid-cell') ?? null,
+  );
+}
+
+/** From a freshly opened parts story, opens the editor on the first row's quantity with its text selected. */
+async function openFirstQuantityEditor(page: Page): Promise<Locator> {
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('ArrowDown');
+  for (let presses = 0; presses < 6; presses += 1) {
+    await page.keyboard.press('ArrowRight');
+  }
+  await page.keyboard.press('Enter');
+  const editor = page.getByRole('textbox', { name: 'Quantity PL-10001' });
+  await expect(editor).toBeFocused();
+  await page.keyboard.press('Control+A');
+  return editor;
+}
+
+test('tab out of an open editor commits the edit once and leaves the grid in one press', async ({ page }) => {
+  await openStory(page, 'grid--parts');
+  await openFirstQuantityEditor(page);
+  await page.keyboard.type('400');
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('textbox', { name: 'Notes for suppliers' })).toBeFocused();
+  await expect(page.getByText('1 edits saved')).toBeVisible();
+  await expect(grid(page).locator('[data-grid-cell="1:6"]')).toHaveText('400');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focusedCellPosition(page)).toBe('1:6');
+});
+
+test('shift-tab out of an open editor commits the edit and leaves the grid backwards', async ({ page }) => {
+  await openStory(page, 'grid--parts');
+  await openFirstQuantityEditor(page);
+  await page.keyboard.type('125');
+  await page.keyboard.press('Shift+Tab');
+  expect(await focusIsInGrid(page)).toBe(false);
+  await expect(page.getByText('1 edits saved')).toBeVisible();
+  await expect(grid(page).locator('[data-grid-cell="1:6"]')).toHaveText('125');
+});
+
+test('clicking an input outside the grid keeps focus there and commits the edit once', async ({ page }) => {
+  await openStory(page, 'grid--parts');
+  await openFirstQuantityEditor(page);
+  await page.keyboard.type('75');
+  const notes = page.getByRole('textbox', { name: 'Notes for suppliers' });
+  await notes.click();
+  await expect(notes).toBeFocused();
+  await expect(page.getByText('1 edits saved')).toBeVisible();
+  await expect(grid(page).locator('[data-grid-cell="1:6"]')).toHaveText('75');
+  await page.keyboard.type('x');
+  await expect(notes).toHaveValue('x');
+});
+
+test('a refused edit keeps the editor open, marked invalid, with its message announced', async ({ page }) => {
+  await openStory(page, 'grid--parts');
+  const editor = await openFirstQuantityEditor(page);
+  await page.keyboard.type('abc');
+  await page.keyboard.press('Enter');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveAttribute('aria-invalid', 'true');
+  await expect(editor).toHaveAccessibleDescription(/Enter a whole number greater than zero\./);
+  await expect(page.getByRole('alert')).toHaveText('Enter a whole number greater than zero.');
+  await expect(page.getByText('0 edits saved')).toBeVisible();
+
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('30');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(await focusedCellPosition(page)).toBe('1:6');
+  expect(await focusedText(page)).toBe('30');
+  await expect(page.getByText('1 edits saved')).toBeVisible();
+});
+
+test('focus follows the edited row when the edit moves it in a sorted grid', async ({ page }) => {
+  await openStory(page, 'grid--parts');
+  await page.getByRole('button', { name: 'Quantity' }).click();
+  await expect(page.getByRole('columnheader', { name: 'Quantity' })).toHaveAttribute('aria-sort', 'ascending');
+  await expect(grid(page).getByRole('rowheader').first()).toHaveText('PL-10001');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('textbox', { name: 'Quantity PL-10001' })).toBeFocused();
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('99999');
+  await page.keyboard.press('Enter');
+  await expect(grid(page).getByRole('rowheader').last()).toHaveText('PL-10001');
+  expect(await focusedCellPosition(page)).toBe('40:6');
+  expect(await focusedText(page)).toBe('99999');
+  expect(await page.evaluate(() => document.activeElement?.closest('tr')?.querySelector('th')?.textContent)).toBe(
+    'PL-10001',
+  );
+});
+
+test('a focused row in a windowed grid survives being scrolled far away', async ({ page }) => {
+  await openStory(page, 'grid--large-catalogue');
+  await page.keyboard.press('Tab');
+  for (let presses = 0; presses < 3; presses += 1) {
+    await page.keyboard.press('ArrowDown');
+  }
+  const focusedRowIndex = () =>
+    page.evaluate(() => document.activeElement?.closest('tr')?.getAttribute('aria-rowindex') ?? null);
+  expect(await focusedRowIndex()).toBe('4');
+
+  const container = grid(page).locator('..');
+  const box = await container.boundingBox();
+  if (box === null) {
+    throw new Error('The grid is not visible');
+  }
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 5000);
+  await expect.poll(() => container.evaluate((element) => element.scrollTop)).toBeGreaterThan(4000);
+  expect(await focusedRowIndex()).toBe('4');
+
+  await container.evaluate((element) => {
+    element.scrollTop = 150_000;
+  });
+  await expect.poll(() => grid(page).getByRole('rowheader', { name: 'PL-10015' }).count()).toBe(1);
+  expect(await focusedRowIndex()).toBe('4');
+  expect(await grid(page).getByRole('row').count()).toBeLessThan(100);
+
+  await page.keyboard.press('ArrowDown');
+  expect(await focusedRowIndex()).toBe('5');
+  await expect(page.getByRole('button', { name: 'Part number' })).not.toBeFocused();
+  expect(await focusIsInGrid(page)).toBe(true);
+});
+
+interface IconPaint {
+  readonly icon: string;
+  readonly colour: string;
+  readonly background: string;
+  readonly opacity: number;
+}
+
+function channels(colour: string): [number, number, number, number] {
+  const values = colour.match(/[\d.]+/g)?.map(Number) ?? [];
+  return [values[0] ?? 0, values[1] ?? 0, values[2] ?? 0, values[3] ?? 1];
+}
+
+function luminance([red, green, blue]: readonly number[]): number {
+  const linear = (channel: number) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(red ?? 0) + 0.7152 * linear(green ?? 0) + 0.0722 * linear(blue ?? 0);
+}
+
+/** The contrast an icon actually shows, with its colour's alpha and every opacity down to its background applied. */
+function paintedContrast({ colour, background, opacity }: IconPaint): number {
+  const [red, green, blue, alpha] = channels(colour);
+  const [backRed, backGreen, backBlue] = channels(background);
+  const weight = alpha * opacity;
+  const painted = [red, green, blue].map((channel, index) => {
+    const back = [backRed, backGreen, backBlue][index] ?? 0;
+    return channel * weight + back * (1 - weight);
+  });
+  const lighter = Math.max(luminance(painted), luminance([backRed, backGreen, backBlue]));
+  const darker = Math.min(luminance(painted), luminance([backRed, backGreen, backBlue]));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+for (const theme of themeNames) {
+  test(`every icon in the grid keeps 3:1 against its background in the ${theme} theme`, async ({ page }) => {
+    await openStory(page, 'grid--parts', theme);
+    await page.getByRole('checkbox', { name: 'Select PL-10001' }).click();
+    await page.getByRole('button', { name: 'Revision' }).click();
+    const paints = await grid(page).evaluate((element): IconPaint[] =>
+      [...element.querySelectorAll('svg')]
+        .filter((icon) => icon.getBoundingClientRect().width > 0)
+        .map((icon) => {
+          let opacity = 1;
+          let background = 'rgba(0, 0, 0, 0)';
+          let node: Element | null = icon;
+          while (node !== null) {
+            const style = getComputedStyle(node);
+            opacity *= Number(style.opacity);
+            const fill = style.backgroundColor;
+            if (fill !== 'rgba(0, 0, 0, 0)' && fill !== 'transparent') {
+              background = fill;
+              break;
+            }
+            node = node.parentElement;
+          }
+          const cell = icon.closest('[data-grid-cell]')?.getAttribute('data-grid-cell') ?? '';
+          return {
+            icon: `${cell} ${icon.getAttribute('class') ?? ''}`,
+            colour: getComputedStyle(icon).color,
+            background,
+            opacity,
+          };
+        }),
+    );
+    expect(paints.some((paint) => paint.icon.includes('lucide-arrow-up-down'))).toBe(true);
+    const failing = paints
+      .map((paint) => ({ icon: paint.icon, contrast: Math.round(paintedContrast(paint) * 100) / 100 }))
+      .filter((paint) => paint.contrast < 3);
+    expect(failing).toEqual([]);
   });
 }
