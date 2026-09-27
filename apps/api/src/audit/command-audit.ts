@@ -1,6 +1,6 @@
-import { jsonValueOf, type JsonObject } from '@partledger/chain';
+import { isJsonObject, jsonValueOf, type JsonObject } from '@partledger/chain';
 
-import { assertCommittedPayload, type Commitment, type CommittedPayload } from './audit-payload';
+import { checkedAuditObject, type AuditPayload, type CheckedAuditObject, type Commitment } from './audit-payload';
 import type { AuditDatabase } from './audit-writer';
 import { commitValue } from './commitments';
 
@@ -11,7 +11,7 @@ import { commitValue } from './commitments';
  * wants that entry to cover.
  */
 export class CommandAudit {
-  private readonly recordedChanges: JsonObject[] = [];
+  private readonly recordedChanges: CheckedAuditObject[] = [];
 
   constructor(
     private readonly database: AuditDatabase,
@@ -19,11 +19,13 @@ export class CommandAudit {
     private readonly now: Date,
   ) {}
 
-  /** Adds a change to this command's entry. Personal fields must hold commitments. */
-  record<Change extends JsonObject>(change: CommittedPayload<Change>): void {
+  /** Adds a change to this command's entry; free text must be committed first (see audit-payload.ts). */
+  record<const Change extends JsonObject>(change: AuditPayload<Change>): void {
     const value = jsonValueOf(change);
-    assertCommittedPayload(value);
-    this.recordedChanges.push(change);
+    if (!isJsonObject(value)) {
+      throw new TypeError('An audit change is an object');
+    }
+    this.recordedChanges.push(checkedAuditObject(value));
   }
 
   /** Stores a personal or free-text value in the commitment store and returns its commitment. */
@@ -31,7 +33,7 @@ export class CommandAudit {
     return commitValue(this.database, { tenantId: this.tenantId, value, now: this.now });
   }
 
-  get changes(): readonly JsonObject[] {
+  get changes(): readonly CheckedAuditObject[] {
     return this.recordedChanges;
   }
 }

@@ -14,7 +14,7 @@ import { z } from 'zod';
 
 import { actorIdOf, type ActedUnder, type Principal } from '../principals/principal';
 import type { Clock } from '../time/clock';
-import { assertCommittedPayload, type CommittedPayload } from './audit-payload';
+import { assertAuditSafe, auditIdSchema, type AuditPayload, type AuditToken } from './audit-payload';
 
 /**
  * The only way anything enters the audit chain (KTD17, R26). An append runs inside the
@@ -29,7 +29,10 @@ export interface AuditDatabase {
   execute(query: SQL): Promise<{ rows: unknown[] }>;
 }
 
-/** Who acted, as every entry records it (R26). */
+/**
+ * Who acted, as every entry records it (R26). The fields come from a verified credential; the
+ * writer still checks that each is an identifier or token before it hashes them.
+ */
 export interface AuditActor {
   readonly type: ChainActorType;
   readonly id: string | null;
@@ -52,9 +55,9 @@ export interface AuditEvent<Data extends JsonObject> {
   readonly tenantId: string;
   readonly actor: AuditActor;
   /** What happened, such as the command's name `rfqs.publish`. */
-  readonly event: string;
-  /** Identifiers, versions, hashes and commitments; never a raw personal or free-text value. */
-  readonly data: CommittedPayload<Data>;
+  readonly event: AuditToken;
+  /** Identifiers, tokens, numbers, hashes, times and commitments; never free text (see audit-payload.ts). */
+  readonly data: AuditPayload<Data>;
 }
 
 export interface AppendedEntry extends ChainHead {
@@ -85,20 +88,19 @@ export async function readChainHead(database: AuditDatabase, tenantId: string): 
   return head === undefined ? null : { seq: head.seq, entryHash: head.entry_hash.toString('hex'), time: head.time };
 }
 
-export async function appendAuditEntry<Data extends JsonObject>(
+export async function appendAuditEntry<const Data extends JsonObject>(
   database: AuditDatabase,
   event: AuditEvent<Data>,
   clock: Clock,
 ): Promise<AppendedEntry> {
-  const data = jsonValueOf(event.data);
-  assertCommittedPayload(data);
   const { actor, tenantId } = event;
   const payload: JsonObject = {
     event: event.event,
     adapter: actor.adapter,
-    correlationId: actor.correlationId,
-    data,
+    correlationId: auditIdSchema.parse(actor.correlationId),
+    data: jsonValueOf(event.data),
   };
+  assertAuditSafe({ payload, actorId: actor.id, actedUnder: actor.actedUnder });
 
   await database.execute(sql`select pg_catalog.pg_advisory_xact_lock(${lockKey(tenantId)})`);
   const head = await readChainHead(database, tenantId);

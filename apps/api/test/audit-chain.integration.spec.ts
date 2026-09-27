@@ -8,7 +8,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { RawPersonalDataError } from '../src/audit/audit-payload';
+import { auditId, auditToken, UnsafeAuditPayloadError } from '../src/audit/audit-payload';
 import { appendAuditEntry, readChainHead, type AppendedEntry, type AuditActor } from '../src/audit/audit-writer';
 import { verifyTenantChain } from '../src/audit/chain-verifier';
 import { CommandAudit } from '../src/audit/command-audit';
@@ -19,6 +19,8 @@ import { applyTransition } from '../src/transitions/apply-transition';
 const countRows = z.tuple([z.object({ count: z.coerce.number() })]);
 
 const systemClock: Clock = { now: () => new Date() };
+
+const sampleEvent = auditToken('internalTest.sample');
 
 function personActor(): AuditActor {
   return {
@@ -137,7 +139,7 @@ describe('the audit chain', () => {
     return inTenant(pool, tenantId, (transaction) =>
       appendAuditEntry(
         transaction,
-        { tenantId, actor, event: 'internalTest.sample', data: { output: { noteId: randomUUID(), version } } },
+        { tenantId, actor, event: sampleEvent, data: { output: { noteId: auditId(randomUUID()), version } } },
         clock,
       ),
     );
@@ -209,7 +211,7 @@ describe('the audit chain', () => {
       const holder = await openTransaction(appPool, tenantId);
       const first = await appendAuditEntry(
         holder.database,
-        { tenantId, actor: personActor(), event: 'internalTest.sample', data: { output: { version: 2 } } },
+        { tenantId, actor: personActor(), event: sampleEvent, data: { output: { version: 2 } } },
         systemClock,
       );
       let secondSettled = false;
@@ -242,7 +244,7 @@ describe('the audit chain', () => {
       const abandoned = await openTransaction(appPool, tenantId);
       const rolledBack = await appendAuditEntry(
         abandoned.database,
-        { tenantId, actor: personActor(), event: 'internalTest.sample', data: { output: { version: 2 } } },
+        { tenantId, actor: personActor(), event: sampleEvent, data: { output: { version: 2 } } },
         systemClock,
       );
       await abandoned.rollback();
@@ -258,7 +260,7 @@ describe('the audit chain', () => {
       const holder = await openTransaction(appPool, tenantA);
       await appendAuditEntry(
         holder.database,
-        { tenantId: tenantA, actor: personActor(), event: 'internalTest.sample', data: { output: { version: 1 } } },
+        { tenantId: tenantA, actor: personActor(), event: sampleEvent, data: { output: { version: 1 } } },
         systemClock,
       );
       try {
@@ -311,7 +313,7 @@ describe('the audit chain', () => {
         acted_under: actor.actedUnder,
         correlation_id: actor.correlationId,
         payload: {
-          event: 'internalTest.sample',
+          event: sampleEvent,
           adapter: 'portal',
           correlationId: actor.correlationId,
           data: { output: { noteId, version: 1 } },
@@ -400,7 +402,7 @@ describe('the audit chain', () => {
               adapter: 'jobs',
               correlationId: randomUUID(),
             },
-            event: 'internalTest.suggestion',
+            event: auditToken('internalTest.suggestion'),
             data: { reason: commitment },
           },
           systemClock,
@@ -445,7 +447,7 @@ describe('the audit chain', () => {
           inTenant(appPool, tenantA, (transaction) =>
             appendAuditEntry(
               transaction,
-              { tenantId: tenantB, actor: personActor(), event: 'internalTest.sample', data: {} },
+              { tenantId: tenantB, actor: personActor(), event: sampleEvent, data: {} },
               systemClock,
             ),
           ),
@@ -456,8 +458,9 @@ describe('the audit chain', () => {
   });
 
   describe('personal and free-text values', () => {
-    it('a payload with a raw name is refused and nothing is appended', async () => {
+    it('a payload with a raw name or any other free string is refused and nothing is appended', async () => {
       const tenantId = await newTenant();
+      const freeText: string = 'Synthetic free text';
       await expect(
         inTenant(appPool, tenantId, (transaction) =>
           appendAuditEntry(
@@ -465,14 +468,38 @@ describe('the audit chain', () => {
             {
               tenantId,
               actor: personActor(),
-              event: 'internalTest.sample',
+              event: sampleEvent,
+              // @ts-expect-error A plain string is refused under any key.
+              data: { title: freeText },
+            },
+            systemClock,
+          ),
+        ),
+      ).rejects.toThrow(UnsafeAuditPayloadError);
+      await expect(
+        inTenant(appPool, tenantId, (transaction) =>
+          appendAuditEntry(
+            transaction,
+            { tenantId, actor: { ...personActor(), correlationId: freeText }, event: sampleEvent, data: {} },
+            systemClock,
+          ),
+        ),
+      ).rejects.toThrow();
+      await expect(
+        inTenant(appPool, tenantId, (transaction) =>
+          appendAuditEntry(
+            transaction,
+            {
+              tenantId,
+              actor: personActor(),
+              event: sampleEvent,
               // @ts-expect-error A personal field must hold a commitment, never the raw value.
               data: { contactName: 'Synthetic Person' },
             },
             systemClock,
           ),
         ),
-      ).rejects.toThrow(RawPersonalDataError);
+      ).rejects.toThrow(UnsafeAuditPayloadError);
       await expect(
         inTenant(appPool, tenantId, (transaction) =>
           appendAuditEntry(
@@ -480,14 +507,14 @@ describe('the audit chain', () => {
             {
               tenantId,
               actor: personActor(),
-              event: 'internalTest.sample',
+              event: sampleEvent,
               // @ts-expect-error Nested personal fields are checked too.
               data: { changes: [{ kind: 'void', justification: 'Synthetic free text' }] },
             },
             systemClock,
           ),
         ),
-      ).rejects.toThrow(RawPersonalDataError);
+      ).rejects.toThrow(UnsafeAuditPayloadError);
       expect(await count('select 1 from audit_entries where tenant_id = $1', [tenantId])).toBe(0);
     });
 
@@ -501,7 +528,7 @@ describe('the audit chain', () => {
         });
         await appendAuditEntry(
           transaction,
-          { tenantId, actor: personActor(), event: 'internalTest.sample', data: { contactName: committed } },
+          { tenantId, actor: personActor(), event: sampleEvent, data: { contactName: committed } },
           systemClock,
         );
         return committed;
@@ -605,7 +632,7 @@ describe('the audit chain', () => {
         for (let version = 1; version <= 520; version += 1) {
           await appendAuditEntry(
             transaction,
-            { tenantId, actor: personActor(), event: 'internalTest.sample', data: { output: { version } } },
+            { tenantId, actor: personActor(), event: sampleEvent, data: { output: { version } } },
             systemClock,
           );
         }

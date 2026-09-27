@@ -23,6 +23,7 @@ import {
 } from '../../src/commands/handlers';
 import { actorIdOf } from '../../src/principals/principal';
 import { applyTransition } from '../../src/transitions/apply-transition';
+import { auditId } from '../../src/audit/audit-payload';
 
 /**
  * A test-only module that exercises the command and query layer before any business module
@@ -211,7 +212,11 @@ export class CreateNoteHandler implements CommandHandler<typeof createNote> {
   async execute(input: InputOf<typeof createNote>, context: CommandContext): Promise<HandlerResult<typeof createNote>> {
     const note = await insertNote(context, input.title);
     // The title is free text, so the audit entry carries only its commitment.
-    context.audit.record({ kind: 'noteCreated', noteId: note.id, name: await context.audit.commit(input.title) });
+    context.audit.record({
+      kind: 'noteCreated',
+      noteId: auditId(note.id),
+      title: await context.audit.commit(input.title),
+    });
     if (input.delayMilliseconds > 0) {
       await context.database.execute(sql`select pg_sleep(${input.delayMilliseconds / 1000})`);
     }

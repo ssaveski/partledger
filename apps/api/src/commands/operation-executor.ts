@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { appendAuditEntry, auditActorOf } from '../audit/audit-writer';
+import { auditToken, checkedAuditObject } from '../audit/audit-payload';
 import { CommandAudit } from '../audit/command-audit';
 import { TenantTransactions, type AppDatabase } from '../db/tenant-transaction';
 import { IdempotencyService } from '../idempotency/idempotency.service';
@@ -161,8 +162,8 @@ export class OperationExecutor {
           {
             tenantId: principal.tenantId,
             actor: auditActorOf(principal),
-            event: declaration.name,
-            data: { output: outputForAudit(outcome.output), changes: audit.changes },
+            event: auditToken(declaration.name),
+            data: { output: checkedAuditObject(outputForAudit(outcome.output)), changes: audit.changes },
           },
           this.time,
         );

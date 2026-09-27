@@ -240,7 +240,7 @@ describe('the audit entry of every command', () => {
         correlationId: response.headers.get(correlationIdHeader),
         data: {
           output: { noteId, version: 1 },
-          changes: [{ kind: 'noteCreated', noteId, name: { commitment } }],
+          changes: [{ kind: 'noteCreated', noteId, title: { commitment } }],
         },
       },
     });

@@ -9,6 +9,7 @@ import {
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 
+import { auditId, auditToken } from '../audit/audit-payload';
 import type { AuditDatabase } from '../audit/audit-writer';
 import type { CommandAudit } from '../audit/command-audit';
 
@@ -68,16 +69,13 @@ export async function applyTransition<Status extends string, Transition extends 
   if (row === undefined) {
     return refuse('Conflict', 'transitionNotAllowed', params);
   }
-  const transition: string = request.transition;
-  const from: string = request.from;
-  const target: string = to;
   context.audit.record({
     kind: 'transition',
-    aggregate: lifecycle.aggregate,
-    id: request.id,
-    transition,
-    from,
-    to: target,
+    aggregate: auditToken(lifecycle.aggregate),
+    id: auditId(request.id),
+    transition: auditToken(request.transition),
+    from: auditToken(request.from),
+    to: auditToken(to),
   });
   return success({ status: to, version: row.version });
 }
