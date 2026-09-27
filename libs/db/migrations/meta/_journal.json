@@ -169,6 +169,20 @@
       "when": 1790504584938,
       "tag": "0023_uploads_security",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790507602666,
+      "tag": "0024_parts_and_suppliers",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790507603909,
+      "tag": "0025_parts_and_suppliers_security",
+      "breakpoints": true
     }
   ]
 }

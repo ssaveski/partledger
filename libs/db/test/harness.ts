@@ -159,3 +159,105 @@ export async function insertMember(superuser: pg.Client, member: SyntheticMember
     );
   }
 }
+
+/**
+ * Runs fixture writes in one transaction that declares itself the ERP import, which the
+ * database requires for ERP-sourced rows and for an approved-supplier list mirrored from the
+ * ERP (migration 0023). Fixtures stand in for the import; application code never does this.
+ */
+export async function asErpImport<T>(client: pg.Client, work: () => Promise<T>): Promise<T> {
+  await client.query('begin');
+  try {
+    await client.query(`select set_config('app.master_data_writer', 'erp_import', true)`);
+    const result = await work();
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    await client.query('rollback');
+    throw error;
+  }
+}
+
+export interface SyntheticPart {
+  readonly tenantId: string;
+  readonly partNumber: string;
+  readonly revision?: string;
+  readonly description?: string;
+  readonly category?: string;
+  readonly unit?: string;
+  readonly source?: 'erp' | 'platform';
+  readonly active?: boolean;
+}
+
+/** Inserts a synthetic part as the ERP import would, through a superuser connection. */
+export async function insertPart(superuser: pg.Client, part: SyntheticPart): Promise<string> {
+  const result = await asErpImport(superuser, () =>
+    superuser.query(
+      `insert into parts (tenant_id, part_number, revision, description, category, unit, source, active, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, now(), now()) returning id`,
+      [
+        part.tenantId,
+        part.partNumber,
+        part.revision ?? 'A',
+        part.description ?? `Synthetic part ${part.partNumber}`,
+        part.category ?? 'castings',
+        part.unit ?? 'each',
+        part.source ?? 'erp',
+        part.active ?? true,
+      ],
+    ),
+  );
+  return insertedId.parse(result.rows)[0].id;
+}
+
+export interface SyntheticSupplier {
+  readonly tenantId: string;
+  readonly code: string;
+  readonly name?: string;
+  readonly country?: string;
+  readonly vatId?: string | null;
+  readonly lei?: string | null;
+  readonly source?: 'erp' | 'platform';
+  /** An entry on the approved-supplier list; none when left out. */
+  readonly approval?: {
+    readonly status: string;
+    readonly scope: readonly string[];
+    readonly expiresOn?: string | null;
+  };
+}
+
+/** Inserts a synthetic supplier, with its approval if given, as the ERP import would. */
+export async function insertSupplier(superuser: pg.Client, supplier: SyntheticSupplier): Promise<string> {
+  return asErpImport(superuser, () => insertSupplierRows(superuser, supplier));
+}
+
+async function insertSupplierRows(superuser: pg.Client, supplier: SyntheticSupplier): Promise<string> {
+  const result = await superuser.query(
+    `insert into suppliers (tenant_id, code, name, country, vat_id, lei, status, source, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, 'active', $7, now(), now()) returning id`,
+    [
+      supplier.tenantId,
+      supplier.code,
+      supplier.name ?? `Synthetic Supplier ${supplier.code}`,
+      supplier.country ?? 'CA',
+      supplier.vatId ?? null,
+      supplier.lei ?? null,
+      supplier.source ?? 'erp',
+    ],
+  );
+  const supplierId = insertedId.parse(result.rows)[0].id;
+  if (supplier.approval !== undefined) {
+    await superuser.query(
+      `insert into approved_supplier_entries (tenant_id, supplier_id, status, scope, expires_on, updated_at)
+       values ($1, $2, $3, $4, $5, now())`,
+      [
+        supplier.tenantId,
+        supplierId,
+        supplier.approval.status,
+        supplier.approval.scope,
+        supplier.approval.expiresOn ?? null,
+      ],
+    );
+  }
+  return supplierId;
+}

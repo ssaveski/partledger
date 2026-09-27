@@ -130,6 +130,23 @@ export interface JobEnqueuer {
     declaration: Declaration,
     payload: PayloadOf<Declaration>,
   ): Promise<string>;
+  /** Queues at most one job per key and slot; `null` when one with the key is already queued. */
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+    singleton: JobSingleton,
+  ): Promise<string | null>;
+}
+
+/**
+ * pg-boss's singleton options: one job per key within each `singletonSeconds` slot. With
+ * `singletonNextSlot`, a job asked for while one is queued runs in the next slot instead of
+ * being dropped. The key is stored beside the payload, so it holds identifiers only.
+ */
+export interface JobSingleton {
+  readonly singletonKey: string;
+  readonly singletonSeconds: number;
+  readonly singletonNextSlot?: boolean;
 }
 
 export interface JobItemContext<Prepared = unknown> extends JobContext {

@@ -1,4 +1,4 @@
-import type { ApprovalStatus, ExpiryStatus, IdentityCheck } from '@partledger/contracts';
+import type { ApprovalStatus, ExpiryStatus, IdentityCheck, SupplierEvidenceStatus } from '@partledger/contracts';
 import type { GridStateDefinition } from '@partledger/ui';
 import {
   BadgeCheckIcon,
@@ -13,10 +13,25 @@ import {
   CircleMinusIcon,
   CirclePauseIcon,
   SearchXIcon,
+  ShieldQuestionIcon,
   TriangleAlertIcon,
   UserRoundCheckIcon,
   UserRoundXIcon,
 } from 'lucide-react';
+
+import { evidenceStates } from '../rfqs/comparison-states';
+
+/** A supplier the evidence vault has not assessed yet, so its evidence status is unknown. */
+export const evidenceNotAssessedState: GridStateDefinition = {
+  id: 'evidenceNotAssessed',
+  labelKey: 'pl.suppliers.evidence.notAssessed',
+  tone: 'neutral',
+  icon: ShieldQuestionIcon,
+};
+
+export function evidenceStateOf(status: SupplierEvidenceStatus | null): GridStateDefinition {
+  return status === null ? evidenceNotAssessedState : evidenceStates[status];
+}
 
 export const approvalStates: Readonly<Record<ApprovalStatus, GridStateDefinition>> = {
   approved: {

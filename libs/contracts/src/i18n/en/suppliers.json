@@ -3,6 +3,7 @@
   "pl.suppliers.approval.conditional": "Approved with conditions",
   "pl.suppliers.approval.suspended": "Approval suspended",
   "pl.suppliers.approval.notApproved": "Not approved",
+  "pl.suppliers.evidence.notAssessed": "Evidence not assessed yet",
   "pl.suppliers.expiry.current": "Current",
   "pl.suppliers.expiry.expiringSoon": "Expires within 60 days",
   "pl.suppliers.expiry.expired": "Expired",

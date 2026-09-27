@@ -150,6 +150,7 @@ export const fixtureParts: readonly FixturePart[] = specs.map((spec) => ({
   active: spec.active ?? true,
   approvedSupplierCount: fixtureSuppliers.filter((supplier) => fixtureCovers(supplier, spec.category)).length,
   updatedAt: spec.updatedAt,
+  version: 1,
 }));
 
 /** The category of a fixture part, which RFQ lines snapshot by part number. */

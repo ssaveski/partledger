@@ -51,7 +51,8 @@ try {
   await insertMember(superuser, {
     tenantId,
     userId,
-    roles: ['tenant_admin', 'buyer'],
+    // A quality engineer too, so the supplier screens' test can put a supplier on the list (R9).
+    roles: ['tenant_admin', 'buyer', 'quality_engineer'],
     email: user.email,
     displayName: user.displayName,
   });
@@ -80,6 +81,9 @@ try {
       KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret('partledger-api-organizations'),
       // No operator signs in during the staff end-to-end tests; the operator realm is not started.
       OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger-operators',
+      // The end-to-end tests never reach the real identity registers.
+      VIES_API_URL: 'http://127.0.0.1:1/vies',
+      GLEIF_API_URL: 'http://127.0.0.1:1/gleif',
     },
     stdio: 'inherit',
   });

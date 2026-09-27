@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { credentialKinds } from '../src/schema/credentials.ts';
 import { tableAccessManifest } from '../src/schema/index.ts';
 import { hashCredentialSecret, issueCredential, verifyCredential } from '../src/credentials/credential-store.ts';
-import { insertTenant, startTestDatabase, type TestDatabase } from './harness.ts';
+import { insertPart, insertSupplier, insertTenant, startTestDatabase, type TestDatabase } from './harness.ts';
 
 const tenantRows = z.array(z.object({ id: z.uuid() }));
 const tenantIdRows = z.array(z.object({ tenant_id: z.uuid() }));
@@ -117,6 +117,27 @@ async function insertUpload(client: pg.Client, tenantId: string, credentialId: s
   );
 }
 
+/** A part, and a supplier with a contact, an identity check and an approval (U10). */
+async function insertMasterDataRows(client: pg.Client, tenantId: string): Promise<void> {
+  await insertPart(client, { tenantId, partNumber: 'PN-RLS-1' });
+  const supplierId = await insertSupplier(client, {
+    tenantId,
+    code: 'RLS-01',
+    vatId: 'SE556677889901',
+    approval: { status: 'approved', scope: ['castings'] },
+  });
+  await client.query(
+    `insert into supplier_contacts (tenant_id, supplier_id, name, email, role, added_at)
+     values ($1, $2, 'Synthetic Contact', 'contact@supplier.test', 'sales', now())`,
+    [tenantId, supplierId],
+  );
+  await client.query(
+    `insert into supplier_identity_checks (tenant_id, supplier_id, register, identifier, result, checked_at)
+     values ($1, $2, 'vies', 'SE556677889901', 'notChecked', now())`,
+    [tenantId, supplierId],
+  );
+}
+
 /** A member holding one role, and the tenant's directory entry. */
 async function insertMembershipRows(client: pg.Client, tenantId: string, slug: string): Promise<string> {
   const userId = randomUUID();
@@ -222,6 +243,7 @@ describe('row-level security as pl_app', () => {
       await insertAiRows(superuser, tenant);
       await insertUpload(superuser, tenant, credential.id);
       memberOf.set(tenant, await insertMembershipRows(superuser, tenant, slug));
+      await insertMasterDataRows(superuser, tenant);
     }
   });
 

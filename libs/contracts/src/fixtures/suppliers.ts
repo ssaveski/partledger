@@ -2,6 +2,7 @@ import type { z } from 'zod';
 
 import { fixtureQuery, type FixtureHandler } from '../client/fixture-adapter';
 import type { PartCategory } from '../parts/queries';
+import type { SupplierEvidenceStatus } from '../rfqs/queries';
 import { supplierListQuery, type ApprovalStatus } from '../suppliers/queries';
 import { fixtureId } from './ids';
 
@@ -12,7 +13,8 @@ import { fixtureId } from './ids';
 
 type SupplierListOutput = z.input<typeof supplierListQuery.output>;
 
-export type FixtureSupplier = SupplierListOutput['suppliers'][number];
+/** Every synthetic supplier has been assessed, so the RFQ fixtures can show its evidence status. */
+export type FixtureSupplier = SupplierListOutput['suppliers'][number] & { readonly evidence: SupplierEvidenceStatus };
 
 /** The date every synthetic expiry status is evaluated on. */
 export const fixtureAsOf = '2026-09-27';

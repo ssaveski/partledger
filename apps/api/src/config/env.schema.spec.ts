@@ -103,7 +103,28 @@ describe('API configuration', () => {
       UPLOAD_LINK_QUOTA_BYTES: 250 * 1024 * 1024,
       UPLOAD_TENANT_DAILY_QUOTA_FILES: 2_000,
       UPLOAD_TENANT_DAILY_QUOTA_BYTES: 4 * 1024 * 1024 * 1024,
+      VIES_API_URL: 'https://ec.europa.eu/taxation_customs/vies/rest-api',
+      GLEIF_API_URL: 'https://api.gleif.org/api/v1',
+      IDENTITY_CHECK_TIMEOUT_MILLISECONDS: 10_000,
     });
+  });
+
+  it('asks the identity registers over https in production, within a bounded time', () => {
+    const base = { NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth };
+    expect(parseConfig({ ...base, VIES_API_URL: 'http://127.0.0.1:9000/vies/' }).VIES_API_URL).toBe(
+      'http://127.0.0.1:9000/vies',
+    );
+    expect(
+      fieldsRefusedIn({
+        ...base,
+        NODE_ENV: 'production',
+        VIES_API_URL: 'http://vies.example.test',
+        GLEIF_API_URL: 'http://gleif.example.test',
+      }),
+    ).toEqual(expect.arrayContaining(['VIES_API_URL', 'GLEIF_API_URL']));
+    expect(fieldsRefusedIn({ ...base, IDENTITY_CHECK_TIMEOUT_MILLISECONDS: '0' })).toEqual([
+      'IDENTITY_CHECK_TIMEOUT_MILLISECONDS',
+    ]);
   });
 
   it('refuses directory region URLs that do not name this deployment’s region or are not origins', () => {

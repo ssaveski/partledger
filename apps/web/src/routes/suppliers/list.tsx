@@ -19,9 +19,8 @@ import { formatDate } from '../../shell/format';
 import { FilterBar, SearchFilter, SelectFilter } from '../../shell/list-filters';
 import { QueryView } from '../../shell/query-view';
 import { searchValue } from '../../shell/text-filter';
-import { evidenceStates } from '../rfqs/comparison-states';
 import { filterSuppliers, hasSupplierFilters } from './supplier-filters';
-import { approvalExpiryStates, approvalStates, identityStates } from './supplier-states';
+import { approvalExpiryStates, approvalStates, evidenceStateOf, identityStates } from './supplier-states';
 
 const route = getRouteApi('/suppliers');
 
@@ -102,7 +101,7 @@ function SupplierListView({ list }: { list: SupplierList }) {
         helper.accessor('evidence', {
           header: () => translate('pl.suppliers.list.column.evidence'),
           cell: ({ getValue }) => (
-            <StateBadge state={evidenceStates[getValue()]} showLabel className="whitespace-normal" />
+            <StateBadge state={evidenceStateOf(getValue())} showLabel className="whitespace-normal" />
           ),
         }),
         helper.accessor((supplier) => supplier.identityCheck.status, {

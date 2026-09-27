@@ -3,6 +3,8 @@ import { addAlertRecipientCommand, removeAlertRecipientCommand, resetSecondFacto
 import { aiCommands } from '../ai/ai-operations';
 import { ResetSecondFactorHandler } from '../auth/factor-reset.command';
 import { AddAlertRecipientHandler, RemoveAlertRecipientHandler } from '../notifications/alert-recipients.commands';
+import { partCommandRegistrations } from '../parts/part-operations';
+import { supplierCommandRegistrations } from '../suppliers/supplier-operations';
 import { tenantCommands } from '../tenants/tenant-operations';
 import { registerCommand, type CommandRegistration } from './handlers';
 
@@ -17,4 +19,6 @@ export const productionCommands: readonly CommandRegistration[] = [
   registerCommand(resetSecondFactor, ResetSecondFactorHandler),
   ...tenantCommands,
   ...aiCommands,
+  ...partCommandRegistrations,
+  ...supplierCommandRegistrations,
 ];

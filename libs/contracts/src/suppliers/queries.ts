@@ -6,9 +6,9 @@ import { asOfSchema, expiryStatusSchema, listInputSchema, listReadErrors, staffL
 import { supplierEvidenceStatusSchema } from '../rfqs/queries';
 
 /**
- * The supplier list behind the supplier screen and supplier assignment (U27). U10 implements it
- * on the API, with the identity checks of R10; until then the fixture adapter serves synthetic
- * suppliers in this shape.
+ * The supplier list behind the supplier screen and supplier assignment (U27), served by the API
+ * with the identity checks of R10 (U10) and, in the preview, by the fixture adapter with
+ * synthetic suppliers in the same shape.
  */
 
 export const approvalStatuses = ['approved', 'conditional', 'suspended', 'notApproved'] as const;
@@ -64,7 +64,9 @@ export const supplierSummarySchema = z
       .describe('The ISO 3166-1 alpha-2 country of the supplier.'),
     approval: supplierApprovalSchema,
     identityCheck: identityCheckSchema,
-    evidence: supplierEvidenceStatusSchema,
+    evidence: supplierEvidenceStatusSchema
+      .nullable()
+      .describe('The supplier’s evidence status, or null until the evidence vault has assessed the supplier.'),
   })
   .strict()
   .describe('One supplier with its approval, identity check and evidence status.');

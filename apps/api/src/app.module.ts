@@ -14,6 +14,8 @@ import { productionRegistry } from './commands/query-registry';
 import type { AppConfig } from './config/env.schema';
 import { DatabaseModule } from './db/db.module';
 import { HealthController } from './health/health.controller';
+import { IdentityChecksModule } from './identity-checks/identity-checks.module';
+import type { IdentityRegisters } from './identity-checks/identity-registers';
 import { productionJobs } from './jobs/job-registry';
 import { JobsModule } from './jobs/job-runner.module';
 import type { KeyService } from './keys/key-service.port';
@@ -52,6 +54,7 @@ export interface AppOverrides {
   /** Scripts the local AI model's answers. */
   readonly aiLocalResponder?: LocalResponder;
   readonly suggestionTargets?: SuggestionTargets;
+  readonly identityRegisters?: IdentityRegisters;
 }
 
 @Module({})
@@ -103,6 +106,7 @@ export class AppModule {
         }),
         TenantsModule.register({ config, clock: time, identityOrganizations: overrides.identityOrganizations }),
         UploadsModule.register({ config, clock: time, roleDirectory: roles, malwareScanner: overrides.malwareScanner }),
+        IdentityChecksModule.register({ config, registers: overrides.identityRegisters }),
         OperationsModule.register({
           registry: overrides.registry ?? productionRegistry,
           roleDirectory: roles,
