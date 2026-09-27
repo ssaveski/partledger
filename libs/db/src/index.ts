@@ -26,11 +26,13 @@ export {
   type ResolvedCredential,
   type SqlExecutor,
 } from './credentials/credential-store.ts';
+export { jobQueueAccess, type JobQueueAccess } from './job-queue-access.ts';
 export { migrateDatabase, migrationsFolder } from './migrate.ts';
 export {
   backupRole,
   credentialResolverRole,
   grantableRoles,
+  jobRunnerRole,
   migratorRole,
   runtimeRoles,
   type GrantableRole,

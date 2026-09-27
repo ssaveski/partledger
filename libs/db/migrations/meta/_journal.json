@@ -71,6 +71,34 @@
       "when": 1790471916309,
       "tag": "0009_staff_sessions_security",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790473639221,
+      "tag": "0010_job_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790473640113,
+      "tag": "0011_job_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790473640988,
+      "tag": "0012_job_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790475111134,
+      "tag": "0013_job_enrolments",
+      "breakpoints": true
     }
   ]
 }

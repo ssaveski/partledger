@@ -7,7 +7,7 @@ import {
   staffRequestHeader,
   type TenantRole,
 } from '@partledger/contracts';
-import { issueCredential, type CredentialKind } from '@partledger/db';
+import { issueCredential, shippedExpectations, type CredentialKind, type TableAccess } from '@partledger/db';
 import { insertTenant, startTestDatabase, type TestDatabase } from '@partledger/db/testing';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import type pg from 'pg';
@@ -17,7 +17,9 @@ import type { IdentityProvider } from '../../src/auth/identity-provider';
 import { sessionCookieName } from '../../src/auth/session-cookie';
 import { StaffSessions } from '../../src/auth/staff-sessions';
 import { startApi, type RunningApi } from '../../src/bootstrap';
+import type { OperationRegistry } from '../../src/commands/handlers';
 import { parseConfig } from '../../src/config/env.schema';
+import type { ModuleJobs } from '../../src/jobs/job.types';
 import type { HttpEntryAdapter } from '../../src/listeners/entry-adapters';
 import { formatCredentialToken } from '../../src/principals/credential-token';
 import type { RoleDirectory } from '../../src/principals/role-directory';
@@ -61,13 +63,25 @@ export interface ApiHarness {
     adapter: HttpEntryAdapter,
     name: string,
     body: unknown,
-    options?: { readonly token?: string; readonly idempotencyKey?: string },
+    options?: { readonly token?: string; readonly idempotencyKey?: string; readonly api?: RunningApi },
   ): Promise<ApiResponse>;
   query(adapter: HttpEntryAdapter, name: string, input: unknown, token?: string): Promise<ApiResponse>;
   /** Gives a person, such as one signed in through Keycloak, roles in the stand-in directory. */
   grantRoles(userId: string, roles: readonly TenantRole[]): void;
   count(sql: string, values?: unknown[]): Promise<number>;
+  /** Another API process on the same database, sharing the clock and role directory; the caller closes it. */
+  startAnotherApi(options?: ApiProcessOptions): Promise<RunningApi>;
   close(): Promise<void>;
+}
+
+/** What differs between API processes started on the harness's database. */
+export interface ApiProcessOptions {
+  readonly registry?: OperationRegistry;
+  readonly jobs?: ModuleJobs;
+  /** Whether the API runs job handlers and schedules; off unless a test needs them. */
+  readonly workers?: boolean;
+  /** Test tables that exist when this API boots, for its catalog check. */
+  readonly catalogTables?: readonly TableAccess[];
 }
 
 export interface ApiHarnessOptions {
@@ -78,6 +92,8 @@ export interface ApiHarnessOptions {
    * stand-in, whose refreshes always succeed with the same identity.
    */
   readonly identityProvider?: 'keycloak' | IdentityProvider;
+  /** The first API process. */
+  readonly process?: ApiProcessOptions;
 }
 
 /**
@@ -101,28 +117,41 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
       offset += milliseconds;
     },
   };
-  const config = parseConfig({
-    NODE_ENV: 'test',
-    STAFF_PORT: '1',
-    PORTAL_PORT: '2',
-    DROP_PORT: '3',
-    OPERATOR_PORT: '4',
-    DATABASE_URL: database.connectionString('pl_app'),
-    // Tests move the clock by up to a day; sessions they issue must outlast that.
-    ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
-  });
   const loopback = { host: '127.0.0.1', port: 0 };
-  const api = await startApi(
-    config,
-    { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
-    {
-      registry: internalTestRegistry,
-      roleDirectory,
-      clock,
-      identityProvider:
-        options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
-    },
-  );
+  const startOne = (apiProcess: ApiProcessOptions) =>
+    startApi(
+      parseConfig({
+        NODE_ENV: 'test',
+        STAFF_PORT: '1',
+        PORTAL_PORT: '2',
+        DROP_PORT: '3',
+        OPERATOR_PORT: '4',
+        DATABASE_URL: database.connectionString('pl_app'),
+        JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
+        JOBS_WORKERS: apiProcess.workers === true ? 'on' : 'off',
+        // Tests move the clock by up to a day; sessions they issue must outlast that.
+        ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
+      }),
+      { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
+      {
+        registry: apiProcess.registry ?? internalTestRegistry,
+        roleDirectory,
+        clock,
+        identityProvider:
+          options.identityProvider === 'keycloak' ? undefined : (options.identityProvider ?? stubIdentityProvider),
+        jobPollingIntervalSeconds: 0.5,
+        ...(apiProcess.jobs === undefined ? {} : { jobs: apiProcess.jobs }),
+        ...(apiProcess.catalogTables === undefined
+          ? {}
+          : {
+              catalogExpectations: {
+                ...shippedExpectations,
+                tables: [...shippedExpectations.tables, ...apiProcess.catalogTables],
+              },
+            }),
+      },
+    );
+  const api = await startOne(options.process ?? {});
   const staffSessions = api.app.get(StaffSessions);
   // Created after boot: the boot-time catalog check knows only the shipped schema.
   const migrator = await database.connect('pl_migrator');
@@ -130,8 +159,13 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
   await migrator.end();
   const issuer = drizzle({ client: superuser });
 
-  async function send(adapter: HttpEntryAdapter, path: string, init: RequestInit): Promise<ApiResponse> {
-    const response = await fetch(`${api.listeners.urls[adapter]}${path}`, init);
+  async function send(
+    adapter: HttpEntryAdapter,
+    path: string,
+    init: RequestInit,
+    target: RunningApi = api,
+  ): Promise<ApiResponse> {
+    const response = await fetch(`${target.listeners.urls[adapter]}${path}`, init);
     const text = await response.text();
     const body: unknown = text === '' ? null : JSON.parse(text);
     return { status: response.status, headers: response.headers, body };
@@ -177,7 +211,7 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
       if (options.idempotencyKey !== undefined) {
         headers[idempotencyKeyHeader] = options.idempotencyKey;
       }
-      return send(adapter, commandPath(name), { method: 'POST', headers, body: JSON.stringify(body) });
+      return send(adapter, commandPath(name), { method: 'POST', headers, body: JSON.stringify(body) }, options.api);
     },
     query(adapter, name, input, token) {
       const search = new URLSearchParams({ input: JSON.stringify(input) });
@@ -189,6 +223,9 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
     async count(text, values = []) {
       const result = await superuser.query(`select count(*)::int as count from (${text}) as counted`, values);
       return countRows.parse(result.rows)[0].count;
+    },
+    startAnotherApi(apiProcess = options.process ?? {}) {
+      return startOne(apiProcess);
     },
     async close() {
       await api.close();

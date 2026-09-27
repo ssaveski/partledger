@@ -398,7 +398,7 @@ describe('the audit chain', () => {
             actor: {
               type: 'ai_agent',
               id: randomUUID(),
-              actedUnder: { grant: 'job', jobId: randomUUID() },
+              actedUnder: { grant: 'job', jobId: randomUUID(), cause: 'schedule', source: 'internalTest.nightly' },
               adapter: 'jobs',
               correlationId: randomUUID(),
             },

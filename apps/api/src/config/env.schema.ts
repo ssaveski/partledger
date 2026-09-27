@@ -48,6 +48,11 @@ export const envSchema = z
     STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS: z.coerce.number().int().min(1).max(168).default(10),
     /** How often a session's tokens are refreshed against Keycloak; a failed refresh ends the session. */
     STAFF_SESSION_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(60),
+    /** pg-boss connects as `pl_job_runner`, which reaches the job queue schema and nothing else (KTD16). */
+    JOBS_DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+    JOBS_DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(5),
+    /** `on` runs job handlers and fires schedules in this process; `off` only enqueues. */
+    JOBS_WORKERS: z.enum(['on', 'off']).default('on'),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();

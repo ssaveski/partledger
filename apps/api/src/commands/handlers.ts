@@ -4,6 +4,7 @@ import type { DomainErrorOf, Result } from '@partledger/domain';
 
 import type { CommandAudit } from '../audit/command-audit';
 import type { AppDatabase } from '../db/tenant-transaction';
+import type { CommandJobs } from '../jobs/enqueue';
 import type { Principal } from '../principals/principal';
 
 /** What a handler runs with: the principal from the credential and the request's tenant transaction. */
@@ -15,9 +16,13 @@ export interface OperationContext {
   readonly now: Date;
 }
 
-/** A command also records what it changed in its one audit entry (R26). */
+/**
+ * A command also records what it changed in its one audit entry (R26), and enqueues its
+ * follow-up work in its own transaction (KTD16).
+ */
 export interface CommandContext extends OperationContext {
   readonly audit: CommandAudit;
+  readonly jobs: CommandJobs;
 }
 
 /** A handler returns its declared failures as values; any failure rolls the transaction back (KTD14). */

@@ -110,7 +110,7 @@ describe('the audit entry of every command', () => {
   const jobPrincipal: AuthenticatedPrincipal = {
     type: 'system',
     tenantId: '00000000-0000-4000-8000-000000000000',
-    actedUnder: { grant: 'job', jobId: randomUUID() },
+    actedUnder: { grant: 'job', jobId: randomUUID(), cause: 'schedule', source: 'internalTest.nightly' },
     adapter: 'jobs',
     correlationId: randomUUID(),
   };
@@ -272,7 +272,11 @@ describe('the audit entry of every command', () => {
     const jobId = randomUUID();
     const fromJob = await audited(async () => {
       const outcome = await executor.runCommand(
-        { ...jobPrincipal, tenantId: harness.tenantA, actedUnder: { grant: 'job', jobId } },
+        {
+          ...jobPrincipal,
+          tenantId: harness.tenantA,
+          actedUnder: { grant: 'job', jobId, cause: 'command', source: 'internalTest.createNote' },
+        },
         'internalTest.recordJobRun',
         { title: 'Synthetic nightly note' },
         undefined,
@@ -280,7 +284,12 @@ describe('the audit entry of every command', () => {
       return outcome.kind;
     });
     expect(fromJob.entries).toMatchObject([
-      { actor_type: 'system', actor_id: null, acted_under: { grant: 'job', jobId }, payload: { adapter: 'jobs' } },
+      {
+        actor_type: 'system',
+        actor_id: null,
+        acted_under: { grant: 'job', jobId, cause: 'command', source: 'internalTest.createNote' },
+        payload: { adapter: 'jobs' },
+      },
     ]);
   });
 

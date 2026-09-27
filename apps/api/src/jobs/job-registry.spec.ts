@@ -1,0 +1,51 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { migrationsFolder } from '@partledger/db';
+import { describe, expect, it } from 'vitest';
+
+import { VerifyChainHandler, verifyChainJob } from '../audit/chain-verification.job';
+import { combineModuleJobs, InvalidJobRegistryError, productionJobs } from './job-registry';
+import { defineJob, defineSchedule, registerJob } from './job.types';
+import { jobQueueConstructionSql } from './queue-schema';
+
+describe('the job registry', () => {
+  it('registers the nightly chain verification for every tenant and the tenant enrolment job', () => {
+    expect(productionJobs.jobs.map((registration) => registration.declaration.name).sort()).toEqual([
+      'audit.verifyChain',
+      'jobs.enrollTenant',
+    ]);
+    expect(productionJobs.schedules.map((schedule) => [schedule.name, schedule.job.name, schedule.cron])).toEqual([
+      ['audit.nightlyChainVerification', 'audit.verifyChain', '17 3 * * *'],
+    ]);
+  });
+
+  it('refuses a job declared by two modules', () => {
+    const module = { jobs: [registerJob(verifyChainJob, VerifyChainHandler)], schedules: [] };
+    expect(() => combineModuleJobs([module, module])).toThrow(InvalidJobRegistryError);
+  });
+
+  it('refuses a schedule whose job no module registers', () => {
+    const unregistered = defineJob({ name: 'fixtures.unregistered', description: 'A synthetic job.', payload: {} });
+    expect(() =>
+      combineModuleJobs([
+        {
+          jobs: [],
+          schedules: [defineSchedule({ name: 'fixtures.nightly', job: unregistered, cron: '0 3 * * *', payload: {} })],
+        },
+      ]),
+    ).toThrow(/not registered/);
+  });
+});
+
+describe('the job queue schema', () => {
+  it('is installed by the migrations exactly as the pg-boss version in use builds it', () => {
+    const migration = readFileSync(join(migrationsFolder, '0011_job_queue.sql'), 'utf8');
+    const body = migration
+      .split('\n')
+      .filter((line) => !line.startsWith('-- '))
+      .join('\n')
+      .trim();
+    expect(body).toBe(jobQueueConstructionSql());
+  });
+});

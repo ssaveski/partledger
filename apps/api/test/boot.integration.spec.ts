@@ -11,6 +11,7 @@ import { placeholderAuthEnvironment } from './support/auth-environment';
 const apiDirectory = join(import.meta.dirname, '..');
 const entryPoint = join(apiDirectory, 'dist', 'main.js');
 const placeholderDatabaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:1/partledger';
+const placeholderJobsDatabaseUrl = 'postgres://pl_job_runner:placeholder@127.0.0.1:1/partledger';
 const ports = { STAFF_PORT: '3000', PORTAL_PORT: '3001', DROP_PORT: '3002', OPERATOR_PORT: '3003' };
 
 function startWith(environment: Readonly<Record<string, string>>) {
@@ -63,13 +64,19 @@ describe('the built API entry point', () => {
       ...ports,
       STAFF_PORT: 'eighty',
       DATABASE_URL: placeholderDatabaseUrl,
+      JOBS_DATABASE_URL: placeholderJobsDatabaseUrl,
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/STAFF_PORT/);
   });
 
   it('refuses to boot on an unknown NODE_ENV and names the field', () => {
-    const result = startWith({ NODE_ENV: 'staging', ...ports, DATABASE_URL: placeholderDatabaseUrl });
+    const result = startWith({
+      NODE_ENV: 'staging',
+      ...ports,
+      DATABASE_URL: placeholderDatabaseUrl,
+      JOBS_DATABASE_URL: placeholderJobsDatabaseUrl,
+    });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/NODE_ENV/);
   });
@@ -86,6 +93,7 @@ describe('the built API entry point', () => {
         DROP_PORT: String(drop),
         OPERATOR_PORT: String(operator),
         DATABASE_URL: database.connectionString('pl_app'),
+        JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
       },
       stdio: 'pipe',
     });
@@ -106,7 +114,7 @@ describe('the built API entry point', () => {
   });
 
   it('refuses to boot without a DATABASE_URL and names the field', () => {
-    const result = startWith({ NODE_ENV: 'test', ...ports });
+    const result = startWith({ NODE_ENV: 'test', ...ports, JOBS_DATABASE_URL: placeholderJobsDatabaseUrl });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toMatch(/DATABASE_URL/);
   });
@@ -115,7 +123,12 @@ describe('the built API entry point', () => {
     const superuser = await database.connect('superuser');
     try {
       await superuser.query('alter table credentials no force row level security');
-      const result = startWith({ NODE_ENV: 'test', ...ports, DATABASE_URL: database.connectionString('pl_app') });
+      const result = startWith({
+        NODE_ENV: 'test',
+        ...ports,
+        DATABASE_URL: database.connectionString('pl_app'),
+        JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
+      });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain('row_security_not_forced: public.credentials');
     } finally {
@@ -125,9 +138,25 @@ describe('the built API entry point', () => {
   });
 
   it('refuses to boot when connected as the superuser, which bypasses row-level security', () => {
-    const result = startWith({ NODE_ENV: 'test', ...ports, DATABASE_URL: database.connectionString('superuser') });
+    const result = startWith({
+      NODE_ENV: 'test',
+      ...ports,
+      DATABASE_URL: database.connectionString('superuser'),
+      JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('unexpected_connection_role: bootstrap_admin');
+  });
+
+  it('refuses to boot when the job runner connects as pl_app instead of pl_job_runner', () => {
+    const result = startWith({
+      NODE_ENV: 'test',
+      ...ports,
+      DATABASE_URL: database.connectionString('pl_app'),
+      JOBS_DATABASE_URL: database.connectionString('pl_app'),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('unexpected_connection_role: pl_app');
   });
 
   it('refuses to boot when connected as the owning role pl_migrator', () => {
@@ -135,6 +164,7 @@ describe('the built API entry point', () => {
       NODE_ENV: 'test',
       ...ports,
       DATABASE_URL: database.connectionString('pl_migrator'),
+      JOBS_DATABASE_URL: database.connectionString('pl_job_runner'),
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('unexpected_connection_role: pl_migrator');

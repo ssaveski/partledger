@@ -15,6 +15,7 @@ import {
   schema,
   shippedExpectations,
   verifyCredential,
+  type CatalogExpectations,
   type CatalogViolation,
   type CredentialVerification,
   type PresentedCredential,
@@ -27,11 +28,14 @@ import { TenantTransactions, type AppDatabase } from './tenant-transaction';
 
 export const databasePool = Symbol('databasePool');
 export const appDatabase = Symbol('appDatabase');
+const catalogExpectations = Symbol('catalogExpectations');
 
 export interface DatabaseOptions {
   /** A `pl_app` connection string; the boot check refuses any other role. */
   readonly connectionString: string;
   readonly poolSize: number;
+  /** What the boot-time catalog check expects; the shipped schema unless a test adds tables of its own. */
+  readonly catalog?: CatalogExpectations;
 }
 
 export class CatalogCheckFailedError extends Error {
@@ -60,10 +64,13 @@ export function createDatabasePool(options: DatabaseOptions): pg.Pool {
 
 @Injectable()
 class DatabaseLifecycle implements OnApplicationBootstrap, OnApplicationShutdown {
-  constructor(@Inject(databasePool) private readonly pool: pg.Pool) {}
+  constructor(
+    @Inject(databasePool) private readonly pool: pg.Pool,
+    @Inject(catalogExpectations) private readonly expectations: CatalogExpectations,
+  ) {}
 
   async onApplicationBootstrap(): Promise<void> {
-    const result = await checkCatalog(this.pool, { ...shippedExpectations, expectedRuntimeRole: 'pl_app' });
+    const result = await checkCatalog(this.pool, { ...this.expectations, expectedRuntimeRole: 'pl_app' });
     if (!result.ok) {
       throw new CatalogCheckFailedError(result.violations);
     }
@@ -81,6 +88,7 @@ class DatabaseConnectionModule {
       module: DatabaseConnectionModule,
       providers: [
         { provide: databasePool, useFactory: () => createDatabasePool(options) },
+        { provide: catalogExpectations, useValue: options.catalog ?? shippedExpectations },
         {
           provide: appDatabase,
           inject: [databasePool],
