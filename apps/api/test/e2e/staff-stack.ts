@@ -77,7 +77,7 @@ try {
       SESSION_TOKEN_KEY: randomBytes(32).toString('base64'),
       CELL_REGION: 'ca',
       DIRECTORY_REGION_URLS: 'ca=http://127.0.0.1:5173',
-      KEYCLOAK_ADMIN_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret('partledger-api-admin'),
+      KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: await keycloak.admin.regenerateClientSecret('partledger-api-organizations'),
       // No operator signs in during the staff end-to-end tests; the operator realm is not started.
       OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger-operators',
     },

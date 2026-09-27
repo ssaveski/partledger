@@ -208,7 +208,8 @@ const queries = {
            relation.reloptions::text[] as "options"
       from pg_catalog.pg_class relation
       join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
-     where namespace.nspname in (${schemaList}) and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')`,
+     where namespace.nspname in (${schemaList}) and relation.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
+     order by relation.oid`,
   columns: `
     select relation.relname as "table", attribute.attname as "name",
            pg_catalog.format_type(attribute.atttypid, attribute.atttypmod) as "type",

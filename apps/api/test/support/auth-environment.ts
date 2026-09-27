@@ -14,7 +14,7 @@ export function placeholderAuthEnvironment(overrides: Readonly<Record<string, st
     SESSION_TOKEN_KEY: randomBytes(32).toString('base64'),
     CELL_REGION: 'ca',
     DIRECTORY_REGION_URLS: 'ca=http://127.0.0.1:5173,eu=http://127.0.0.1:6173',
-    KEYCLOAK_ADMIN_CLIENT_SECRET: randomBytes(24).toString('base64url'),
+    KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: randomBytes(24).toString('base64url'),
     OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:1/realms/partledger-operators',
     ...overrides,
   };

@@ -69,5 +69,7 @@
   "pl.tenants.members.removed": "{name} was removed.",
   "pl.tenants.members.working": "Saving…",
   "pl.tenants.session.screen": "Your session",
-  "pl.tenants.members.stepUpUnavailable": "Changing a role needs you to confirm your identity again, and confirming it is not available yet. The role was not changed."
+  "pl.tenants.members.stepUpNeeded": "This change needs you to confirm your identity again. Nothing has changed yet.",
+  "pl.tenants.members.confirmIdentity": "Confirm your identity",
+  "pl.tenants.members.resumed": "Your identity is confirmed and the change is made."
 }

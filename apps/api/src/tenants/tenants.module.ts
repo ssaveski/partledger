@@ -31,8 +31,8 @@ export class TenantsModule {
             override ??
             new KeycloakOrganizations({
               issuer: config.KEYCLOAK_ISSUER,
-              clientId: config.KEYCLOAK_ADMIN_CLIENT_ID,
-              clientSecret: config.KEYCLOAK_ADMIN_CLIENT_SECRET,
+              clientId: config.KEYCLOAK_ORGANIZATIONS_CLIENT_ID,
+              clientSecret: config.KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET,
             }),
         },
         {

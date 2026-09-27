@@ -61,13 +61,9 @@ export function createIdempotencyKeys(newKey: () => string = () => crypto.random
   };
 }
 
-/**
- * The message for a refused change. Until step-up exists (U29) a role change cannot confirm the
- * administrator's identity, so its refusal says that rather than asking for a confirmation the
- * app cannot offer.
- */
+/** The message for a refused change; one refused for step-up asks the administrator to confirm their identity. */
 export function refusalMessageKey(failure: ClientFailure): string {
   return failure.kind === 'refused' && failure.error === 'StepUpRequired'
-    ? 'pl.tenants.members.stepUpUnavailable'
+    ? 'pl.tenants.members.stepUpNeeded'
     : failureMessageKey(failure);
 }

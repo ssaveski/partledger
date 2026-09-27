@@ -54,7 +54,10 @@ describe('removing a member without Keycloak', () => {
   });
 
   it('a member is removed and signed out even when Keycloak is unavailable', async () => {
-    const admin = await harness.issue('staff_session', harness.tenantA, { roles: ['tenant_admin'] });
+    const admin = await harness.issue('staff_session', harness.tenantA, {
+      roles: ['tenant_admin'],
+      steppedUpAt: harness.clock.now(),
+    });
     const member = await harness.issue('staff_session', harness.tenantA, { roles: ['buyer'] });
     expect((await harness.query('staff', 'tenants.currentMember', {}, member.token)).status).toBe(200);
 
@@ -88,7 +91,13 @@ describe('removing a member without Keycloak', () => {
   it('a sign-in waits for a removal in flight and is then refused', async () => {
     const member = await harness.issue('staff_session', harness.tenantA, { roles: ['buyer'] });
     const staffSessions = harness.api.app.get(StaffSessions);
-    const identity = { subject: member.subjectId, tenantId: harness.tenantA, organizationId: 'synthetic-org' };
+    const identity = {
+      subject: member.subjectId,
+      tenantId: harness.tenantA,
+      organizationId: 'synthetic-org',
+      authenticationLevel: null,
+      authenticatedAt: null,
+    };
     const remover = await harness.database.connect('pl_app');
     try {
       await remover.query('begin');
@@ -117,7 +126,13 @@ describe('removing a member without Keycloak', () => {
   });
 
   it('a person who was never a member cannot start a session', async () => {
-    const identity = { subject: randomUUID(), tenantId: harness.tenantA, organizationId: 'synthetic-org' };
+    const identity = {
+      subject: randomUUID(),
+      tenantId: harness.tenantA,
+      organizationId: 'synthetic-org',
+      authenticationLevel: null,
+      authenticatedAt: null,
+    };
     expect(
       await harness.api.app
         .get(StaffSessions)

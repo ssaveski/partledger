@@ -55,13 +55,13 @@ The realm still binds its own reset-credentials flow, `partledger reset credenti
 
 The built-in flow's `Reset - Conditional OTP` (Reset OTP) is left out, so the flow never removes or replaces a second factor, and a reset password counts for no level: the next step-up asks for the password and then a code from the existing factor. `password-account` is an allow-list rather than a check for a federated link, which Keycloak 26.4 has no flow condition for: accounts created by a customer's identity provider never hold it, so an account nobody marked is refused. U8 gives it to the local accounts a tenant admin invites; never give it to an account linked to an identity provider. Switching forgot-password on also needs SMTP settings per environment (Realm settings > Email).
 
-A lost second factor is reset only by the `auth.resetSecondFactor` command: a tenant admin with a fresh step-up names a user of their own tenant who belongs to no other tenant (not themselves; a user of several tenants would keep their staff sessions in the others, so the reset is refused with `pl.error.forbidden.notPermitted`); the API ends the user's staff sessions (`second_factor_reset`) and, in the same transaction, appends an audit entry whose actor is the admin and whose payload holds only ids and counts, and enqueues the `auth.resetSecondFactor` job (KTD16). Once the command has committed, the job removes the user's `otp` credentials and ends their Keycloak sessions through the admin API, retrying every 30 seconds while Keycloak is unreachable, and appends its own `auth.secondFactorRemoved` entry. Until the job has run, the user has no staff session but could still sign in again with the old factor; a failed job shows in the job runner's failed jobs (`docs/runbooks/jobs.md`). The user enrols a new factor at their next step-up. Until U8 stores tenant roles, the role directory grants nobody `tenant_admin`, so the command is refused in production; U8 replaces the placeholder with membership rows.
+A lost second factor is reset only by the `auth.resetSecondFactor` command: a tenant admin with a fresh step-up names a user of their own tenant who belongs to no other tenant (not themselves; a user of several tenants would keep their staff sessions in the others, so the reset is refused with `pl.error.forbidden.notPermitted`); the API ends the user's staff sessions (`second_factor_reset`) and, in the same transaction, appends an audit entry whose actor is the admin and whose payload holds only ids and counts, and enqueues the `auth.resetSecondFactor` job (KTD16). Once the command has committed, the job removes the user's `otp` credentials and ends their Keycloak sessions through the admin API, retrying every 30 seconds while Keycloak is unreachable, and appends its own `auth.secondFactorRemoved` entry. Until the job has run, the user has no staff session but could still sign in again with the old factor; a failed job shows in the job runner's failed jobs (`docs/runbooks/jobs.md`). The user enrols a new factor at their next step-up. The role directory reads the tenant's `role_assignments` (U8).
 
 ### The API's service account
 
 The client `partledger-api-admin` is confidential, has only the service-account grant, and its scope holds exactly one role, `realm-management` `manage-users` (`fullScopeAllowed` is off; the role reaches the token through the client's scope mapping). The API uses it for the second-factor reset: it reads a user's organizations and credentials, deletes `otp` credentials and ends the user's Keycloak sessions. Regenerate its secret after an import, like the API client's, and put it in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
 
-**Residual scope (owner decision, 2026-09-27).** KTD20 has the service account manage membership only; Keycloak 26.4 cannot narrow it that far. The owner accepted the residual scope below and chose two accounts: this one keeps `manage-users` for the second-factor reset only, and a separate organizations account (U8) holds `manage-realm` for provisioning and membership only.
+**Residual scope (owner decision, 2026-09-27).** KTD20 has the service account manage membership only; Keycloak 26.4 cannot narrow it that far. The owner accepted the residual scope below and chose two accounts: this one keeps `manage-users` for the second-factor reset only, and a separate organizations account (U8, below) holds `manage-realm` and `manage-users` for provisioning and membership only.
 
 Why the scope cannot be narrower:
 
@@ -90,6 +90,7 @@ Refreshing at a short interval is how a disabled user or a removed membership lo
 | `STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS` | Default 10; the session credential's expiry and the cookie's `Max-Age`. |
 | `STAFF_SESSION_REFRESH_INTERVAL_SECONDS` | Default 60; also the longest a disabled user keeps access. |
 | `KEYCLOAK_ADMIN_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | The service account for the admin API (`partledger-api-admin`). |
+| `KEYCLOAK_ORGANIZATIONS_CLIENT_ID`, `KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET` | The organizations account (`partledger-api-organizations`, U8). |
 | `STEP_UP_ACR` | The `acr` step-up commands require; default `step-up`, as the realm's `acr.loa.map` names level 2. |
 | `STEP_UP_FRESHNESS_SECONDS` | How old a step-up may be, 10 to 900; default 300. |
 
@@ -111,6 +112,7 @@ Refreshing at a short interval is how a disabled user or a removed membership lo
 | `browserFlow`, `acr.loa.map` | `partledger browser`, `{"sign-in":1,"step-up":2}` | Levels of authentication for step-up (see Step-up). |
 | `partledger post broker login` | set as every identity provider's post login flow | Brokered logins count as sign-in and can step up. |
 | Client `partledger-api-admin` | service account, `manage-users` only | Second-factor resets (U29); its residual scope is described under Step-up. |
+| Client `partledger-api-organizations` | service account, `manage-realm` and `manage-users` | Organizations and their members (U8); its residual scope is described under Tenants, members and roles. |
 | `redirectUris` | the local staff app only | Each environment sets its own origin; nothing else may receive codes. |
 
 Keycloak itself runs with `--features-disabled=impersonation`, and the API refuses any token with an `impersonator` claim as a second line.
@@ -120,12 +122,16 @@ The client secret is not in `realm.json`. After an import, regenerate it (Client
 ## Tenants, members and roles (U8)
 
 - **Membership lives in two places, with different jobs.** Keycloak knows who belongs to a tenant: one organization per tenant, whose `tenant_id` attribute names the tenant. The platform knows what each person may do: `memberships` and `role_assignments` rows in the tenant, changed only by the audited commands `members.invite`, `members.remove`, `members.grantRole` and `members.revokeRole`, and read on every request. A sign-in is refused to anyone without a current membership row, even if Keycloak lists them in the organization.
-- **The API's service account** is the confidential client `partledger-api-admin` (service accounts only). The API uses it only to create a tenant's organization, create an invited person's account and add them to that one organization, remove a member from the organization and end their Keycloak sessions. It never assigns a realm or client role. Its secret is regenerated after import, like `partledger-api`'s, and goes in `KEYCLOAK_ADMIN_CLIENT_SECRET`.
-- **Organization changes need `manage-realm`**, which the shipped account does not hold; see Open decisions below. Until the owner decides, provisioning and invitations answer 503 `pl.error.unavailable.dependencyUnavailable` and write nothing, and removals still take effect in the platform while Keycloak's side waits in a retried job. The integration tests use a test-only client, `partledger-test-organization-admin`, created per run with that role (`apps/api/test/support/organization-admin.ts`).
+- **The organizations account** is the confidential client `partledger-api-organizations` (service accounts only, `fullScopeAllowed` off), separate from `partledger-api-admin`, which keeps `manage-users` for the second-factor reset only. The API uses it only in the organizations adapter (`apps/api/src/tenants/keycloak-organizations.ts`): to create a tenant's organization, create an invited person's account, give it the `password-account` realm role and add it to that one organization, and to remove a member from the organization and end their Keycloak sessions. `password-account` is the only role it ever assigns. Its secret is regenerated after import, like `partledger-api`'s, and goes in `KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET` (client id `KEYCLOAK_ORGANIZATIONS_CLIENT_ID`, default `partledger-api-organizations`).
+- **Decision (owner, 2026-09-27): two service accounts, and the organizations account holds `manage-realm` and `manage-users`.** Keycloak 26.4 requires `manage-realm` to create an organization and to add or remove its members, and organizations have no fine-grained admin permission type; creating, looking up and deleting the invited person's account needs `manage-users` (probed: with `manage-realm` alone those calls answer 403). The owner accepted the residual scope:
+  - With `manage-realm` the account can change the realm's settings, flows and identity providers, and every organization in the realm, not only its own tenant's.
+  - With `manage-users` it can create, change and delete any user of the realm, including setting a user's password (probed: `reset-password` answers 204), in every tenant of the realm.
+  - Keycloak does refuse it some things, checked by `tenants.integration.spec.ts`: it cannot create clients (403), and impersonation is switched off in the server (`--features-disabled=impersonation`). Nothing else is refused to it; the API only ever assigns `password-account`.
+  - Mitigations: the secret lives only in the API's environment, the adapter is the only caller, and Keycloak's admin events record every call the account makes.
 - **Inviting** creates the account with the email as username and the required action `UPDATE_PASSWORD`, and adds it to the tenant's organization only. The invitation email follows with the email port (U34); until then an administrator sends Keycloak's "execute actions" email from the admin console.
 - **An existing account is adopted or refused.** If an account with that email already exists, the API looks it up. When it belongs to no organization (a member removed earlier, from this tenant or another) or already to this tenant's organization (an invitation retried after a failure that followed the account's creation), it joins this organization and gets a new membership with no roles: roles are always granted afresh. When it belongs to another organization, the invitation answers `alreadyExists`, because an account in two organizations could never sign in. A person therefore cannot be invited while they are a member of another tenant anywhere in the realm; they must be removed there first.
-- **Removing a member** revokes every role, records the removal and ends every API session of the person (`membership_removed`) in the command's transaction, which commits whether Keycloak answers or not: the person has lost access at once. The same transaction enqueues `members.leaveOrganization`, a job that removes them from the organization and ends their Keycloak sessions, retried every minute (20 attempts) until Keycloak answers; a member already gone counts as done, and a member invited again meanwhile is left in. A job that runs out of retries shows in `job_item_outcomes` as failed; an operator then removes the person from the organization by hand.
-- **Role grants and revocations** are KTD20 high-impact commands and demand a recent step-up. Until U29 supplies the step-up source, the API refuses them with `pl.error.stepUpRequired.recentAuthentication`; the first tenant administrator is created by provisioning.
+- **Removing a member** is a KTD20 high-impact command (`stepUp: true`, impact `role_change`): without a recent step-up it answers `StepUpRequired` and changes nothing, and the staff app offers "Confirm your identity", which runs U29's step-up and then makes the removal once with the same idempotency key. It revokes every role, records the removal and ends every API session of the person (`membership_removed`) in the command's transaction, which commits whether Keycloak answers or not: the person has lost access at once. The same transaction enqueues `members.leaveOrganization`, a job that removes them from the organization and ends their Keycloak sessions, retried every minute (20 attempts) until Keycloak answers; a member already gone counts as done, and a member invited again meanwhile is left in. A job that runs out of retries shows in `job_item_outcomes` as failed; an operator then removes the person from the organization by hand.
+- **Role grants and revocations** are KTD20 high-impact commands and demand a recent step-up; a refused change offers "Confirm your identity" in the same way. The first tenant administrator is created by provisioning.
 
 ## Operators (`infra/compose/keycloak/operator-realm.json`)
 
@@ -155,11 +161,6 @@ Configure it with `OPERATOR_KEYCLOAK_ISSUER` (https in production), `OPERATOR_KE
 `GET /api/v1/directory/<slug>` on the staff listener answers `{ "regionUrl": … }` for a provisioned tenant, from `DIRECTORY_REGION_URLS`, and 404 otherwise. The `directory_entries` table holds a slug and a region and nothing else; it is the one table the catalog check allows to be global (readable before any tenant is known, with no `tenant_id`), and its insert policy admits only the slug and region of the tenant the provisioning transaction can see.
 
 In Release 1 the directory is cell-local: it lives in each region's database, knows only that region's tenants, and a slug is unique per cell, not across regions. A directory shared by every cell, with slugs unique across regions, is a follow-up that must land before a second region goes live.
-
-## Open decisions for the owner
-
-- **`manage-realm` for organization management.** The shipped realm gives `service-account-partledger-api-admin` `manage-users` and `view-users` only. Keycloak 26.4 requires `manage-realm` to create an organization and to add or remove its members (`manage-users` alone gets 403), and organizations have no fine-grained admin permission type, so the only ways to manage membership are `manage-realm`, a manual operator step in the admin console, or a custom Keycloak extension. `manage-realm` lets the holder change the whole realm, so it is not granted until the owner decides. Until then provisioning and invitations answer 503 and write nothing; removals take effect in the platform and leave the Keycloak side to the retried job, which keeps failing until the decision.
-- **Step-up for `members.remove`.** Removing a member is declared `standard` without step-up for now: step-up is always refused until U29 supplies it, so requiring it would make removal impossible. Once U29 lands, `members.remove` should become `stepUp: true` with impact `role_change`, pinned in `apps/api/test/permissions/tenants.ts`.
 
 ## Local development
 
@@ -195,14 +196,17 @@ The API refuses a sign-in without a membership row, so give the synthetic user o
 ```sql
 begin;
 select set_config('app.tenant_id', '<local tenant uuid>', true);
-insert into memberships (tenant_id, user_id, email, display_name, invited_at)
-  values ('<local tenant uuid>', '<the user id kcadm printed>', 'synthetic.buyer@synthetic.test', 'Synthetic Buyer', now());
-insert into role_assignments (tenant_id, user_id, role, granted_at)
-  values ('<local tenant uuid>', '<the user id kcadm printed>', 'buyer', now());
+with membership as (
+  insert into memberships (tenant_id, user_id, email, display_name, invited_at)
+    values ('<local tenant uuid>', '<the user id kcadm printed>', 'synthetic.buyer@synthetic.test', 'Synthetic Buyer', now())
+    returning id
+)
+insert into role_assignments (tenant_id, membership_id, role, granted_at)
+  select '<local tenant uuid>', id, 'buyer', now() from membership;
 commit;
 ```
 
-Put the printed secret in `.env` as `KEYCLOAK_CLIENT_SECRET`; do the same for the client `partledger-api-admin` and put its secret in `KEYCLOAK_ADMIN_CLIENT_SECRET`; generate `SESSION_TOKEN_KEY`, start the API and the staff app (`apps/web`, port 5173, which proxies `/api` to `127.0.0.1:3000`), and open `http://127.0.0.1:5173/api/v1/auth/sign-in`. Keycloak asks for the username first and the password on the next page, because organizations are enabled.
+Put the printed secret in `.env` as `KEYCLOAK_CLIENT_SECRET`; do the same for the clients `partledger-api-admin` and `partledger-api-organizations` and put their secrets in `KEYCLOAK_ADMIN_CLIENT_SECRET` and `KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET`; generate `SESSION_TOKEN_KEY`, start the API and the staff app (`apps/web`, port 5173, which proxies `/api` to `127.0.0.1:3000`), and open `http://127.0.0.1:5173/api/v1/auth/sign-in`. Keycloak asks for the username first and the password on the next page, because organizations are enabled.
 
 Browsers accept `Secure` and `__Host-` cookies over plain HTTP only on `localhost` and `127.0.0.1`; every other environment serves the staff app over HTTPS.
 

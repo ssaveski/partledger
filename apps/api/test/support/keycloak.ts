@@ -24,6 +24,9 @@ export const clientId = 'partledger-api';
 /** The API's service-account client for the realm's admin API. */
 export const adminClientId = 'partledger-api-admin';
 
+/** The API's organizations account (U8): organizations and their members only. */
+export const organizationsClientId = 'partledger-api-organizations';
+
 export const realmFile = join(
   import.meta.dirname,
   '..',

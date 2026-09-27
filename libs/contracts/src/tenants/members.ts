@@ -51,7 +51,8 @@ export const inviteMemberCommand = defineCommand({
 
 export const removeMemberCommand = defineCommand({
   name: 'members.remove',
-  description: 'Removes a member from the tenant’s organization, revokes every role they hold and ends their sessions.',
+  description:
+    'Removes a member: revokes every role they hold, ends their sessions and takes them out of the tenant’s organization. Like a role revocation, it needs a recent step-up.',
   purpose: 'administration',
   input: memberInputSchema,
   output: z
@@ -63,13 +64,14 @@ export const removeMemberCommand = defineCommand({
     .describe('The removed member.'),
   errors: [
     errorCode('Forbidden', 'notPermitted'),
+    errorCode('StepUpRequired', 'recentAuthentication'),
     errorCode('NotFound', 'resource'),
     errorCode('Conflict', 'lastTenantAdmin'),
     errorCode('Unavailable', 'dependencyUnavailable'),
   ],
   access: tenantAdmins,
-  stepUp: false,
-  impact: 'standard',
+  stepUp: true,
+  impact: 'role_change',
   idempotencyKey: 'required',
   expectedVersion: false,
 });

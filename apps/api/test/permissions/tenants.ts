@@ -1,8 +1,8 @@
 import { definePermissions } from './matrix';
 
 /**
- * Members and roles (U8): administration only, for tenant administrators only. Role grants and
- * revocations are KTD20 high-impact commands and demand a recent step-up.
+ * Members and roles (U8): administration only, for tenant administrators only. Role grants,
+ * revocations and removals are KTD20 high-impact commands and demand a recent step-up.
  */
 export default definePermissions({
   'members.invite': {
@@ -16,8 +16,8 @@ export default definePermissions({
     kind: 'command',
     allow: ['tenant_admin'],
     purpose: 'administration',
-    impact: 'standard',
-    stepUp: false,
+    impact: 'role_change',
+    stepUp: true,
   },
   'members.grantRole': {
     kind: 'command',

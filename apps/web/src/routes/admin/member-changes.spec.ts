@@ -68,17 +68,15 @@ describe('idempotency keys on the members screen', () => {
   });
 });
 
-describe('a refused role change', () => {
-  it('says that confirming your identity is not available yet instead of asking for it', () => {
+describe('a refused member change', () => {
+  it('asks the administrator to confirm their identity before the change is made', () => {
     const key = refusalMessageKey({
       kind: 'refused',
       error: 'StepUpRequired',
       message: 'pl.error.stepUpRequired.recentAuthentication',
       params: {},
     });
-    expect(translate(key)).toBe(
-      'Changing a role needs you to confirm your identity again, and confirming it is not available yet. The role was not changed.',
-    );
+    expect(translate(key)).toBe('This change needs you to confirm your identity again. Nothing has changed yet.');
     expect(
       refusalMessageKey({
         kind: 'refused',

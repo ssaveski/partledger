@@ -42,6 +42,14 @@
       "clientRoles": {
         "realm-management": ["manage-users"]
       }
+    },
+    {
+      "username": "service-account-partledger-api-organizations",
+      "enabled": true,
+      "serviceAccountClientId": "partledger-api-organizations",
+      "clientRoles": {
+        "realm-management": ["manage-realm", "manage-users"]
+      }
     }
   ],
   "clients": [
@@ -105,6 +113,25 @@
       "clientId": "partledger-api-admin",
       "name": "Partledger API administration",
       "description": "The API's service account: second-factor resets. Keycloak's manage-users is wider; see docs/runbooks/keycloak.md.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "consentRequired": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "defaultClientScopes": ["basic"],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "partledger-api-organizations",
+      "name": "Partledger API organizations",
+      "description": "The API's organizations account (owner decision 2026-09-27): creates tenants' organizations and their members' accounts, and removes members. Keycloak requires manage-realm for organizations; see docs/runbooks/keycloak.md.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -449,6 +476,10 @@
       {
         "client": "partledger-api-admin",
         "roles": ["manage-users"]
+      },
+      {
+        "client": "partledger-api-organizations",
+        "roles": ["manage-realm", "manage-users"]
       }
     ]
   },

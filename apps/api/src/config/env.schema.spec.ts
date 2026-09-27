@@ -15,7 +15,7 @@ const auth = {
   JOBS_DATABASE_URL: jobsDatabaseUrl,
   CELL_REGION: 'ca',
   DIRECTORY_REGION_URLS: 'ca=https://ca.example.test,eu=https://eu.example.test',
-  KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
+  KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: 'placeholder-organizations-secret',
   OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
 };
 
@@ -61,8 +61,8 @@ describe('API configuration', () => {
       EMAIL_FROM_ADDRESS: 'notifications@partledger.invalid',
       CELL_REGION: 'ca',
       DIRECTORY_REGION_URLS: { ca: 'https://ca.example.test', eu: 'https://eu.example.test' },
-      KEYCLOAK_ADMIN_CLIENT_ID: 'partledger-api-admin',
-      KEYCLOAK_ADMIN_CLIENT_SECRET: 'placeholder-admin-secret',
+      KEYCLOAK_ORGANIZATIONS_CLIENT_ID: 'partledger-api-organizations',
+      KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: 'placeholder-organizations-secret',
       OPERATOR_KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger-operators',
       OPERATOR_KEYCLOAK_CLIENT_ID: 'partledger-operator-console',
       OPERATOR_KEYCLOAK_AUDIENCE: 'partledger-operator-api',

@@ -17,12 +17,23 @@ import type { OperationRegistry } from '../src/commands/handlers';
 import { OperationExecutor } from '../src/commands/operation-executor';
 import { productionRegistry } from '../src/commands/query-registry';
 import type { AuthenticatedPrincipal } from '../src/principals/principal';
-import { KeycloakOrganizations } from '../src/tenants/keycloak-organizations';
-import { newIdempotencyKey, startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
+import {
+  defaultStepUpLevel,
+  newIdempotencyKey,
+  startApiHarness,
+  type ApiHarness,
+  type IssuedToken,
+} from './support/api-harness';
 import { placeholderAuthEnvironment } from './support/auth-environment';
 import { internalTestRegistry } from './support/internal-test-module';
-import { clientId, realmName, startKeycloak, syntheticPassword, type StartedKeycloak } from './support/keycloak';
-import { createTestOrganizationAdmin, testOrganizationAdminClientId } from './support/organization-admin';
+import {
+  clientId,
+  organizationsClientId,
+  realmName,
+  startKeycloak,
+  syntheticPassword,
+  type StartedKeycloak,
+} from './support/keycloak';
 import {
   createOperator,
   operatorIssuer,
@@ -70,18 +81,18 @@ describe('tenants, roles, users and the directory', () => {
   let keycloak: StartedKeycloak;
   let harness: ApiHarness;
   let executor: OperationExecutor;
+  let organizationsSecret: string;
 
   beforeAll(async () => {
     keycloak = await startKeycloak([operatorRealmFile]);
-    const adminSecret = await createTestOrganizationAdmin(keycloak);
+    organizationsSecret = await keycloak.admin.regenerateClientSecret(organizationsClientId);
     harness = await startApiHarness({
       roles: 'memberships',
       process: { registry, workers: true },
       authEnvironment: placeholderAuthEnvironment({
         KEYCLOAK_ISSUER: keycloak.issuer,
         KEYCLOAK_CLIENT_ID: clientId,
-        KEYCLOAK_ADMIN_CLIENT_ID: testOrganizationAdminClientId,
-        KEYCLOAK_ADMIN_CLIENT_SECRET: adminSecret,
+        KEYCLOAK_ORGANIZATIONS_CLIENT_SECRET: organizationsSecret,
         OPERATOR_KEYCLOAK_ISSUER: operatorIssuer(keycloak),
         STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080',
       }),
@@ -161,13 +172,13 @@ describe('tenants, roles, users and the directory', () => {
     return entry;
   }
 
-  /** A person who stepped up just now, as U29 will record it; the harness has no step-up source yet. */
+  /** A person who stepped up just now, run through the executor directly. */
   function steppedUp(tenantId: string, session: IssuedToken): AuthenticatedPrincipal {
     return {
       type: 'person',
       tenantId,
       userId: session.subjectId,
-      stepUp: { level: 'synthetic-step-up', authenticatedAt: harness.clock.now() },
+      stepUp: { level: defaultStepUpLevel, authenticatedAt: harness.clock.now() },
       actedUnder: { grant: 'staff_session', credentialId: session.credentialId },
       adapter: 'staff',
       correlationId: randomUUID(),
@@ -312,35 +323,46 @@ describe('tenants, roles, users and the directory', () => {
     expect(await usersWithEmail(email)).toEqual([{ id: created.firstAdminUserId }]);
   });
 
-  it('the shipped service account can manage users but not the realm until the owner decides', async () => {
-    const [client] = z
-      .array(z.object({ id: z.string() }))
-      .parse(await keycloak.admin.json(`/${realmName}/clients?clientId=partledger-api-admin`));
-    const [realmManagement] = z
-      .array(z.object({ id: z.string() }))
-      .parse(await keycloak.admin.json(`/${realmName}/clients?clientId=realm-management`));
-    const account = z
-      .object({ id: z.string() })
-      .parse(await keycloak.admin.json(`/${realmName}/clients/${client?.id ?? ''}/service-account-user`));
-    const roles = z
-      .array(z.object({ name: z.string() }))
-      .parse(
-        await keycloak.admin.json(
-          `/${realmName}/users/${account.id}/role-mappings/clients/${realmManagement?.id ?? ''}/composite`,
-        ),
-      )
-      .map((role) => role.name);
-    expect(roles).toEqual(expect.arrayContaining(['manage-users', 'view-users']));
-    expect(roles).not.toContain('manage-realm');
-    // Without it, Keycloak refuses organization changes, which the API reports as unavailable.
-    const shipped = new KeycloakOrganizations({
-      issuer: keycloak.issuer,
-      clientId: 'partledger-api-admin',
-      clientSecret: await keycloak.admin.regenerateClientSecret('partledger-api-admin'),
+  it('the organizations account can manage organizations and their members but cannot create clients or impersonate', async () => {
+    const tokenResponse = await fetch(`${keycloak.issuer}/protocol/openid-connect/token`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`${organizationsClientId}:${organizationsSecret}`).toString('base64')}`,
+      },
+      body: new URLSearchParams({ grant_type: 'client_credentials' }),
     });
-    expect(
-      await shipped.createOrganization({ alias: 'synthetic-refused-org', name: 'Synthetic', tenantId: randomUUID() }),
-    ).toEqual({ ok: false, error: 'unavailable' });
+    const token = z.object({ access_token: z.string() }).parse(await tokenResponse.json()).access_token;
+    const call = (method: string, path: string, body?: unknown) =>
+      fetch(`${keycloak.baseUrl}/admin/realms/${realmName}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: body === undefined ? null : JSON.stringify(body),
+      });
+    const alias = 'synthetic-account-scope';
+    const organization = await call('POST', '/organizations', {
+      name: alias,
+      alias,
+      enabled: true,
+      domains: [{ name: `${alias}.tenants.partledger.invalid` }],
+    });
+    expect(organization.status).toBe(201);
+    const organizationId = organization.headers.get('location')?.split('/').pop() ?? '';
+    const email = `${alias}@synthetic.test`;
+    const user = await call('POST', '/users', { username: email, email, enabled: true });
+    expect(user.status).toBe(201);
+    const userId = user.headers.get('location')?.split('/').pop() ?? '';
+    expect((await call('POST', `/organizations/${organizationId}/members`, userId)).status).toBe(201);
+    expect((await call('DELETE', `/organizations/${organizationId}/members/${userId}`)).status).toBe(204);
+
+    // Keycloak enforces these limits: no client changes, and impersonation is off in the server.
+    expect((await call('POST', '/clients', { clientId: 'synthetic-rogue-client' })).status).toBe(403);
+    expect((await call('POST', `/users/${userId}/impersonation`)).ok).toBe(false);
+
+    expect((await call('DELETE', `/users/${userId}`)).status).toBe(204);
+    expect((await call('DELETE', `/organizations/${organizationId}`)).status).toBe(204);
   });
 
   describe('members and roles', () => {
@@ -351,6 +373,22 @@ describe('tenants, roles, users and the directory', () => {
       tenant = await provisioned('synthetic-members');
       admin = await harness.issue('staff_session', tenant.tenantId, { subjectId: tenant.firstAdminUserId });
     });
+
+    /** Removes a member as the first administrator, stepped up just now unless told otherwise. */
+    async function remove(userId: string, { steppedUp: fresh = true }: { readonly steppedUp?: boolean } = {}) {
+      const remover = fresh
+        ? await harness.issue('staff_session', tenant.tenantId, {
+            subjectId: tenant.firstAdminUserId,
+            steppedUpAt: harness.clock.now(),
+          })
+        : admin;
+      return harness.command(
+        'staff',
+        'members.remove',
+        { userId },
+        { token: remover.token, idempotencyKey: newIdempotencyKey() },
+      );
+    }
 
     async function invite(email: string): Promise<string> {
       const response = await harness.command(
@@ -452,31 +490,54 @@ describe('tenants, roles, users and the directory', () => {
     });
 
     it('the last tenant administrator can neither be removed nor lose the role', async () => {
-      const removal = await harness.command(
-        'staff',
-        'members.remove',
-        { userId: tenant.firstAdminUserId },
-        { token: admin.token, idempotencyKey: newIdempotencyKey() },
-      );
+      const removal = await remove(tenant.firstAdminUserId);
       expect(removal).toMatchObject({ status: 409, body: { message: 'pl.error.conflict.lastTenantAdmin' } });
       expect(
         await changeRole('members.revokeRole', tenant.tenantId, admin, tenant.firstAdminUserId, 'tenant_admin'),
       ).toMatchObject({ kind: 'failure', error: { _tag: 'Conflict', reason: 'lastTenantAdmin' } });
     });
 
-    it('a removed member is refused on their next request, loses their organization and cannot sign in again', async () => {
+    it('removing a member without a recent step-up is refused and changes nothing', async () => {
+      const userId = await invite('kept.member@synthetic.test');
+      await harness.makeMember(tenant.tenantId, userId, ['buyer']);
+      const session = await harness.issue('staff_session', tenant.tenantId, { subjectId: userId });
+      const removal = await remove(userId, { steppedUp: false });
+      expect(removal).toMatchObject({
+        status: 401,
+        body: { error: 'StepUpRequired', message: 'pl.error.stepUpRequired.recentAuthentication' },
+      });
+      expect((await harness.query('staff', 'tenants.currentMember', {}, session.token)).status).toBe(200);
+      expect(await harness.count('select 1 from memberships where user_id = $1 and removed_at is null', [userId])).toBe(
+        1,
+      );
+      expect(
+        await harness.count(
+          `select 1 from pl_jobs.job where name = 'members.leaveOrganization' and data -> 'payload' ->> 'userId' = $1`,
+          [userId],
+        ),
+      ).toBe(0);
+      expect(await organizationsOf(userId)).toEqual([expect.objectContaining({ id: tenant.organizationId })]);
+    });
+
+    it('an invited local account holds the password-account role', async () => {
+      const userId = await invite('password.account@synthetic.test');
+      const roles = z
+        .array(z.object({ name: z.string() }))
+        .parse(await keycloak.admin.json(`/${realmName}/users/${userId}/role-mappings/realm`))
+        .map((role) => role.name);
+      expect(roles).toContain('password-account');
+    });
+
+    it('a member removed after a fresh step-up is refused on their next request, loses their organization and cannot sign in again', async () => {
       const userId = await invite('removed.member@synthetic.test');
       await harness.makeMember(tenant.tenantId, userId, ['buyer']);
       const session = await harness.issue('staff_session', tenant.tenantId, { subjectId: userId });
       expect((await harness.query('staff', 'tenants.currentMember', {}, session.token)).status).toBe(200);
 
-      const removal = await harness.command(
-        'staff',
-        'members.remove',
-        { userId },
-        { token: admin.token, idempotencyKey: newIdempotencyKey() },
-      );
+      const removal = await remove(userId);
       expect(removal).toMatchObject({ status: 200, body: { userId, endedSessions: 1 } });
+      const entry = await lastAuditEntry(tenant.tenantId, 'members.remove');
+      expect(entry).toMatchObject({ actor_type: 'person', actor_id: tenant.firstAdminUserId });
       expect(await harness.query('staff', 'tenants.currentMember', {}, session.token)).toEqual(
         expect.objectContaining({ status: 401, body: uniform401 }),
       );
@@ -487,7 +548,13 @@ describe('tenants, roles, users and the directory', () => {
       // The organization is left by a job that commits with the removal.
       expect(await eventually(async () => (await organizationsOf(userId)).length === 0)).toBe(true);
       const staffSessions = harness.api.app.get(StaffSessions);
-      const identity = { subject: userId, tenantId: tenant.tenantId, organizationId: tenant.organizationId };
+      const identity = {
+        subject: userId,
+        tenantId: tenant.tenantId,
+        organizationId: tenant.organizationId,
+        authenticationLevel: null,
+        authenticatedAt: null,
+      };
       expect(
         await staffSessions.start({ identity, refreshToken: JSON.stringify(identity) }, harness.clock.now()),
       ).toBeNull();
@@ -499,13 +566,7 @@ describe('tenants, roles, users and the directory', () => {
       expect(await changeRole('members.grantRole', tenant.tenantId, admin, userId, 'approver')).toMatchObject({
         kind: 'success',
       });
-      const removal = await harness.command(
-        'staff',
-        'members.remove',
-        { userId },
-        { token: admin.token, idempotencyKey: newIdempotencyKey() },
-      );
-      expect(removal.status).toBe(200);
+      expect((await remove(userId)).status).toBe(200);
       expect(await eventually(async () => (await organizationsOf(userId)).length === 0)).toBe(true);
 
       expect(await invite(email)).toBe(userId);
@@ -645,7 +706,13 @@ describe('tenants, roles, users and the directory', () => {
         ),
       ).toMatchObject({ kind: 'failure', error: { _tag: 'Forbidden', reason: 'notPermitted' } });
       // Nor can they sign in to tenant B, where they are not a member.
-      const identity = { subject: approver.subjectId, tenantId: harness.tenantB, organizationId: 'tenant-b' };
+      const identity = {
+        subject: approver.subjectId,
+        tenantId: harness.tenantB,
+        organizationId: 'tenant-b',
+        authenticationLevel: null,
+        authenticatedAt: null,
+      };
       expect(
         await harness.api.app
           .get(StaffSessions)

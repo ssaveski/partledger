@@ -13,6 +13,8 @@ export interface KeycloakAdminOptions {
 
 const organizationPageSize = 100;
 
+const realmRoleSchema = z.object({ id: z.string().min(1), name: z.literal('password-account') });
+
 const idRows = z.array(z.object({ id: z.string().min(1) }));
 const organizationRows = z.array(
   z.object({
@@ -46,12 +48,12 @@ export function adminBaseUrl(issuer: string): string {
 }
 
 /**
- * Keycloak organizations through the API's service account (KTD20). The shipped realm gives
- * the account `manage-users` and `view-users`. Keycloak 26.4 also requires `manage-realm` for
- * creating organizations and adding or removing their members; until the owner decides to
- * grant it, those calls are refused: provisioning and invitations answer as unavailable, and a
- * removal's organization clean-up job keeps retrying (see docs/runbooks/keycloak.md). This adapter calls only the organization and user endpoints
- * below and never assigns a realm or client role.
+ * Keycloak organizations through the API's organizations account, `partledger-api-organizations`
+ * (KTD20; owner decision 2026-09-27). The account holds `manage-realm`, which Keycloak 26.4
+ * requires for organizations, and `manage-users`, which creating, looking up and removing
+ * accounts requires; nothing else in the API uses it. This adapter calls only the organization,
+ * user and realm-role endpoints below; the one role it assigns is `password-account`, to the
+ * accounts it creates.
  */
 export class KeycloakOrganizations implements IdentityOrganizations {
   private readonly logger = new Logger('KeycloakOrganizations');
@@ -100,7 +102,7 @@ export class KeycloakOrganizations implements IdentityOrganizations {
     if (!user.ok) {
       return user;
     }
-    if (await this.addMember(organizationId, user.value)) {
+    if ((await this.grantPasswordAccount(user.value)) && (await this.addMember(organizationId, user.value))) {
       return success({ userId: user.value, created: true });
     }
     await this.deleteUser(user.value);
@@ -188,6 +190,25 @@ export class KeycloakOrganizations implements IdentityOrganizations {
     return (await this.addMember(organizationId, user.id))
       ? success({ userId: user.id, created: false })
       : failure('unavailable');
+  }
+
+  /**
+   * An invited account signs in with a Keycloak password, so it holds the realm's
+   * `password-account` role (U29): only such accounts may ever reset a password by e-mail,
+   * never an account of a customer's identity provider.
+   */
+  private async grantPasswordAccount(userId: string): Promise<boolean> {
+    const role = await this.read('read the password-account role', '/roles/password-account', realmRoleSchema);
+    if (!role.ok) {
+      return false;
+    }
+    const granted = await this.send(
+      'grant the password-account role',
+      'POST',
+      `/users/${encodeURIComponent(userId)}/role-mappings/realm`,
+      [role.value],
+    );
+    return granted.ok && granted.value.status === 204;
   }
 
   private async addMember(organizationId: string, userId: string): Promise<boolean> {

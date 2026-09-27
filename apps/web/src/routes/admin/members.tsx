@@ -30,11 +30,12 @@ import {
 } from '@partledger/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { UserPlusIcon } from 'lucide-react';
-import { useId, useRef, useState, type RefObject } from 'react';
+import { useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { useForm, type FieldError as FormFieldError, type UseFormRegisterReturn } from 'react-hook-form';
 import type { z } from 'zod';
 
-import { queryKeyOf, useApiClient, useApiQuery } from '../../api/api-client';
+import { queryKeyOf, useAdapterKind, useApiClient, useApiQuery } from '../../api/api-client';
+import { confirmIdentityThenRetry, resumeCommandAfterStepUp, type CommandRequest } from './step-up';
 import { formatDate } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
 import { sessionQueryKey, useSession } from '../../shell/session-provider';
@@ -78,6 +79,8 @@ function MembersPage({ members }: { members: readonly Member[] }) {
   const removalOpener = useRef<HTMLElement | null>(null);
   const removalSucceeded = useRef(false);
   const tenant = signedIn.tenant.displayName;
+  const adapterKind = useAdapterKind();
+  const [resumeFailure, setResumeFailure] = useState<string | null>(null);
 
   /** Reads the list again; a change to the signed-in member also re-reads their own roles and session. */
   const refresh = async (next: Notice, target: string) => {
@@ -91,6 +94,24 @@ function MembersPage({ members }: { members: readonly Member[] }) {
     }
     await Promise.all(reads);
   };
+
+  // A change that waited for the administrator to confirm their identity (U29) runs now, once.
+  useEffect(() => {
+    if (adapterKind !== 'http') {
+      return;
+    }
+    void resumeCommandAfterStepUp().then(async (outcome) => {
+      if (outcome === null) {
+        return;
+      }
+      if (outcome.kind === 'done') {
+        await refresh({ key: 'pl.tenants.members.resumed', name: '' }, signedIn.member.userId);
+      } else {
+        setResumeFailure(outcome.messageKey);
+      }
+    });
+    // Runs once, when the page comes back from the step-up.
+  }, []);
 
   const register = (buttons: Map<string, HTMLElement>, userId: string) => (element: HTMLElement | null) => {
     if (element === null) {
@@ -121,6 +142,11 @@ function MembersPage({ members }: { members: readonly Member[] }) {
           {translate('pl.tenants.members.invite')}
         </Button>
       </div>
+      {resumeFailure === null ? null : (
+        <p role="alert" className="text-sm font-medium text-danger">
+          {translate(resumeFailure)}
+        </p>
+      )}
       <p role="status" aria-live="polite" className="min-h-5 text-sm font-medium text-success">
         {notice === null ? null : translate(notice.key, { name: notice.name })}
       </p>
@@ -246,16 +272,38 @@ function MembersPage({ members }: { members: readonly Member[] }) {
 }
 
 /** A command's refusal, shown where the person acted, as its message key. */
-function Refusal({ failure }: { failure: ClientFailure | null }) {
+function Refusal({ failure, retry = null }: { failure: ClientFailure | null; retry?: CommandRequest | null }) {
   const translate = useTranslate();
+  const [leaving, setLeaving] = useState(false);
+  const [retryFailure, setRetryFailure] = useState<string | null>(null);
   if (failure === null) {
     return null;
   }
-  const key = refusalMessageKey(failure);
+  const needsStepUp = failure.kind === 'refused' && failure.error === 'StepUpRequired' && retry !== null;
   return (
-    <p role="alert" className="text-sm font-medium text-danger">
-      {translate(key)}
-    </p>
+    <div className="flex flex-col items-start gap-2">
+      <p role="alert" className="text-sm font-medium text-danger">
+        {translate(retryFailure ?? refusalMessageKey(failure))}
+      </p>
+      {needsStepUp ? (
+        <Button
+          variant="secondary"
+          disabled={leaving}
+          onClick={() => {
+            setLeaving(true);
+            // Leaves for the step-up and comes back to this page, which then makes the change once.
+            void confirmIdentityThenRetry(retry).then((messageKey) => {
+              if (messageKey !== null) {
+                setLeaving(false);
+                setRetryFailure(messageKey);
+              }
+            });
+          }}
+        >
+          {translate('pl.tenants.members.confirmIdentity')}
+        </Button>
+      ) : null}
+    </div>
   );
 }
 
@@ -429,6 +477,7 @@ function RolesForm({
   const legend = useId();
   const [chosen, setChosen] = useState<readonly TenantRole[]>(member.roles);
   const [failure, setFailure] = useState<ClientFailure | null>(null);
+  const [refused, setRefused] = useState<CommandRequest | null>(null);
   const [unchanged, setUnchanged] = useState(false);
   const [working, setWorking] = useState(false);
   return (
@@ -448,10 +497,12 @@ function RolesForm({
           for (const { role, change } of changes) {
             const declaration = change === 'grant' ? grantRoleCommand : revokeRoleCommand;
             const scope = `${change}:${member.userId}:${role}`;
-            const result = await client.command(declaration, { userId: member.userId, role }, keys.keyFor(scope));
+            const body = { userId: member.userId, role };
+            const result = await client.command(declaration, body, keys.keyFor(scope));
             if (!result.ok) {
               setWorking(false);
               setFailure(result.failure);
+              setRefused({ name: declaration.name, body, idempotencyKey: keys.keyFor(scope) });
               onRefused(member);
               return;
             }
@@ -484,7 +535,7 @@ function RolesForm({
           {translate('pl.tenants.members.rolesDialog.unchanged')}
         </p>
       ) : null}
-      <Refusal failure={failure} />
+      <Refusal failure={failure} retry={refused} />
       <DialogFooter>
         <DialogClose>{translate('pl.tenants.members.rolesDialog.cancel')}</DialogClose>
         <Button type="submit" disabled={working}>
@@ -564,7 +615,14 @@ function RemoveDialog({
               {translate('pl.tenants.members.removeDialog.title', { name: member.displayName })}
             </DialogTitle>
             <DialogDescription>{translate('pl.tenants.members.removeDialog.description')}</DialogDescription>
-            <Refusal failure={failure} />
+            <Refusal
+              failure={failure}
+              retry={{
+                name: removeMemberCommand.name,
+                body: { userId: member.userId },
+                idempotencyKey: keys.keyFor(`remove:${member.userId}`),
+              }}
+            />
             <DialogFooter>
               <DialogClose>{translate('pl.tenants.members.removeDialog.cancel')}</DialogClose>
               <Button
