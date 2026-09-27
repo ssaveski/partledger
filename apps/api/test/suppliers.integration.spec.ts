@@ -7,11 +7,18 @@ import {
   supplierListSchema,
   type TenantRole,
 } from '@partledger/contracts';
-import { insertPart, insertSupplier } from '@partledger/db/testing';
+import { asErpImport, insertPart, insertSupplier } from '@partledger/db/testing';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { productionRegistry } from '../src/commands/query-registry';
+import {
+  IdentityCheckHandler,
+  identityCheckJob,
+  maximumCheckAttempts,
+} from '../src/identity-checks/identity-check.job';
+import { productionJobs } from '../src/jobs/job-registry';
+import { registerJob, type ModuleJobs } from '../src/jobs/job.types';
 import { newIdempotencyKey, startApiHarness, type ApiHarness } from './support/api-harness';
 
 /**
@@ -49,11 +56,16 @@ const confirmedLei = syntheticLei('5299000SYNTHETIC01');
 const renamedLei = syntheticLei('5299000SYNTHETIC02');
 const unknownLei = syntheticLei('5299000SYNTHETIC03');
 const hangingVatId = 'SE556677889901';
+const hangingViesPath = `/vies/ms/SE/vat/${hangingVatId.slice(2)}`;
+
+/** Every path the stand-in registers were asked, in order. */
+const registerRequests: string[] = [];
 
 /** A stand-in for both registers: VIES never answers the hanging VAT id; GLEIF knows two LEIs. */
 function registerAnswer(request: IncomingMessage, response: ServerResponse): void {
   const path = request.url ?? '';
-  if (path === `/vies/ms/SE/vat/${hangingVatId.slice(2)}`) {
+  registerRequests.push(path);
+  if (path === hangingViesPath) {
     return;
   }
   const records: Readonly<Record<string, string>> = {
@@ -71,6 +83,16 @@ function registerAnswer(request: IncomingMessage, response: ServerResponse): voi
     .end(JSON.stringify({ data: { attributes: { entity: { legalName: { name } } } } }));
 }
 
+/** The shipped jobs, with identity checks retried after a second instead of a minute. */
+const quickIdentityRetries: ModuleJobs = {
+  jobs: productionJobs.jobs.map((registration) =>
+    registration.declaration.name === identityCheckJob.name
+      ? registerJob({ ...identityCheckJob, retryDelaySeconds: 1 }, IdentityCheckHandler)
+      : registration,
+  ),
+  schedules: productionJobs.schedules,
+};
+
 describe('parts, suppliers and the approved-supplier list', () => {
   let harness: ApiHarness;
   let registers: Server;
@@ -80,7 +102,7 @@ describe('parts, suppliers and the approved-supplier list', () => {
     await new Promise<void>((resolve) => registers.listen(0, '127.0.0.1', resolve));
     const { port } = z.object({ port: z.number() }).parse(registers.address());
     harness = await startApiHarness({
-      process: { registry: productionRegistry, workers: true },
+      process: { registry: productionRegistry, workers: true, jobs: quickIdentityRetries },
       environment: {
         VIES_API_URL: `http://127.0.0.1:${port}/vies`,
         GLEIF_API_URL: `http://127.0.0.1:${port}/gleif`,
@@ -272,6 +294,31 @@ describe('parts, suppliers and the approved-supplier list', () => {
       });
     });
 
+    it('two concurrent changes of different parts to the same number: one succeeds, one conflicts', async () => {
+      const buyer = await tokenFor(harness.tenantA, ['buyer']);
+      const first = await insertPart(harness.superuser, {
+        tenantId: harness.tenantA,
+        partNumber: 'PN-RACE-A',
+        source: 'platform',
+      });
+      const second = await insertPart(harness.superuser, {
+        tenantId: harness.tenantA,
+        partNumber: 'PN-RACE-B',
+        source: 'platform',
+      });
+
+      const responses = await Promise.all(
+        [first, second].map((partId) =>
+          command('parts.update', { partId, expectedVersion: 1, changes: { partNumber: 'PN-RACE-SAME' } }, buyer),
+        ),
+      );
+
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(responses.find((response) => response.status === 409)?.body).toMatchObject({
+        message: 'pl.error.conflict.alreadyExists',
+      });
+    });
+
     it('a second part with the same number is refused', async () => {
       const buyer = await tokenFor(harness.tenantA, ['buyer']);
       const part = { partNumber: 'PN-DUP-1', revision: 'A', description: 'Synthetic', category: 'seals', unit: 'each' };
@@ -325,7 +372,10 @@ describe('parts, suppliers and the approved-supplier list', () => {
         code: 'CNT-INACTIVE',
         approval: { status: 'approved', scope: ['fasteners'] },
       });
-      await harness.superuser.query(`update suppliers set status = 'inactive', version = 2 where id = $1`, [inactive]);
+      // The ERP deactivates its supplier, as its import would.
+      await asErpImport(harness.superuser, () =>
+        harness.superuser.query(`update suppliers set status = 'inactive', version = 2 where id = $1`, [inactive]),
+      );
 
       const list = partListSchema.parse(
         (await harness.query('staff', 'parts.list', {}, await tokenFor(tenantId, ['buyer']))).body,
@@ -520,6 +570,61 @@ describe('parts, suppliers and the approved-supplier list', () => {
       const list = supplierListSchema.parse((await harness.query('staff', 'suppliers.list', {}, otherTenant)).body);
       expect(list.suppliers.some((supplier) => supplier.supplierId === supplierId)).toBe(false);
     });
+
+    it('two concurrent removals of one contact succeed once and are audited once', async () => {
+      const buyer = await tokenFor(harness.tenantA, ['buyer']);
+      const supplierId = await insertSupplier(harness.superuser, { tenantId: harness.tenantA, code: 'RACE-CON' });
+      const { contactId } = z
+        .object({ contactId: z.uuid() })
+        .parse(
+          (
+            await command(
+              'suppliers.addContact',
+              { supplierId, name: 'Synthetic Contact', email: 'race@supplier.test', role: 'sales' },
+              buyer,
+            )
+          ).body,
+        );
+
+      const responses = await Promise.all([
+        command('suppliers.removeContact', { contactId }, buyer),
+        command('suppliers.removeContact', { contactId }, buyer),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 404]);
+      expect(
+        await harness.count(
+          `select 1 from audit_entries
+            where payload ->> 'event' = 'suppliers.removeContact' and payload -> 'data' -> 'output' ->> 'contactId' = $1`,
+          [contactId],
+        ),
+      ).toBe(1);
+    });
+
+    it('two concurrent changes of different suppliers to the same code: one succeeds, one conflicts', async () => {
+      const buyer = await tokenFor(harness.tenantA, ['buyer']);
+      const first = await insertSupplier(harness.superuser, {
+        tenantId: harness.tenantA,
+        code: 'RACE-A',
+        source: 'platform',
+      });
+      const second = await insertSupplier(harness.superuser, {
+        tenantId: harness.tenantA,
+        code: 'RACE-B',
+        source: 'platform',
+      });
+
+      const responses = await Promise.all(
+        [first, second].map((supplierId) =>
+          command('suppliers.update', { supplierId, expectedVersion: 1, changes: { code: 'RACE-SAME' } }, buyer),
+        ),
+      );
+
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(responses.find((response) => response.status === 409)?.body).toMatchObject({
+        message: 'pl.error.conflict.alreadyExists',
+      });
+    });
   });
 
   describe('identity checks', () => {
@@ -538,6 +643,8 @@ describe('parts, suppliers and the approved-supplier list', () => {
       });
 
       expect(checks).toEqual([{ register: 'vies', identifier: hangingVatId, result: 'notChecked' }]);
+      // Asked on each attempt before the last one recorded that it could not be checked.
+      expect(registerRequests.filter((path) => path === hangingViesPath)).toHaveLength(maximumCheckAttempts);
       const list = supplierListSchema.parse((await harness.query('staff', 'suppliers.list', {}, buyer)).body);
       const shown = list.suppliers.find((supplier) => supplier.supplierId === supplierId)?.identityCheck;
       expect(shown).toMatchObject({ status: 'notChecked', register: 'vies' });
@@ -581,6 +688,69 @@ describe('parts, suppliers and the approved-supplier list', () => {
         outcomes.push(check?.result ?? 'missing');
       }
       expect(outcomes).toEqual(['verified', 'mismatch', 'notFound']);
+    });
+
+    it('a VAT register that does not answer never keeps the LEI register’s answer from being recorded', async () => {
+      const buyer = await tokenFor(harness.tenantA, ['buyer']);
+      const { supplierId } = createdSupplier.parse(
+        (
+          await command(
+            'suppliers.create',
+            { code: 'BOTH-01', name: 'Synthetic LEI Holdings', country: 'SE', vatId: hangingVatId, lei: confirmedLei },
+            buyer,
+          )
+        ).body,
+      );
+
+      const lei = await eventually(async () => {
+        const rows = await identityChecksOf(supplierId);
+        return rows.find((row) => row.register === 'lei');
+      });
+      expect(lei).toEqual({ register: 'lei', identifier: confirmedLei, result: 'verified' });
+
+      const vies = await eventually(async () => {
+        const rows = await identityChecksOf(supplierId);
+        return rows.find((row) => row.register === 'vies');
+      });
+      expect(vies.result).toBe('notChecked');
+      const list = supplierListSchema.parse((await harness.query('staff', 'suppliers.list', {}, buyer)).body);
+      expect(list.suppliers.find((supplier) => supplier.supplierId === supplierId)?.identityCheck.status).toBe(
+        'notChecked',
+      );
+    });
+
+    it('repeated requests for an identity check queue one job and ask the register once', async () => {
+      const buyer = await tokenFor(harness.tenantA, ['buyer']);
+      const lei = syntheticLei('5299000SYNTHETIC04');
+      const leiPath = `/gleif/lei-records/${lei}`;
+      const { supplierId } = createdSupplier.parse(
+        (
+          await command(
+            'suppliers.create',
+            { code: 'ONCE-01', name: 'Synthetic Once Ltd', country: 'SE', vatId: null, lei },
+            buyer,
+          )
+        ).body,
+      );
+
+      const statuses: number[] = [];
+      for (let request = 0; request < 5; request += 1) {
+        const response = await command('suppliers.checkIdentity', { supplierId }, buyer);
+        expect(response.body).toEqual({ supplierId, registers: ['lei'] });
+        statuses.push(response.status);
+      }
+
+      expect(statuses).toEqual([200, 200, 200, 200, 200]);
+      await eventually(async () => ((await identityChecksOf(supplierId)).length > 0 ? true : undefined));
+      // Room for any further job to run, if one had been queued.
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      expect(
+        await harness.count(`select 1 from pl_jobs.job where name = $1 and data -> 'payload' ->> 'supplierId' = $2`, [
+          identityCheckJob.name,
+          supplierId,
+        ]),
+      ).toBe(1);
+      expect(registerRequests.filter((path) => path === leiPath)).toHaveLength(1);
     });
 
     it('a supplier with neither an EU VAT id nor an LEI has no register to ask', async () => {

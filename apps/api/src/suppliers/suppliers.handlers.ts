@@ -32,7 +32,12 @@ import type {
 } from '../commands/handlers';
 import type { CommandJobs } from '../jobs/enqueue';
 import { identityCheckJob } from '../identity-checks/identity-check.job';
-import { applicableRegisters, identitySummary, latestChecks } from '../identity-checks/identity-standing';
+import {
+  applicableRegisters,
+  identitySummary,
+  latestChecks,
+  type IdentityRegister,
+} from '../identity-checks/identity-standing';
 import { approvalRead, calendarDateOf, notOnTheList } from './approval-standing';
 import { supplierStore, type StoredSupplier, type SupplierFields } from './supplier-store';
 
@@ -62,14 +67,30 @@ async function recordFields(audit: CommandAudit, fields: Partial<SupplierFields>
   return checkedAuditObject(recorded);
 }
 
-/** Queues a check against each register that applies; returns the registers queued. */
-async function queueIdentityCheck(
+/** However often a check is asked for, a register is asked about a supplier at most once per slot. */
+const identityCheckSlotSeconds = 300;
+
+/**
+ * Queues a check against each register that applies; returns those registers. After a change
+ * (`nextSlot`), a check already queued in this slot is followed by one in the next, so the
+ * changed details are checked too; a plain request joins the check already queued.
+ */
+async function queueIdentityChecks(
   jobs: CommandJobs,
   supplier: { readonly id: string } & Pick<SupplierFields, 'vatId' | 'lei'>,
-) {
+  after: 'change' | 'request',
+): Promise<IdentityRegister[]> {
   const registers = applicableRegisters(supplier).map((entry) => entry.register);
-  if (registers.length > 0) {
-    await jobs.enqueue(identityCheckJob, { supplierId: supplier.id });
+  for (const register of registers) {
+    await jobs.enqueue(
+      identityCheckJob,
+      { supplierId: supplier.id, register },
+      {
+        singletonKey: `identity:${supplier.id}:${register}`,
+        singletonSeconds: identityCheckSlotSeconds,
+        singletonNextSlot: after === 'change',
+      },
+    );
   }
   return registers;
 }
@@ -84,7 +105,7 @@ export class CreateSupplierHandler implements CommandHandler<typeof createSuppli
     if (created === undefined) {
       return refuse('Conflict', 'alreadyExists');
     }
-    const registers = await queueIdentityCheck(jobs, { id: created.id, ...input });
+    const registers = await queueIdentityChecks(jobs, { id: created.id, ...input }, 'change');
     audit.record({
       supplier: auditId(created.id),
       source: auditToken('platform'),
@@ -118,21 +139,25 @@ export class UpdateSupplierHandler implements CommandHandler<typeof updateSuppli
     if (code !== undefined && code !== supplier.code && (await supplierStore.codeInUse(database, tenantId, code))) {
       return refuse('Conflict', 'alreadyExists');
     }
-    const version = await supplierStore.update(database, {
+    const change = await supplierStore.update(database, {
       tenantId,
       supplierId: supplier.id,
       expectedVersion: input.expectedVersion,
       now,
       set: input.changes,
     });
-    if (version === undefined) {
+    if (change.kind === 'duplicate') {
+      return refuse('Conflict', 'alreadyExists');
+    }
+    if (change.kind === 'stale') {
       return refuse('Conflict', 'versionMismatch');
     }
+    const { version } = change;
     const updated = { ...supplier, ...input.changes };
     // A register's answer depends on the identifier and on the name it is compared with.
     const identityChanged =
       updated.vatId !== supplier.vatId || updated.lei !== supplier.lei || updated.name !== supplier.name;
-    const registers = identityChanged ? await queueIdentityCheck(jobs, updated) : [];
+    const registers = identityChanged ? await queueIdentityChecks(jobs, updated, 'change') : [];
     audit.record({
       supplier: auditId(supplier.id),
       version,
@@ -161,16 +186,18 @@ export class SetSupplierStatusHandler implements CommandHandler<typeof setSuppli
     if (supplier.source === 'erp') {
       return refuse('Unprocessable', 'sourceOwned', { field: 'status' });
     }
-    const version = await supplierStore.update(database, {
+    const change = await supplierStore.update(database, {
       tenantId,
       supplierId: supplier.id,
       expectedVersion: input.expectedVersion,
       now,
       set: { status: input.status },
     });
-    if (version === undefined) {
+    // No unique key changes here, so the only way to miss is a version that moved on.
+    if (change.kind !== 'updated') {
       return refuse('Conflict', 'versionMismatch');
     }
+    const { version } = change;
     audit.record({ supplier: auditId(supplier.id), version, status: auditToken(input.status) });
     return success({ supplierId: supplier.id, version });
   }
@@ -212,7 +239,9 @@ export class RemoveContactHandler implements CommandHandler<typeof removeContact
     if (contact === undefined) {
       return refuse('NotFound', 'resource');
     }
-    await supplierStore.removeContact(database, tenantId, contact.id, now);
+    if (!(await supplierStore.removeContact(database, tenantId, contact.id, now))) {
+      return refuse('NotFound', 'resource');
+    }
     audit.record({ supplier: auditId(contact.supplierId), contact: auditId(contact.id) });
     return success({ supplierId: contact.supplierId, contactId: contact.id });
   }
@@ -272,7 +301,7 @@ export class CheckIdentityHandler implements CommandHandler<typeof checkIdentity
     if (supplier === undefined) {
       return refuse('NotFound', 'resource');
     }
-    const registers = await queueIdentityCheck(jobs, supplier);
+    const registers = await queueIdentityChecks(jobs, supplier, 'request');
     audit.record({ supplier: auditId(supplier.id), identityChecks: registers.map((register) => auditToken(register)) });
     return success({ supplierId: supplier.id, registers });
   }

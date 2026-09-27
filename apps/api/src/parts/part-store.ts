@@ -4,6 +4,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { AppDatabase } from '../db/tenant-transaction';
+import { isUniqueViolation, type VersionedChange } from '../db/unique-violation';
 import { approvalCovers } from '../suppliers/approval-standing';
 import { supplierStore } from '../suppliers/supplier-store';
 
@@ -59,7 +60,10 @@ export const partStore = {
     return row;
   },
 
-  /** Applies a change to the version the caller read; `undefined` when the part moved on meanwhile. */
+  /**
+   * Applies a change to the version the caller read. A number another part took meanwhile is a
+   * duplicate; the failed statement has aborted the transaction, which the caller rolls back.
+   */
   async update(
     database: AppDatabase,
     change: {
@@ -69,19 +73,26 @@ export const partStore = {
       readonly now: Date;
       readonly set: Partial<PartFields & { readonly active: boolean }>;
     },
-  ): Promise<number | undefined> {
-    const [row] = await database
-      .update(parts)
-      .set({ ...change.set, version: change.expectedVersion + 1, updatedAt: change.now })
-      .where(
-        and(
-          eq(parts.tenantId, change.tenantId),
-          eq(parts.id, change.partId),
-          eq(parts.version, change.expectedVersion),
-        ),
-      )
-      .returning({ version: parts.version });
-    return row?.version;
+  ): Promise<VersionedChange> {
+    try {
+      const [row] = await database
+        .update(parts)
+        .set({ ...change.set, version: change.expectedVersion + 1, updatedAt: change.now })
+        .where(
+          and(
+            eq(parts.tenantId, change.tenantId),
+            eq(parts.id, change.partId),
+            eq(parts.version, change.expectedVersion),
+          ),
+        )
+        .returning({ version: parts.version });
+      return row === undefined ? { kind: 'stale' } : { kind: 'updated', version: row.version };
+    } catch (error) {
+      if (isUniqueViolation(error, 'parts_tenant_id_part_number_key')) {
+        return { kind: 'duplicate' };
+      }
+      throw error;
+    }
   },
 
   /** Every part in part-number order, with how many suppliers' active approvals cover its category on `asOf`. */

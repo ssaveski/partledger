@@ -8,9 +8,11 @@ import type { AppDatabase } from '../db/tenant-transaction';
 import type { Principal, SystemPrincipal } from '../principals/principal';
 import {
   jobEnvelopeSchema,
+  jobItemKeyPattern,
   type JobDeclaration,
   type JobEnqueuer,
   type JobEnvelope,
+  type JobSingleton,
   type PayloadOf,
 } from './job.types';
 
@@ -47,20 +49,42 @@ export class JobNotEnqueuedError extends Error {
 export class JobQueue {
   constructor(@Inject(jobBoss) private readonly boss: PgBoss) {}
 
+  enqueue<Declaration extends JobDeclaration>(
+    transaction: DrizzleTransactionLike,
+    declaration: Declaration,
+    origin: JobOrigin,
+    payload: PayloadOf<Declaration>,
+  ): Promise<string>;
+  /** With a singleton, `null` means a job with that key is already queued in the current slot. */
+  enqueue<Declaration extends JobDeclaration>(
+    transaction: DrizzleTransactionLike,
+    declaration: Declaration,
+    origin: JobOrigin,
+    payload: PayloadOf<Declaration>,
+    singleton: JobSingleton,
+  ): Promise<string | null>;
   async enqueue<Declaration extends JobDeclaration>(
     transaction: DrizzleTransactionLike,
     declaration: Declaration,
     origin: JobOrigin,
     payload: PayloadOf<Declaration>,
-  ): Promise<string> {
+    singleton?: JobSingleton,
+  ): Promise<string | null> {
     const envelope = jobEnvelopeSchema.parse({ ...origin, payload: declaration.payload.parse(payload) });
     const unsafe = unsafeAuditValues(jsonValueOf(envelope.payload));
     if (unsafe.length > 0) {
       throw new UnsafeJobPayloadError(declaration.name, unsafe);
     }
+    // pg-boss keeps the key beside the payload, outside row-level security: identifiers only.
+    if (singleton !== undefined && !jobItemKeyPattern.test(singleton.singletonKey)) {
+      throw new UnsafeJobPayloadError(declaration.name, ['singletonKey']);
+    }
     // pg-boss names this option `db`.
-    const jobId = await this.boss.send(declaration.name, envelope, { ['db']: fromDrizzle(transaction, sql) });
-    if (jobId === null) {
+    const jobId = await this.boss.send(declaration.name, envelope, {
+      ['db']: fromDrizzle(transaction, sql),
+      ...singleton,
+    });
+    if (jobId === null && singleton === undefined) {
       throw new JobNotEnqueuedError(declaration.name);
     }
     return jobId;
@@ -79,8 +103,26 @@ export class CommandJobs implements JobEnqueuer {
   enqueue<Declaration extends JobDeclaration>(
     declaration: Declaration,
     payload: PayloadOf<Declaration>,
-  ): Promise<string> {
-    return this.enqueueFor(this.database, this.principal.tenantId, declaration, payload);
+  ): Promise<string>;
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+    singleton: JobSingleton,
+  ): Promise<string | null>;
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+    singleton?: JobSingleton,
+  ): Promise<string | null> {
+    const origin: JobOrigin = {
+      tenantId: this.principal.tenantId,
+      cause: 'command',
+      source: this.command,
+      correlationId: this.principal.correlationId,
+    };
+    return singleton === undefined
+      ? this.queue.enqueue(this.database, declaration, origin, payload)
+      : this.queue.enqueue(this.database, declaration, origin, payload, singleton);
   }
 
   /**
@@ -123,7 +165,17 @@ export class JobFollowUps implements JobEnqueuer {
   enqueue<Declaration extends JobDeclaration>(
     declaration: Declaration,
     payload: PayloadOf<Declaration>,
-  ): Promise<string> {
+  ): Promise<string>;
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+    singleton: JobSingleton,
+  ): Promise<string | null>;
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+    singleton?: JobSingleton,
+  ): Promise<string | null> {
     const { actedUnder, tenantId, correlationId } = this.principal;
     if (actedUnder.grant !== 'job') {
       throw new FollowUpOutsideJobError();
@@ -132,6 +184,8 @@ export class JobFollowUps implements JobEnqueuer {
       actedUnder.cause === 'command'
         ? { tenantId, cause: 'command', source: actedUnder.source, correlationId }
         : { tenantId, cause: 'schedule', source: actedUnder.source };
-    return this.queue.enqueue(this.database, declaration, origin, payload);
+    return singleton === undefined
+      ? this.queue.enqueue(this.database, declaration, origin, payload)
+      : this.queue.enqueue(this.database, declaration, origin, payload, singleton);
   }
 }

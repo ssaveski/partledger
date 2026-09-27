@@ -126,7 +126,7 @@ export type SupplierChanges = z.infer<typeof supplierChangesSchema>;
 export const updateSupplierCommand = defineCommand({
   name: 'suppliers.update',
   description:
-    'Changes a supplier’s details. A changed VAT id, LEI or country queues fresh identity checks; on a supplier from the ERP, its ERP-owned fields are refused.',
+    'Changes a supplier’s details. A changed VAT id, LEI or name queues fresh identity checks; on a supplier from the ERP, its ERP-owned fields are refused.',
   purpose: 'business',
   input: z
     .object({ supplierId: supplierIdSchema, expectedVersion: expectedVersionSchema, changes: supplierChangesSchema })
@@ -282,7 +282,9 @@ export const checkIdentityCommand = defineCommand({
       supplierId: supplierIdSchema,
       registers: z
         .array(z.enum(['vies', 'lei']))
-        .describe('The registers queued; empty when no register applies to the supplier.'),
+        .describe(
+          'The registers that will be asked, by this request or by a check already queued; empty when none applies.',
+        ),
     })
     .strict()
     .describe('What was queued.'),

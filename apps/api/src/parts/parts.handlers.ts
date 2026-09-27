@@ -91,16 +91,20 @@ export class UpdatePartHandler implements CommandHandler<typeof updatePartComman
     ) {
       return refuse('Conflict', 'alreadyExists');
     }
-    const version = await partStore.update(database, {
+    const change = await partStore.update(database, {
       tenantId,
       partId: part.id,
       expectedVersion: input.expectedVersion,
       now,
       set: input.changes,
     });
-    if (version === undefined) {
+    if (change.kind === 'duplicate') {
+      return refuse('Conflict', 'alreadyExists');
+    }
+    if (change.kind === 'stale') {
       return refuse('Conflict', 'versionMismatch');
     }
+    const { version } = change;
     audit.record({ part: auditId(part.id), version, fields: await recordFields(audit, input.changes) });
     return success({ partId: part.id, version });
   }
@@ -124,16 +128,18 @@ export class SetPartActiveHandler implements CommandHandler<typeof setPartActive
     if (part.source === 'erp') {
       return refuse('Unprocessable', 'sourceOwned', { field: 'active' });
     }
-    const version = await partStore.update(database, {
+    const change = await partStore.update(database, {
       tenantId,
       partId: part.id,
       expectedVersion: input.expectedVersion,
       now,
       set: { active: input.active },
     });
-    if (version === undefined) {
+    // No unique key changes here, so the only way to miss is a version that moved on.
+    if (change.kind !== 'updated') {
       return refuse('Conflict', 'versionMismatch');
     }
+    const { version } = change;
     audit.record({ part: auditId(part.id), version, active: input.active });
     return success({ partId: part.id, version });
   }

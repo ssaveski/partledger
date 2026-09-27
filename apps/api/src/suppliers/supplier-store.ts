@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { AppDatabase } from '../db/tenant-transaction';
+import { isUniqueViolation, type VersionedChange } from '../db/unique-violation';
 import type { IdentityCheckResult, IdentityRegister, StoredIdentityCheck } from '../identity-checks/identity-standing';
 import type { StoredApproval } from './approval-standing';
 
@@ -81,7 +82,10 @@ export const supplierStore = {
     return row;
   },
 
-  /** Applies a change to the version the caller read; `undefined` when the supplier moved on meanwhile. */
+  /**
+   * Applies a change to the version the caller read. A code another supplier took meanwhile is
+   * a duplicate; the failed statement has aborted the transaction, which the caller rolls back.
+   */
   async update(
     database: AppDatabase,
     change: {
@@ -91,19 +95,26 @@ export const supplierStore = {
       readonly now: Date;
       readonly set: Partial<SupplierFields & Pick<StoredSupplier, 'status'>>;
     },
-  ): Promise<number | undefined> {
-    const [row] = await database
-      .update(suppliers)
-      .set({ ...change.set, version: change.expectedVersion + 1, updatedAt: change.now })
-      .where(
-        and(
-          eq(suppliers.tenantId, change.tenantId),
-          eq(suppliers.id, change.supplierId),
-          eq(suppliers.version, change.expectedVersion),
-        ),
-      )
-      .returning({ version: suppliers.version });
-    return row?.version;
+  ): Promise<VersionedChange> {
+    try {
+      const [row] = await database
+        .update(suppliers)
+        .set({ ...change.set, version: change.expectedVersion + 1, updatedAt: change.now })
+        .where(
+          and(
+            eq(suppliers.tenantId, change.tenantId),
+            eq(suppliers.id, change.supplierId),
+            eq(suppliers.version, change.expectedVersion),
+          ),
+        )
+        .returning({ version: suppliers.version });
+      return row === undefined ? { kind: 'stale' } : { kind: 'updated', version: row.version };
+    } catch (error) {
+      if (isUniqueViolation(error, 'suppliers_tenant_id_code_key')) {
+        return { kind: 'duplicate' };
+      }
+      throw error;
+    }
   },
 
   /** Every supplier in name order. */
@@ -241,6 +252,31 @@ export const supplierStore = {
     await database.insert(supplierIdentityChecks).values(check);
   },
 
+  /** Whether the register was ever asked about this identifier of the supplier. */
+  async hasIdentityCheck(
+    database: AppDatabase,
+    check: {
+      readonly tenantId: string;
+      readonly supplierId: string;
+      readonly register: IdentityRegister;
+      readonly identifier: string;
+    },
+  ): Promise<boolean> {
+    const rows = await database
+      .select({ id: supplierIdentityChecks.id })
+      .from(supplierIdentityChecks)
+      .where(
+        and(
+          eq(supplierIdentityChecks.tenantId, check.tenantId),
+          eq(supplierIdentityChecks.supplierId, check.supplierId),
+          eq(supplierIdentityChecks.register, check.register),
+          eq(supplierIdentityChecks.identifier, check.identifier),
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  },
+
   async currentContacts(database: AppDatabase, tenantId: string, supplierId: string) {
     return database
       .select()
@@ -289,10 +325,22 @@ export const supplierStore = {
     return row?.id;
   },
 
-  async removeContact(database: AppDatabase, tenantId: string, contactId: string, removedAt: Date): Promise<void> {
-    await database
+  /**
+   * Removes a current contact; `false` when it was not current, such as when a concurrent
+   * removal committed first (the update waits for it, then finds the contact removed).
+   */
+  async removeContact(database: AppDatabase, tenantId: string, contactId: string, removedAt: Date): Promise<boolean> {
+    const removed = await database
       .update(supplierContacts)
       .set({ removedAt })
-      .where(and(eq(supplierContacts.tenantId, tenantId), eq(supplierContacts.id, contactId)));
+      .where(
+        and(
+          eq(supplierContacts.tenantId, tenantId),
+          eq(supplierContacts.id, contactId),
+          isNull(supplierContacts.removedAt),
+        ),
+      )
+      .returning({ id: supplierContacts.id });
+    return removed.length === 1;
   },
 };

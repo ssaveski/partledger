@@ -52,3 +52,91 @@ ALTER TABLE public.suppliers ENABLE ALWAYS TRIGGER suppliers_advance_version;
 CREATE TRIGGER approved_supplier_entries_advance_version BEFORE UPDATE ON public.approved_supplier_entries
   FOR EACH ROW EXECUTE FUNCTION pl_migration.advance_version();
 ALTER TABLE public.approved_supplier_entries ENABLE ALWAYS TRIGGER approved_supplier_entries_advance_version;
+
+-- ERP ownership (R9) is enforced here as well as in the commands. Rows sourced from the ERP,
+-- their ERP-owned columns, and an approved-supplier list mirrored from the ERP change only in a
+-- transaction that declares itself the ERP import:
+--
+--   select set_config('app.master_data_writer', 'erp_import', true);
+--
+-- Only the import path (apps/api/src/imports/, U12 and U13) may set it, transaction-locally,
+-- and a unit test (apps/api/src/master-data-writer.spec.ts) refuses it anywhere else in
+-- application code; test fixtures standing in for the import may set it too. Everything else is refused with insufficient_privilege (42501).
+CREATE FUNCTION pl_migration.guard_erp_owned_part() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF pg_catalog.current_setting('app.master_data_writer', true) IS NOT DISTINCT FROM 'erp_import' THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.source = 'erp' THEN
+      RAISE EXCEPTION 'pl.masterData.erpOwned: only the ERP import adds parts from the ERP'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  ELSIF OLD.source = 'erp' AND (
+         NEW.part_number IS DISTINCT FROM OLD.part_number
+      OR NEW.revision IS DISTINCT FROM OLD.revision
+      OR NEW.description IS DISTINCT FROM OLD.description
+      OR NEW.unit IS DISTINCT FROM OLD.unit
+      OR NEW.active IS DISTINCT FROM OLD.active) THEN
+    RAISE EXCEPTION 'pl.masterData.erpOwned: the ERP owns this part''s number, revision, description, unit and status'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE FUNCTION pl_migration.guard_erp_owned_supplier() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF pg_catalog.current_setting('app.master_data_writer', true) IS NOT DISTINCT FROM 'erp_import' THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.source = 'erp' THEN
+      RAISE EXCEPTION 'pl.masterData.erpOwned: only the ERP import adds suppliers from the ERP'
+        USING ERRCODE = 'insufficient_privilege';
+    END IF;
+  ELSIF OLD.source = 'erp' AND (
+         NEW.code IS DISTINCT FROM OLD.code
+      OR NEW.name IS DISTINCT FROM OLD.name
+      OR NEW.country IS DISTINCT FROM OLD.country
+      OR NEW.status IS DISTINCT FROM OLD.status) THEN
+    RAISE EXCEPTION 'pl.masterData.erpOwned: the ERP owns this supplier''s code, name, country and status'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+-- Row-level security applies inside the trigger, so it reads the writing tenant's own row.
+CREATE FUNCTION pl_migration.guard_erp_owned_approved_list() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF pg_catalog.current_setting('app.master_data_writer', true) IS NOT DISTINCT FROM 'erp_import' THEN
+    RETURN NEW;
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.tenants tenant
+              WHERE tenant.id = NEW.tenant_id AND tenant.supplier_list_source = 'erp') THEN
+    RAISE EXCEPTION 'pl.masterData.erpOwned: this tenant''s approved-supplier list mirrors its ERP'
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER parts_guard_erp_owned BEFORE INSERT OR UPDATE ON public.parts
+  FOR EACH ROW EXECUTE FUNCTION pl_migration.guard_erp_owned_part();
+ALTER TABLE public.parts ENABLE ALWAYS TRIGGER parts_guard_erp_owned;
+CREATE TRIGGER suppliers_guard_erp_owned BEFORE INSERT OR UPDATE ON public.suppliers
+  FOR EACH ROW EXECUTE FUNCTION pl_migration.guard_erp_owned_supplier();
+ALTER TABLE public.suppliers ENABLE ALWAYS TRIGGER suppliers_guard_erp_owned;
+CREATE TRIGGER approved_supplier_entries_guard_erp_owned BEFORE INSERT OR UPDATE ON public.approved_supplier_entries
+  FOR EACH ROW EXECUTE FUNCTION pl_migration.guard_erp_owned_approved_list();
+ALTER TABLE public.approved_supplier_entries ENABLE ALWAYS TRIGGER approved_supplier_entries_guard_erp_owned;
