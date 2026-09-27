@@ -359,7 +359,8 @@ describe('tenants, roles, users and the directory', () => {
 
     // Keycloak enforces these limits: no client changes, and impersonation is off in the server.
     expect((await call('POST', '/clients', { clientId: 'synthetic-rogue-client' })).status).toBe(403);
-    expect((await call('POST', `/users/${userId}/impersonation`)).ok).toBe(false);
+    // Keycloak 26.4 answers 501 Not Implemented for a feature switched off in the server.
+    expect((await call('POST', `/users/${userId}/impersonation`)).status).toBe(501);
 
     expect((await call('DELETE', `/users/${userId}`)).status).toBe(204);
     expect((await call('DELETE', `/organizations/${organizationId}`)).status).toBe(204);

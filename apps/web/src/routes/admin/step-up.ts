@@ -3,6 +3,7 @@ import { errorBodySchema, internalErrorMessageKey } from '@partledger/contracts'
 import {
   resumeAfterStepUp,
   sendCommand,
+  stepUpUrl,
   type CommandOutcome,
   type CommandRequest,
   type StepUpEnvironment,
@@ -15,6 +16,10 @@ export type { CommandRequest };
  * step-up: the change waits in this tab, the person confirms their identity and comes back to
  * the members screen, which then makes the change once, with the same idempotency key.
  */
+
+/** How a refusal for step-up is offered: replaying the one refused command, or confirming and saving again. */
+export type StepUpOffer =
+  { readonly kind: 'replay'; readonly command: CommandRequest } | { readonly kind: 'thenSaveAgain' };
 
 export type ResumedChange = { readonly kind: 'done' } | { readonly kind: 'failed'; readonly messageKey: string };
 
@@ -66,4 +71,9 @@ export async function confirmIdentityThenRetry(command: CommandRequest): Promise
 export async function resumeCommandAfterStepUp(): Promise<ResumedChange | null> {
   const environment = browserEnvironment();
   return environment === null ? null : resumedChangeOf(await resumeAfterStepUp(environment));
+}
+
+/** Leaves for the step-up and comes back to this page with nothing kept to replay. */
+export function confirmIdentityThenReturn(): void {
+  window.location.assign(stepUpUrl(`${window.location.pathname}${window.location.hash}`));
 }

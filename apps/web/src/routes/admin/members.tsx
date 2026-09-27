@@ -35,7 +35,6 @@ import { useForm, type FieldError as FormFieldError, type UseFormRegisterReturn 
 import type { z } from 'zod';
 
 import { queryKeyOf, useAdapterKind, useApiClient, useApiQuery } from '../../api/api-client';
-import { confirmIdentityThenRetry, resumeCommandAfterStepUp, type CommandRequest } from './step-up';
 import { formatDate } from '../../shell/format';
 import { QueryView } from '../../shell/query-view';
 import { sessionQueryKey, useSession } from '../../shell/session-provider';
@@ -48,6 +47,12 @@ import {
   type IdempotencyKeys,
   type InviteForm,
 } from './member-changes';
+import {
+  confirmIdentityThenRetry,
+  confirmIdentityThenReturn,
+  resumeCommandAfterStepUp,
+  type StepUpOffer,
+} from './step-up';
 
 type Notice = { readonly key: string; readonly name: string } | null;
 
@@ -65,7 +70,7 @@ export function MembersScreen() {
   );
 }
 
-function MembersPage({ members }: { members: readonly Member[] }) {
+export function MembersPage({ members }: { members: readonly Member[] }) {
   const translate = useTranslate();
   const { signedIn } = useSession();
   const queryClient = useQueryClient();
@@ -271,31 +276,41 @@ function MembersPage({ members }: { members: readonly Member[] }) {
   );
 }
 
-/** A command's refusal, shown where the person acted, as its message key. */
-function Refusal({ failure, retry = null }: { failure: ClientFailure | null; retry?: CommandRequest | null }) {
+/**
+ * A command's refusal, shown where the person acted, as its message key. A refusal for step-up
+ * offers to confirm the person's identity, as `stepUp` says: replaying the refused change on
+ * return, or only confirming, when the change needs more commands than the one U29 replays.
+ */
+function Refusal({ failure, stepUp = null }: { failure: ClientFailure | null; stepUp?: StepUpOffer | null }) {
   const translate = useTranslate();
   const [leaving, setLeaving] = useState(false);
   const [retryFailure, setRetryFailure] = useState<string | null>(null);
   if (failure === null) {
     return null;
   }
-  const needsStepUp = failure.kind === 'refused' && failure.error === 'StepUpRequired' && retry !== null;
+  const offer = failure.kind === 'refused' && failure.error === 'StepUpRequired' ? stepUp : null;
+  const messageKey =
+    offer?.kind === 'thenSaveAgain' ? 'pl.tenants.members.stepUpThenSaveAgain' : refusalMessageKey(failure);
   return (
     <div className="flex flex-col items-start gap-2">
       <p role="alert" className="text-sm font-medium text-danger">
-        {translate(retryFailure ?? refusalMessageKey(failure))}
+        {translate(retryFailure ?? messageKey)}
       </p>
-      {needsStepUp ? (
+      {offer !== null ? (
         <Button
           variant="secondary"
           disabled={leaving}
           onClick={() => {
             setLeaving(true);
+            if (offer.kind === 'thenSaveAgain') {
+              confirmIdentityThenReturn();
+              return;
+            }
             // Leaves for the step-up and comes back to this page, which then makes the change once.
-            void confirmIdentityThenRetry(retry).then((messageKey) => {
-              if (messageKey !== null) {
+            void confirmIdentityThenRetry(offer.command).then((failureKey) => {
+              if (failureKey !== null) {
                 setLeaving(false);
-                setRetryFailure(messageKey);
+                setRetryFailure(failureKey);
               }
             });
           }}
@@ -477,7 +492,7 @@ function RolesForm({
   const legend = useId();
   const [chosen, setChosen] = useState<readonly TenantRole[]>(member.roles);
   const [failure, setFailure] = useState<ClientFailure | null>(null);
-  const [refused, setRefused] = useState<CommandRequest | null>(null);
+  const [stepUp, setStepUp] = useState<StepUpOffer | null>(null);
   const [unchanged, setUnchanged] = useState(false);
   const [working, setWorking] = useState(false);
   return (
@@ -494,7 +509,7 @@ function RolesForm({
         setWorking(true);
         setFailure(null);
         void (async () => {
-          for (const { role, change } of changes) {
+          for (const [index, { role, change }] of changes.entries()) {
             const declaration = change === 'grant' ? grantRoleCommand : revokeRoleCommand;
             const scope = `${change}:${member.userId}:${role}`;
             const body = { userId: member.userId, role };
@@ -502,7 +517,12 @@ function RolesForm({
             if (!result.ok) {
               setWorking(false);
               setFailure(result.failure);
-              setRefused({ name: declaration.name, body, idempotencyKey: keys.keyFor(scope) });
+              // U29 replays one command; a change with more left is confirmed first, then saved again.
+              setStepUp(
+                index === changes.length - 1
+                  ? { kind: 'replay', command: { name: declaration.name, body, idempotencyKey: keys.keyFor(scope) } }
+                  : { kind: 'thenSaveAgain' },
+              );
               onRefused(member);
               return;
             }
@@ -535,7 +555,7 @@ function RolesForm({
           {translate('pl.tenants.members.rolesDialog.unchanged')}
         </p>
       ) : null}
-      <Refusal failure={failure} retry={refused} />
+      <Refusal failure={failure} stepUp={stepUp} />
       <DialogFooter>
         <DialogClose>{translate('pl.tenants.members.rolesDialog.cancel')}</DialogClose>
         <Button type="submit" disabled={working}>
@@ -581,7 +601,7 @@ function RoleOption({
   );
 }
 
-function RemoveDialog({
+export function RemoveDialog({
   member,
   keys,
   returnFocus,
@@ -617,10 +637,13 @@ function RemoveDialog({
             <DialogDescription>{translate('pl.tenants.members.removeDialog.description')}</DialogDescription>
             <Refusal
               failure={failure}
-              retry={{
-                name: removeMemberCommand.name,
-                body: { userId: member.userId },
-                idempotencyKey: keys.keyFor(`remove:${member.userId}`),
+              stepUp={{
+                kind: 'replay',
+                command: {
+                  name: removeMemberCommand.name,
+                  body: { userId: member.userId },
+                  idempotencyKey: keys.keyFor(`remove:${member.userId}`),
+                },
               }}
             />
             <DialogFooter>

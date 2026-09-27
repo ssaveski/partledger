@@ -70,6 +70,7 @@
   "pl.tenants.members.working": "Saving…",
   "pl.tenants.session.screen": "Your session",
   "pl.tenants.members.stepUpNeeded": "This change needs you to confirm your identity again. Nothing has changed yet.",
+  "pl.tenants.members.stepUpThenSaveAgain": "Changing these roles needs you to confirm your identity again. Confirm it, then save the roles again.",
   "pl.tenants.members.confirmIdentity": "Confirm your identity",
   "pl.tenants.members.resumed": "Your identity is confirmed and the change is made."
 }
