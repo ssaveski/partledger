@@ -7,6 +7,8 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   // CI uploads the report and traces when a run fails, so a failure there can be diagnosed.
   use: { trace: 'retain-on-failure' },
+  // Three cold dev servers share the CI runner, so the first render of a page can exceed 5 seconds.
+  expect: { timeout: 10_000 },
   projects: [
     { name: 'web', testDir: 'apps/web/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5173' } },
     { name: 'portal', testDir: 'apps/portal/e2e', use: { ...chromium, baseURL: 'http://127.0.0.1:5174' } },
