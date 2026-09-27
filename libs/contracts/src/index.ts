@@ -68,6 +68,22 @@ export {
 export { lifecycleRead } from './lifecycle';
 export { currencyCodeSchema, decimalSchema, moneySchema, type Money } from './money';
 export {
+  addAlertRecipientCommand,
+  operationalAlertKinds,
+  operationalAlertKindSchema,
+  removeAlertRecipientCommand,
+  staffAlertLimit,
+  staffAlertSchema,
+  staffAlertsQuery,
+  staffAlertsSchema,
+  staffAlertSources,
+  staffAlertWindowDays,
+  staffPathSchema,
+  type OperationalAlertKind,
+  type StaffAlert,
+  type StaffAlerts,
+} from './notifications/operations';
+export {
   alternateOfferSchema,
   approvalNotSubmittedSchema,
   approvalPacketQuery,

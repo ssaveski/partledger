@@ -4,6 +4,7 @@ import { FlaskConicalIcon } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 import { useAdapterKind } from '../api/api-client';
+import { AlertsMenu } from './alerts';
 import { ThemeSwitcher } from './theme-switcher';
 
 export const navigationLinkClasses = cn(
@@ -63,7 +64,10 @@ export function AppShell() {
               </ul>
             </nav>
           </div>
-          <ThemeSwitcher />
+          <div className="flex items-center gap-3">
+            <AlertsMenu />
+            <ThemeSwitcher />
+          </div>
         </div>
         {adapterKind === 'fixture' ? (
           <p className="flex items-center justify-center gap-2 border-t border-line px-6 py-1.5 text-center text-sm text-muted">

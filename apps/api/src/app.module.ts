@@ -12,6 +12,9 @@ import { HealthController } from './health/health.controller';
 import { productionJobs } from './jobs/job-registry';
 import { JobsModule } from './jobs/job-runner.module';
 import type { ModuleJobs } from './jobs/job.types';
+import type { EmailPort } from './notifications/email.port';
+import { NotificationsModule } from './notifications/notifications.module';
+import type { RecipientDirectory } from './notifications/recipient-directory';
 import { noRoleAssignments, type RoleDirectory } from './principals/role-directory';
 import { systemClock, type Clock } from './time/clock';
 
@@ -25,6 +28,8 @@ export interface AppOverrides {
   readonly jobPollingIntervalSeconds?: number;
   /** Tables a test created beside the shipped schema, which the boot-time catalog check must know. */
   readonly catalogExpectations?: CatalogExpectations;
+  readonly emailPort?: EmailPort;
+  readonly recipientDirectory?: RecipientDirectory;
 }
 
 @Module({})
@@ -51,6 +56,11 @@ export class AppModule {
           ...(overrides.catalogExpectations === undefined
             ? {}
             : { catalogExpectations: overrides.catalogExpectations }),
+        }),
+        NotificationsModule.register({
+          config,
+          emailPort: overrides.emailPort,
+          recipientDirectory: overrides.recipientDirectory,
         }),
         AuthModule.register({ config, clock: time, identityProvider: overrides.identityProvider }),
         OperationsModule.register({

@@ -1,6 +1,10 @@
 import { sql } from 'drizzle-orm';
 
+import { z } from 'zod';
+
 import type { AuditDatabase } from '../audit/audit-writer';
+
+const claimedRows = z.array(z.object({ attempts: z.number().int().min(1) }));
 
 export interface ItemReference {
   readonly tenantId: string;
@@ -15,9 +19,10 @@ export interface ItemReference {
  * previous run failed, is claimed as done; an item already done is not. A concurrent run
  * that claims the same item waits on the unique key until this transaction ends, then finds
  * the item done (after a commit) or claims it itself (after a rollback), so no item is
- * applied twice.
+ * applied twice. Returns the claim's attempt number, 1 for an item's first run, or `null` when
+ * the item is already done.
  */
-export async function claimItem(database: AuditDatabase, item: ItemReference): Promise<boolean> {
+export async function claimItem(database: AuditDatabase, item: ItemReference): Promise<number | null> {
   const result = await database.execute(
     sql`insert into job_item_outcomes (tenant_id, job, item_key, status, attempts, last_job_id, updated_at)
         values (${item.tenantId}, ${item.job}, ${item.itemKey}, 'done', 1, ${item.jobId},
@@ -26,9 +31,10 @@ export async function claimItem(database: AuditDatabase, item: ItemReference): P
           set status = 'done', failure = null, attempts = job_item_outcomes.attempts + 1,
               last_job_id = excluded.last_job_id, updated_at = excluded.updated_at
           where job_item_outcomes.status = 'failed'
-        returning id`,
+        returning attempts`,
   );
-  return result.rows.length === 1;
+  const [claimed] = claimedRows.parse(result.rows);
+  return claimed === undefined ? null : claimed.attempts;
 }
 
 /** Records a failed item after its transaction rolled back; an item another run finished stays done. */

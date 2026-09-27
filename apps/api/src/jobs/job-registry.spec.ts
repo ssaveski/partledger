@@ -10,13 +10,20 @@ import { defineJob, defineSchedule, registerJob } from './job.types';
 import { jobQueueConstructionSql } from './queue-schema';
 
 describe('the job registry', () => {
-  it('registers the nightly chain verification for every tenant and the tenant enrolment job', () => {
+  it('registers the nightly chain verification, the tenant enrolment job and the notification jobs', () => {
     expect(productionJobs.jobs.map((registration) => registration.declaration.name).sort()).toEqual([
       'audit.verifyChain',
       'jobs.enrollTenant',
+      'notifications.deliverOperationalAlerts',
+      'notifications.send',
     ]);
-    expect(productionJobs.schedules.map((schedule) => [schedule.name, schedule.job.name, schedule.cron])).toEqual([
+    expect(
+      productionJobs.schedules
+        .map((schedule) => [schedule.name, schedule.job.name, schedule.cron])
+        .sort(([left = ''], [right = '']) => left.localeCompare(right)),
+    ).toEqual([
       ['audit.nightlyChainVerification', 'audit.verifyChain', '17 3 * * *'],
+      ['notifications.operationalAlertDelivery', 'notifications.deliverOperationalAlerts', '*/5 * * * *'],
     ]);
   });
 

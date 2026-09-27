@@ -5,6 +5,7 @@ import { credentialsAccess } from './credentials.ts';
 import { idempotencyKeysAccess } from './idempotency-keys.ts';
 import { staffSessionsAccess } from './staff-sessions.ts';
 import { jobItemOutcomesAccess } from './job-item-outcomes.ts';
+import { alertRecipientsAccess, notificationsAccess } from './notifications.ts';
 import { operationalAlertsAccess } from './operational-alerts.ts';
 import { tenantsAccess } from './tenants.ts';
 
@@ -14,6 +15,13 @@ export { credentialKinds, credentials, type CredentialKind } from './credentials
 export { idempotencyKeys } from './idempotency-keys.ts';
 export { staffSessionEndReasons, staffSessions, type StaffSessionEndReason } from './staff-sessions.ts';
 export { jobItemOutcomes, jobItemStatuses } from './job-item-outcomes.ts';
+export {
+  alertRecipients,
+  notificationChannels,
+  notificationRecipientKinds,
+  notifications,
+  notificationStatuses,
+} from './notifications.ts';
 export { operationalAlerts } from './operational-alerts.ts';
 export { tenantRegions, tenants } from './tenants.ts';
 
@@ -27,4 +35,6 @@ export const tableAccessManifest: readonly TableAccess[] = [
   staffSessionsAccess,
   jobItemOutcomesAccess,
   operationalAlertsAccess,
+  notificationsAccess,
+  alertRecipientsAccess,
 ];

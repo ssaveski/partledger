@@ -1,13 +1,9 @@
 import type { JsonObject } from '@partledger/chain';
+import type { OperationalAlertKind } from '@partledger/contracts';
 import { sql } from 'drizzle-orm';
 
 import { assertAuditSafe } from '../audit/audit-payload';
 import type { AuditDatabase } from '../audit/audit-writer';
-
-/** What an operational alert can be about; notifications (U34) add their kinds here. */
-export const operationalAlertKinds = ['chainVerificationFailed'] as const;
-
-export type OperationalAlertKind = (typeof operationalAlertKinds)[number];
 
 export interface OperationalAlert {
   readonly tenantId: string;
@@ -21,8 +17,9 @@ export interface OperationalAlert {
 }
 
 /**
- * Records an operational alert in the caller's tenant transaction (R27, KTD41); U34 delivers
- * it to the tenant's configured people. Returns whether this call recorded it.
+ * Records an operational alert in the caller's tenant transaction (R27, KTD41). The scheduled
+ * `notifications.deliverOperationalAlerts` job hands it to the tenant's alert recipients by
+ * email, and the staff shell lists it. Returns whether this call recorded it.
  */
 export async function raiseOperationalAlert(database: AuditDatabase, alert: OperationalAlert): Promise<boolean> {
   assertAuditSafe(alert.params);

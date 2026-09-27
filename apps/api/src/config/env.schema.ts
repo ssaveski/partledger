@@ -53,6 +53,17 @@ export const envSchema = z
     JOBS_DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(5),
     /** `on` runs job handlers and fires schedules in this process; `off` only enqueues. */
     JOBS_WORKERS: z.enum(['on', 'off']).default('on'),
+    /** The supplier portal's origin, which links in supplier emails open (KTD30, KTD33). */
+    PORTAL_APP_ORIGIN: origin.default('http://127.0.0.1:5174'),
+    /**
+     * The email port's adapter (KTD36). `local` writes each email as a file to a dev inbox; the
+     * production provider's adapter, processing in the tenant's region, arrives with U24.
+     */
+    EMAIL_ADAPTER: z.enum(['local']).default('local'),
+    /** Where the local adapter writes emails, one JSON file per notification. */
+    EMAIL_LOCAL_INBOX_DIRECTORY: z.string().min(1).default('local-dev/email-inbox'),
+    /** The sender of every notification email. */
+    EMAIL_FROM_ADDRESS: z.email().default('notifications@partledger.invalid'),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -63,7 +74,7 @@ export const envSchema = z
       seen.add(config[name]);
     }
     if (config.NODE_ENV === 'production') {
-      for (const name of ['STAFF_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
+      for (const name of ['STAFF_APP_ORIGIN', 'PORTAL_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
         if (!config[name].startsWith('https://')) {
           context.addIssue({ code: 'custom', path: [name], message: 'must use https in production' });
         }

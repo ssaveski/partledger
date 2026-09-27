@@ -5,8 +5,14 @@ import { fromDrizzle, type DrizzleTransactionLike, type PgBoss } from 'pg-boss';
 
 import { unsafeAuditValues } from '../audit/audit-payload';
 import type { AppDatabase } from '../db/tenant-transaction';
-import type { Principal } from '../principals/principal';
-import { jobEnvelopeSchema, type JobDeclaration, type JobEnvelope, type PayloadOf } from './job.types';
+import type { Principal, SystemPrincipal } from '../principals/principal';
+import {
+  jobEnvelopeSchema,
+  type JobDeclaration,
+  type JobEnqueuer,
+  type JobEnvelope,
+  type PayloadOf,
+} from './job.types';
 
 export const jobBoss = Symbol('JobBoss');
 
@@ -62,7 +68,7 @@ export class JobQueue {
 }
 
 /** A command's way to enqueue follow-up work, bound to its transaction, tenant and name. */
-export class CommandJobs {
+export class CommandJobs implements JobEnqueuer {
   constructor(
     private readonly queue: JobQueue,
     private readonly database: AppDatabase,
@@ -93,5 +99,39 @@ export class CommandJobs {
       { tenantId, cause: 'command', source: this.command, correlationId: this.principal.correlationId },
       payload,
     );
+  }
+}
+
+export class FollowUpOutsideJobError extends Error {
+  constructor() {
+    super('Only a background job enqueues follow-up jobs this way');
+    this.name = 'FollowUpOutsideJobError';
+  }
+}
+
+/**
+ * A job item's way to enqueue follow-up work, bound to the item's transaction. The follow-up
+ * acts under what enqueued the job: the same schedule, or the same command and correlation id.
+ */
+export class JobFollowUps implements JobEnqueuer {
+  constructor(
+    private readonly queue: JobQueue,
+    private readonly database: AppDatabase,
+    private readonly principal: SystemPrincipal,
+  ) {}
+
+  enqueue<Declaration extends JobDeclaration>(
+    declaration: Declaration,
+    payload: PayloadOf<Declaration>,
+  ): Promise<string> {
+    const { actedUnder, tenantId, correlationId } = this.principal;
+    if (actedUnder.grant !== 'job') {
+      throw new FollowUpOutsideJobError();
+    }
+    const origin: JobOrigin =
+      actedUnder.cause === 'command'
+        ? { tenantId, cause: 'command', source: actedUnder.source, correlationId }
+        : { tenantId, cause: 'schedule', source: actedUnder.source };
+    return this.queue.enqueue(this.database, declaration, origin, payload);
   }
 }
