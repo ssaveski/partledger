@@ -1,5 +1,5 @@
 {
-  "id": "96c64d39-eb26-4588-a4c3-3087837d9bdb",
+  "id": "5ed30895-b325-455f-b545-034cc5432b2a",
   "prevId": "be51fa42-3f1a-4140-936c-1a13b75fa7c0",
   "version": "7",
   "dialect": "postgresql",
@@ -76,7 +76,13 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "alert_recipients_tenant_id_id_key": {
+          "name": "alert_recipients_tenant_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": ["tenant_id", "id"]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "alert_recipients_email_address_check": {
@@ -688,6 +694,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "alert_recipient_id": {
+          "name": "alert_recipient_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "params": {
           "name": "params",
           "type": "jsonb",
@@ -791,6 +803,15 @@
           "columnsTo": ["tenant_id", "id"],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "notifications_alert_recipient_fkey": {
+          "name": "notifications_alert_recipient_fkey",
+          "tableFrom": "notifications",
+          "tableTo": "alert_recipients",
+          "columnsFrom": ["tenant_id", "alert_recipient_id"],
+          "columnsTo": ["tenant_id", "id"],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -813,7 +834,15 @@
         },
         "notifications_recipient_kind_check": {
           "name": "notifications_recipient_kind_check",
-          "value": "\"notifications\".\"recipient_kind\" in ('person', 'supplierContact', 'alertRecipient')"
+          "value": "\"notifications\".\"recipient_kind\" in ('person', 'supplierContact', 'alertRecipient', 'operator')"
+        },
+        "notifications_alert_recipient_check": {
+          "name": "notifications_alert_recipient_check",
+          "value": "(\"notifications\".\"recipient_kind\" = 'alertRecipient') = (\"notifications\".\"alert_recipient_id\" is not null)\n        and (\"notifications\".\"alert_recipient_id\" is null or \"notifications\".\"alert_recipient_id\" = \"notifications\".\"recipient_id\")"
+        },
+        "notifications_operator_check": {
+          "name": "notifications_operator_check",
+          "value": "\"notifications\".\"recipient_kind\" <> 'operator' or \"notifications\".\"recipient_id\" = '00000000-0000-4000-8000-00000000fa11'"
         },
         "notifications_params_check": {
           "name": "notifications_params_check",

@@ -12,14 +12,15 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { HandlerResult, OperationContext, QueryHandler } from '../commands/handlers';
-import { templateNamed } from './templates/index';
+import { alertTemplates, templateNamed } from './templates/index';
 import { messageParamsOf } from './templates/render';
+import { countedMessageKey, keyParamsOf } from './templates/template';
 
 const alertRows = z.array(
   z.object({
     id: z.uuid(),
     kind: z.string(),
-    params: z.record(z.string(), z.unknown()),
+    params: z.unknown(),
     raised_at: z.coerce.date(),
   }),
 );
@@ -28,8 +29,8 @@ const dayMilliseconds = 86_400_000;
 
 /**
  * The staff shell's alerts: the tenant's operational alerts and the reader's in-app
- * notifications from the last 30 days, newest first. Rows of a kind or template this build does
- * not know are left out rather than shown without text.
+ * notifications from the last 30 days, newest first. A row whose kind, template or params this
+ * build cannot read is shown with the unreadable alert's wording, never left out.
  */
 @Injectable()
 export class StaffAlertsHandler implements QueryHandler<typeof staffAlertsQuery> {
@@ -63,36 +64,69 @@ export class StaffAlertsHandler implements QueryHandler<typeof staffAlertsQuery>
     );
     const alerts: StaffAlert[] = [];
     for (const row of operational) {
-      const kind = operationalAlertKindSchema.safeParse(row.kind);
-      if (kind.success) {
-        alerts.push({
-          alertId: row.id,
-          source: 'operational',
-          titleKey: `pl.notifications.alert.${kind.data}.title`,
-          descriptionKey: `pl.notifications.alert.${kind.data}.description`,
-          params: messageParamsOf(row.params),
-          raisedAt: row.raised_at.toISOString(),
-          path: null,
-        });
-      }
+      alerts.push({
+        alertId: row.id,
+        source: 'operational',
+        ...describeOperational(row.kind, row.params),
+        raisedAt: row.raised_at.toISOString(),
+      });
     }
     for (const row of personal) {
-      const template = templateNamed(row.kind);
-      const params = template?.params.safeParse(row.params);
-      if (template?.channel === 'inApp' && params?.success === true) {
-        const target = template.link(params.data);
-        alerts.push({
-          alertId: row.id,
-          source: 'notification',
-          titleKey: `pl.notifications.inApp.${template.name}.title`,
-          descriptionKey: `pl.notifications.inApp.${template.name}.description`,
-          params: messageParamsOf(params.data),
-          raisedAt: row.raised_at.toISOString(),
-          path: target?.app === 'staff' ? target.path : null,
-        });
-      }
+      alerts.push({
+        alertId: row.id,
+        source: 'notification',
+        ...describeInApp(row.kind, row.params),
+        raisedAt: row.raised_at.toISOString(),
+      });
     }
     alerts.sort((left, right) => right.raisedAt.localeCompare(left.raisedAt));
     return success({ alerts: alerts.slice(0, staffAlertLimit) });
   }
+}
+
+type Description = Pick<StaffAlert, 'titleKey' | 'descriptionKey' | 'params' | 'keyParams' | 'path'>;
+
+const unreadable: Description = {
+  titleKey: 'pl.notifications.alert.unreadable.title',
+  descriptionKey: 'pl.notifications.alert.unreadable.description',
+  params: {},
+  keyParams: {},
+  path: null,
+};
+
+function describeOperational(kind: string, params: unknown): Description {
+  const knownKind = operationalAlertKindSchema.safeParse(kind);
+  if (!knownKind.success) {
+    return unreadable;
+  }
+  const template = alertTemplates[knownKind.data];
+  const parsed = template.params.safeParse(params);
+  if (!parsed.success) {
+    return unreadable;
+  }
+  const base = `pl.notifications.alert.${knownKind.data}`;
+  return {
+    titleKey: `${base}.title`,
+    descriptionKey: countedMessageKey(template, `${base}.description`, parsed.data),
+    params: messageParamsOf(parsed.data),
+    keyParams: keyParamsOf(template, parsed.data),
+    path: null,
+  };
+}
+
+function describeInApp(name: string, params: unknown): Description {
+  const template = templateNamed(name);
+  const parsed = template?.params.safeParse(params);
+  if (template?.channel !== 'inApp' || parsed?.success !== true) {
+    return unreadable;
+  }
+  const base = `pl.notifications.inApp.${template.name}`;
+  const target = template.link(parsed.data);
+  return {
+    titleKey: `${base}.title`,
+    descriptionKey: countedMessageKey(template, `${base}.description`, parsed.data),
+    params: messageParamsOf(parsed.data),
+    keyParams: keyParamsOf(template, parsed.data),
+    path: target?.app === 'staff' ? target.path : null,
+  };
 }

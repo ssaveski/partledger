@@ -1,3 +1,4 @@
+import { pluralMessageKey } from '@partledger/contracts';
 import type { schema } from '@partledger/db';
 import { z } from 'zod';
 
@@ -29,6 +30,7 @@ export const templateField = {
   id: () => declaredField(z.uuid()),
   count: () => declaredField(z.number().int().min(0)),
   code: () => declaredField(z.string().max(100).regex(auditTokenPattern)),
+  oneOf: <const Values extends readonly [string, ...string[]]>(values: Values) => declaredField(z.enum(values)),
 };
 
 export type TemplateShape = Readonly<Record<string, z.ZodType>>;
@@ -46,8 +48,13 @@ export interface NotificationTemplate<
 > {
   readonly name: Name;
   readonly channel: NotificationChannel;
-  readonly audience: Audience;
+  /** The kinds of recipient it may be sent to; the email's footer says why each received it. */
+  readonly audiences: readonly Audience[];
   readonly params: z.ZodObject<Shape>;
+  /** The param that chooses the plural form of the body or description (`.zero`, `.one`, `.other`). */
+  readonly countParam: string | null;
+  /** Params whose value names a message: `<prefix>.<value>` is translated before it is filled in. */
+  readonly keyParams: Readonly<Record<string, string>>;
   /** What the notification opens. Every email carries a link; an in-app alert may have none. */
   link(params: z.output<z.ZodObject<Shape>>): LinkTarget | null;
 }
@@ -71,14 +78,16 @@ export function defineTemplate<
 >(template: {
   readonly name: Name;
   readonly channel: NotificationChannel;
-  readonly audience: Audience;
+  readonly audiences: readonly [Audience, ...Audience[]];
   readonly params: Shape;
+  readonly countParam?: keyof Shape & string;
+  readonly keyParams?: Readonly<Partial<Record<keyof Shape & string, string>>>;
   readonly link: (params: z.output<z.ZodObject<Shape>>) => LinkTarget | null;
 }): NotificationTemplate<Name, Shape, Audience> {
   if (!templateNamePattern.test(template.name)) {
     throw new InvalidTemplateError(template.name, 'the name is not camelCase');
   }
-  if (template.channel === 'inApp' && template.audience !== 'person') {
+  if (template.channel === 'inApp' && template.audiences.some((audience) => audience !== 'person')) {
     throw new InvalidTemplateError(template.name, 'in-app notifications are for people only');
   }
   for (const [field, schema] of Object.entries(template.params)) {
@@ -86,12 +95,20 @@ export function defineTemplate<
       throw new InvalidTemplateError(template.name, `param ${field} is not built with templateField`);
     }
   }
+  const keyParams: Record<string, string> = {};
+  for (const [field, prefix] of Object.entries(template.keyParams ?? {})) {
+    if (typeof prefix === 'string') {
+      keyParams[field] = prefix;
+    }
+  }
   const params = z.strictObject(template.params);
   return {
     name: template.name,
     channel: template.channel,
-    audience: template.audience,
+    audiences: template.audiences,
     params,
+    countParam: template.countParam ?? null,
+    keyParams,
     link(values) {
       const target = template.link(values);
       if (target !== null && !linkPathPattern.test(target.path)) {
@@ -103,4 +120,29 @@ export function defineTemplate<
       return target;
     },
   };
+}
+
+/** The key of a template's body or description, in its plural form when it has a count. */
+export function countedMessageKey(
+  template: NotificationTemplate,
+  baseKey: string,
+  params: Readonly<Record<string, unknown>>,
+): string {
+  const count = template.countParam === null ? undefined : params[template.countParam];
+  return typeof count === 'number' ? pluralMessageKey(baseKey, count) : baseKey;
+}
+
+/** The messages that key params name, such as `pl.notifications.templateName.rfqAmended`. */
+export function keyParamsOf(
+  template: NotificationTemplate,
+  params: Readonly<Record<string, unknown>>,
+): Record<string, string> {
+  const keys: Record<string, string> = {};
+  for (const [field, prefix] of Object.entries(template.keyParams)) {
+    const value = params[field];
+    if (typeof value === 'string') {
+      keys[field] = `${prefix}.${value}`;
+    }
+  }
+  return keys;
 }

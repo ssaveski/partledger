@@ -17,14 +17,54 @@ import { generatedIdentifier, tenantIdentifier, timestamptz } from './columns.ts
 import { operationalAlerts } from './operational-alerts.ts';
 import { tenants } from './tenants.ts';
 
+/**
+ * The people a tenant has configured to receive its operational alerts by email (R6, R27,
+ * KTD41). An address is personal data: it lives here, under row-level security, and is erased
+ * with the recipient; the outbox and the audit chain refer to the recipient by id only.
+ */
+export const alertRecipients = pgTable(
+  'alert_recipients',
+  {
+    id: generatedIdentifier(),
+    tenantId: tenantIdentifier(),
+    emailAddress: text('email_address').notNull(),
+    addedAt: timestamptz('added_at').notNull(),
+    removedAt: timestamptz('removed_at'),
+  },
+  (table) => [
+    foreignKey({ name: 'alert_recipients_tenant_id_fkey', columns: [table.tenantId], foreignColumns: [tenants.id] }),
+    // The target of the outbox's composite foreign key (KTD11).
+    unique('alert_recipients_tenant_id_id_key').on(table.tenantId, table.id),
+    uniqueIndex('alert_recipients_active_address_key')
+      .on(table.tenantId, table.emailAddress)
+      .where(sql`${table.removedAt} is null`),
+    check(
+      'alert_recipients_email_address_check',
+      sql`length(${table.emailAddress}) <= 254 and ${table.emailAddress} = lower(${table.emailAddress})
+        and ${table.emailAddress} ~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$'`,
+    ),
+  ],
+);
+
+export const alertRecipientsAccess = defineTableAccess({
+  table: 'alert_recipients',
+  tenantKey: 'tenant_id',
+  grants: { pl_app: ['SELECT', 'INSERT'] },
+  columnGrants: { pl_app: { removed_at: ['UPDATE'] } },
+});
+
 /** How a notification reaches its recipient: an email with a link, or an alert in the staff shell. */
 export const notificationChannels = ['email', 'inApp'] as const;
 
 /**
  * Who a notification is for. Only the kind and id are stored; an email address is resolved when
- * the notification is sent, so the outbox never holds one (R39, KTD16).
+ * the notification is sent, so the outbox never holds one (R39, KTD16). `operator` is the
+ * platform operator's fallback address from configuration, for a tenant with no alert recipients.
  */
-export const notificationRecipientKinds = ['person', 'supplierContact', 'alertRecipient'] as const;
+export const notificationRecipientKinds = ['person', 'supplierContact', 'alertRecipient', 'operator'] as const;
+
+/** The recipient id of the platform operator's fallback address, which has no row of its own. */
+export const operatorRecipientId = '00000000-0000-4000-8000-00000000fa11';
 
 export const notificationStatuses = ['pending', 'sent', 'failed'] as const;
 
@@ -42,12 +82,21 @@ export const notifications = pgTable(
     channel: text('channel', { enum: notificationChannels }).notNull(),
     template: text('template').notNull(),
     recipientKind: text('recipient_kind', { enum: notificationRecipientKinds }).notNull(),
+    /**
+     * The recipient's id. For an alert recipient it repeats `alert_recipient_id`, which the
+     * database checks against `alert_recipients`; people (U8) and supplier contacts (U10) get
+     * foreign keys of their own when their tables exist.
+     */
     recipientId: uuid('recipient_id').notNull(),
+    alertRecipientId: uuid('alert_recipient_id'),
     params: jsonb('params').notNull(),
     /** The operational alert this notification delivers, if any. */
     operationalAlertId: uuid('operational_alert_id'),
     status: text('status', { enum: notificationStatuses }).notNull(),
-    /** Send attempts so far; in-app notifications are never sent, so theirs stays 0. */
+    /**
+     * How many attempts the final outcome took. It stays 0 while the notification is pending,
+     * because a failed attempt rolls back, and for in-app notifications, which are never sent.
+     */
     attempts: integer('attempts').notNull().default(0),
     /** A code, such as `Unavailable.dependencyUnavailable`; never a message or a value. */
     failure: text('failure'),
@@ -62,6 +111,11 @@ export const notifications = pgTable(
       columns: [table.tenantId, table.operationalAlertId],
       foreignColumns: [operationalAlerts.tenantId, operationalAlerts.id],
     }),
+    foreignKey({
+      name: 'notifications_alert_recipient_fkey',
+      columns: [table.tenantId, table.alertRecipientId],
+      foreignColumns: [alertRecipients.tenantId, alertRecipients.id],
+    }),
     // Each operational alert reaches each recipient once, however often its delivery runs.
     unique('notifications_alert_recipient_key').on(
       table.tenantId,
@@ -75,7 +129,16 @@ export const notifications = pgTable(
     check('notifications_template_check', sql`${table.template} ~ '^[a-z][a-zA-Z0-9]{0,99}$'`),
     check(
       'notifications_recipient_kind_check',
-      sql`${table.recipientKind} in ('person', 'supplierContact', 'alertRecipient')`,
+      sql`${table.recipientKind} in ('person', 'supplierContact', 'alertRecipient', 'operator')`,
+    ),
+    check(
+      'notifications_alert_recipient_check',
+      sql`(${table.recipientKind} = 'alertRecipient') = (${table.alertRecipientId} is not null)
+        and (${table.alertRecipientId} is null or ${table.alertRecipientId} = ${table.recipientId})`,
+    ),
+    check(
+      'notifications_operator_check',
+      sql`${table.recipientKind} <> 'operator' or ${table.recipientId} = '00000000-0000-4000-8000-00000000fa11'`,
     ),
     check('notifications_params_check', sql`jsonb_typeof(${table.params}) = 'object'`),
     check('notifications_status_check', sql`${table.status} in ('pending', 'sent', 'failed')`),
@@ -108,38 +171,4 @@ export const notificationsAccess = defineTableAccess({
       failed_at: ['UPDATE'],
     },
   },
-});
-
-/**
- * The people a tenant has configured to receive its operational alerts by email (R6, R27,
- * KTD41). An address is personal data: it lives here, under row-level security, and is erased
- * with the recipient; the outbox and the audit chain refer to the recipient by id only.
- */
-export const alertRecipients = pgTable(
-  'alert_recipients',
-  {
-    id: generatedIdentifier(),
-    tenantId: tenantIdentifier(),
-    emailAddress: text('email_address').notNull(),
-    addedAt: timestamptz('added_at').notNull(),
-    removedAt: timestamptz('removed_at'),
-  },
-  (table) => [
-    foreignKey({ name: 'alert_recipients_tenant_id_fkey', columns: [table.tenantId], foreignColumns: [tenants.id] }),
-    uniqueIndex('alert_recipients_active_address_key')
-      .on(table.tenantId, table.emailAddress)
-      .where(sql`${table.removedAt} is null`),
-    check(
-      'alert_recipients_email_address_check',
-      sql`length(${table.emailAddress}) <= 254 and ${table.emailAddress} = lower(${table.emailAddress})
-        and ${table.emailAddress} ~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$'`,
-    ),
-  ],
-);
-
-export const alertRecipientsAccess = defineTableAccess({
-  table: 'alert_recipients',
-  tenantKey: 'tenant_id',
-  grants: { pl_app: ['SELECT', 'INSERT'] },
-  columnGrants: { pl_app: { removed_at: ['UPDATE'] } },
 });

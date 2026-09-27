@@ -61,6 +61,7 @@ export {
   formatMessage,
   messageKeyPattern,
   messageParamsSchema,
+  pluralMessageKey,
   translate,
   type MessageParams,
   type ModuleCatalogue,

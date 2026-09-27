@@ -84,6 +84,7 @@ export const flagExpiringEvidence = defineCommand({
   input: z
     .object({
       evidenceId: z.uuid().describe('The evidence.'),
+      supplierId: z.uuid().describe('The supplier the evidence belongs to.'),
       daysLeft: z.number().int().min(0).describe('Days until it expires.'),
       personId: z.uuid().describe('Who to tell.'),
     })
@@ -107,7 +108,7 @@ export class FlagExpiringEvidenceHandler implements CommandHandler<typeof flagEx
       context,
       evidenceExpiringTemplate,
       { kind: 'person', id: input.personId },
-      { evidenceId: input.evidenceId, daysLeft: input.daysLeft },
+      { evidenceId: input.evidenceId, supplierId: input.supplierId, daysLeft: input.daysLeft },
     );
     return notificationId === null ? refuse('Conflict', 'alreadyExists') : success({ notificationId });
   }

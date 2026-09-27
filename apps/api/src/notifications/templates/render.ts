@@ -1,6 +1,13 @@
 import { formatMessage, type MessageParams } from '@partledger/contracts';
 
-import type { LinkTarget, NotificationTemplate, TemplateParams } from './template';
+import {
+  countedMessageKey,
+  keyParamsOf,
+  type LinkTarget,
+  type NotificationTemplate,
+  type RecipientKind,
+  type TemplateParams,
+} from './template';
 
 /** The origins links open, from configuration: the staff app and the supplier portal (KTD30). */
 export interface LinkOrigins {
@@ -27,12 +34,19 @@ export function linkUrl(target: LinkTarget, origins: LinkOrigins): string {
 export function renderEmail<Template extends NotificationTemplate>(
   template: Template,
   params: TemplateParams<Template>,
-  context: { readonly tenantName: string; readonly origins: LinkOrigins },
+  context: { readonly tenantName: string; readonly origins: LinkOrigins; readonly recipientKind: RecipientKind },
 ): RenderedEmail {
   const values: MessageParams = { ...messageParamsOf(params), tenantName: context.tenantName };
+  for (const [name, key] of Object.entries(keyParamsOf(template, params))) {
+    values[name] = formatMessage(key);
+  }
   const keyOf = (part: string) => `pl.notifications.email.${template.name}.${part}`;
   const target = template.link(params);
-  const lines = [formatMessage('pl.notifications.email.greeting'), '', formatMessage(keyOf('body'), values)];
+  const lines = [
+    formatMessage('pl.notifications.email.greeting'),
+    '',
+    formatMessage(countedMessageKey(template, keyOf('body'), params), values),
+  ];
   if (target !== null) {
     lines.push(
       '',
@@ -44,7 +58,7 @@ export function renderEmail<Template extends NotificationTemplate>(
   }
   lines.push(
     '',
-    formatMessage(`pl.notifications.email.footer.${template.audience}`, values),
+    formatMessage(`pl.notifications.email.footer.${context.recipientKind}`, values),
     '',
     formatMessage('pl.notifications.email.signature'),
   );

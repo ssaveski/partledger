@@ -40,12 +40,12 @@ const insertedRows = z.array(z.object({ id: z.uuid() }));
 export async function recordNotification<Template extends NotificationTemplate>(
   context: NotificationContext,
   template: Template,
-  recipient: NotificationRecipient & { readonly kind: Template['audience'] },
+  recipient: NotificationRecipient & { readonly kind: Template['audiences'][number] },
   params: TemplateParams<Template>,
   options: { readonly operationalAlertId?: string } = {},
 ): Promise<string | null> {
-  if (recipient.kind !== template.audience) {
-    throw new RecipientKindMismatchError(template.name, template.audience, recipient.kind);
+  if (!template.audiences.includes(recipient.kind)) {
+    throw new RecipientKindMismatchError(template.name, template.audiences.join(' or '), recipient.kind);
   }
   const values = jsonValueOf(template.params.parse(params));
   assertAuditSafe(values);
@@ -53,10 +53,11 @@ export async function recordNotification<Template extends NotificationTemplate>(
   const now = context.now.toISOString();
   const inApp = template.channel === 'inApp';
   const result = await context.database.execute(
-    sql`insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, params,
-                                   operational_alert_id, status, created_at, sent_at)
+    sql`insert into notifications (tenant_id, channel, template, recipient_kind, recipient_id, alert_recipient_id,
+                                   params, operational_alert_id, status, created_at, sent_at)
         values (${context.principal.tenantId}, ${template.channel}, ${template.name}, ${recipient.kind},
-                ${recipientId}, ${JSON.stringify(values)}::jsonb, ${options.operationalAlertId ?? null},
+                ${recipientId}, ${recipient.kind === 'alertRecipient' ? recipientId : null},
+                ${JSON.stringify(values)}::jsonb, ${options.operationalAlertId ?? null},
                 ${inApp ? 'sent' : 'pending'}, ${now}::timestamptz, ${inApp ? now : null}::timestamptz)
         on conflict (tenant_id, operational_alert_id, channel, recipient_kind, recipient_id) do nothing
         returning id`,

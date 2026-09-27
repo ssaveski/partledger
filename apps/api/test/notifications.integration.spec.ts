@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Logger } from '@nestjs/common';
-import { formatMessage, staffAlertsSchema, type OperationalAlertKind } from '@partledger/contracts';
+import {
+  formatMessage,
+  operationalAlertKindSchema,
+  staffAlertsSchema,
+  type OperationalAlertKind,
+} from '@partledger/contracts';
+import { schema } from '@partledger/db';
 import { insertTenant } from '@partledger/db/testing';
 import { sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,10 +21,11 @@ import { TenantTransactions } from '../src/db/tenant-transaction';
 import { JobQueue } from '../src/jobs/enqueue';
 import { JobItemFailedError, JobRunner, type DeliveredJob } from '../src/jobs/job-runner';
 import { JobScheduler } from '../src/jobs/job-scheduler';
+import { DeliverOperationalAlertsHandler } from '../src/notifications/deliver-operational-alerts.job';
 import { readLocalInbox } from '../src/notifications/local-email.adapter';
 import { recordNotification } from '../src/notifications/notification.service';
 import { maximumSendAttempts } from '../src/notifications/send-notification.job';
-import { rfqAmendedTemplate } from '../src/notifications/templates/index';
+import { rfqAmendedTemplate, type OperationalAlertParams } from '../src/notifications/templates/index';
 import { startApiHarness, type ApiHarness, type IssuedToken } from './support/api-harness';
 import { jobsTestCatalogTables } from './support/jobs-test-module';
 import {
@@ -32,6 +39,7 @@ const staffOrigin = 'http://127.0.0.1:5173';
 const portalOrigin = 'http://127.0.0.1:5174';
 const deliveryJobName = 'notifications.deliverOperationalAlerts';
 const deliverySchedule = 'notifications.operationalAlertDelivery';
+const operatorAddress = 'fallback@platform-operator.example';
 
 const notificationRows = z.array(
   z.object({
@@ -100,6 +108,7 @@ describe('notifications', () => {
     inbox = await mkdtemp(join(tmpdir(), 'partledger-inbox-'));
     email = new ObservedEmailPort(inbox);
     harness = await startApiHarness({
+      environment: { OPERATIONAL_ALERT_FALLBACK_EMAIL: operatorAddress },
       process: {
         registry: notificationsTestRegistry,
         workers: false,
@@ -216,7 +225,11 @@ describe('notifications', () => {
     };
   }
 
-  async function raiseAlert(tenantId: string, kind: OperationalAlertKind, params: Record<string, number | string>) {
+  async function raiseAlert<Kind extends OperationalAlertKind>(
+    tenantId: string,
+    kind: Kind,
+    params: OperationalAlertParams<Kind>,
+  ) {
     const key = `test:${randomUUID()}`;
     await transactions.run(tenantId, (database) =>
       raiseOperationalAlert(database, { tenantId, kind, key, params, raisedByJobId: null, now: harness.clock.now() }),
@@ -416,7 +429,12 @@ describe('notifications', () => {
       expect(alerts).toMatchObject([
         {
           kind: 'notificationDeliveryFailed',
-          params: { notificationId, template: 'rfqAmended', attempts: maximumSendAttempts },
+          params: {
+            notificationId,
+            template: 'rfqAmended',
+            recipientKind: 'supplierContact',
+            attempts: maximumSendAttempts,
+          },
           notified_at: null,
         },
       ]);
@@ -485,7 +503,7 @@ describe('notifications', () => {
         template: 'alertChainVerificationFailed',
         recipient_kind: 'alertRecipient',
         recipient_id: recipientId,
-        params: { firstFailingSeq: 42 },
+        params: { firstFailingSeq: 42, reason: 'entryHashMismatch' },
         status: 'pending',
       });
       if (recorded === undefined) {
@@ -605,26 +623,152 @@ describe('notifications', () => {
       expect(refusal).toMatch(/pl\.notifications\.final/);
     });
 
-    it('keeps an alert undelivered while the tenant has no recipient, and delivers it once one is configured', async () => {
+    it("sends a tenant's alerts to the operator's fallback address, once, while the tenant has no recipient", async () => {
       const tenantId = await insertTenant(harness.superuser, `tenant-${randomUUID().slice(0, 8)}`);
       const admin = await harness.issue('staff_session', tenantId, { roles: ['tenant_admin'] });
       const alert = await raiseAlert(tenantId, 'dropMissed', {});
-      logged.length = 0;
-      expect(await runner.run(deliveryJob(tenantId))).toEqual({ applied: [], skipped: [] });
-      expect((await alertById(alert.id))?.notified_at).toBeNull();
-      expect(logged.some((line) => line.includes(tenantId) && line.includes('no alert recipients'))).toBe(true);
+      const fallbackBefore = (await inboxFor(operatorAddress)).length;
+      expect((await runner.run(deliveryJob(tenantId))).applied).toEqual([`alert:${alert.id}`]);
+      await runner.run(deliveryJob(tenantId));
+      const recorded = await notificationsWhere('operational_alert_id = $1', [alert.id]);
+      expect(recorded).toMatchObject([
+        { recipient_kind: 'operator', recipient_id: schema.operatorRecipientId, template: 'alertDropMissed' },
+      ]);
+      for (const row of recorded) {
+        const job = await sendJobFor(row.id);
+        await runner.run(job);
+        await runner.run({ ...job, id: randomUUID() });
+      }
+      const fallbackMessages = await inboxFor(operatorAddress);
+      expect(fallbackMessages).toHaveLength(fallbackBefore + 1);
+      const tenantName = `Synthetic ${await tenantSlug(tenantId)}`;
+      expect(fallbackMessages.map((message) => message.subject)).toContain(
+        `Partledger alert for ${tenantName}: an ERP export did not arrive`,
+      );
+      expect(fallbackMessages.map((message) => message.text).join('\n')).toContain(
+        `because ${tenantName} has not configured anyone to receive its operational alerts`,
+      );
+      expect(await harness.count('select 1 from pl_jobs.job where data::text like $1', [`%${operatorAddress}%`])).toBe(
+        0,
+      );
 
+      // Once the tenant configures a recipient, its alerts go there instead.
       const address = `ops-${randomUUID().slice(0, 8)}@tenant-new.example`;
       await addRecipient(admin.token, address);
-      expect((await runner.run(deliveryJob(tenantId))).applied).toEqual([`alert:${alert.id}`]);
-      const [recorded] = await notificationsWhere('operational_alert_id = $1', [alert.id]);
-      if (recorded === undefined) {
-        throw new Error('One notification expected');
-      }
-      await runner.run(await sendJobFor(recorded.id));
-      expect((await inboxFor(address)).map((message) => message.subject)).toEqual([
-        `Partledger alert for Synthetic ${await tenantSlug(tenantId)}: an ERP export did not arrive`,
+      const next = await raiseAlert(tenantId, 'scannerUnavailable', {});
+      await runner.run(deliveryJob(tenantId));
+      expect(await notificationsWhere('operational_alert_id = $1', [next.id])).toMatchObject([
+        { recipient_kind: 'alertRecipient' },
       ]);
+    });
+
+    it('keeps an alert undelivered, and says so in the log, when neither a recipient nor an operator fallback exists', async () => {
+      const tenantId = await insertTenant(harness.superuser, `tenant-${randomUUID().slice(0, 8)}`);
+      await raiseAlert(tenantId, 'dropMissed', {});
+      const handler = new DeliverOperationalAlertsHandler({ address: null });
+      logged.length = 0;
+      const items = await transactions.run(tenantId, (database) =>
+        handler.items(
+          {},
+          {
+            jobId: randomUUID(),
+            principal: {
+              type: 'system',
+              tenantId,
+              actedUnder: { grant: 'job', jobId: randomUUID(), cause: 'schedule', source: deliverySchedule },
+              adapter: 'jobs',
+              correlationId: randomUUID(),
+            },
+            database,
+            now: harness.clock.now(),
+          },
+        ),
+      );
+      expect(items).toEqual([]);
+      expect(logged.some((line) => line.includes(tenantId) && line.includes('no alert recipients'))).toBe(true);
+    });
+
+    it('delivers an alert it cannot read in general words, and never lets it hold back the alerts after it', async () => {
+      const tenantId = await insertTenant(harness.superuser, `tenant-${randomUUID().slice(0, 8)}`);
+      const admin = await harness.issue('staff_session', tenantId, { roles: ['tenant_admin'] });
+      const address = `ops-${randomUUID().slice(0, 8)}@tenant-new.example`;
+      await addRecipient(admin.token, address);
+      const earlier = new Date(harness.clock.now().getTime() - 60_000).toISOString();
+      const malformed = await harness.superuser.query(
+        `insert into operational_alerts (tenant_id, kind, key, params, raised_at)
+         values ($1, 'chainVerificationFailed', 'malformed', '{"firstFailingSeq": "not a number"}', $2),
+                ($1, 'kindFromANewerBuild', 'unknown', '{}', $2)
+         returning id`,
+        [tenantId, earlier],
+      );
+      const unreadableIds = z
+        .array(z.object({ id: z.uuid() }))
+        .parse(malformed.rows)
+        .map((row) => row.id);
+      const valid = await raiseAlert(tenantId, 'scannerUnavailable', {});
+
+      const run = await runner.run(deliveryJob(tenantId));
+      expect(run.applied).toHaveLength(3);
+      for (const id of [...unreadableIds, valid.id]) {
+        expect((await alertById(id))?.notified_at).toBeInstanceOf(Date);
+      }
+      const recorded = await notificationsWhere('tenant_id = $1', [tenantId]);
+      expect(recorded.map((row) => row.template).sort()).toEqual([
+        'alertScannerUnavailable',
+        'alertUnreadable',
+        'alertUnreadable',
+      ]);
+      for (const row of recorded) {
+        await runner.run(await sendJobFor(row.id));
+      }
+      const tenantName = `Synthetic ${await tenantSlug(tenantId)}`;
+      expect((await inboxFor(address)).map((message) => message.subject).sort()).toEqual([
+        `Partledger alert for ${tenantName}: an alert needs your attention`,
+        `Partledger alert for ${tenantName}: an alert needs your attention`,
+        `Partledger alert for ${tenantName}: uploaded files cannot be scanned`,
+      ]);
+      const audited = await harness.superuser.query(
+        `select payload -> 'data' ->> 'outcome' as outcome from audit_entries
+          where tenant_id = $1 and payload ->> 'event' = 'notifications.operationalAlertDelivered'`,
+        [tenantId],
+      );
+      expect(
+        z
+          .array(z.object({ outcome: z.string() }))
+          .parse(audited.rows)
+          .map((row) => row.outcome)
+          .sort(),
+      ).toEqual(['delivered', 'unreadable', 'unreadable']);
+
+      const reader = await harness.issue('staff_session', tenantId, { roles: ['auditor'] });
+      const shown = staffAlertsSchema.parse(
+        (await harness.query('staff', 'notifications.alerts', {}, reader.token)).body,
+      );
+      expect(shown.alerts.filter((item) => unreadableIds.includes(item.alertId))).toMatchObject([
+        { titleKey: 'pl.notifications.alert.unreadable.title', params: {} },
+        { titleKey: 'pl.notifications.alert.unreadable.title', params: {} },
+      ]);
+    });
+
+    it('refuses to raise an alert whose params do not match its kind', async () => {
+      // A kind known only at run time: its params type is every kind's, so a mismatch compiles.
+      const kind = operationalAlertKindSchema.parse('dropMissed');
+      let refusal = '';
+      try {
+        await transactions.run(harness.tenantA, (database) =>
+          raiseOperationalAlert(database, {
+            tenantId: harness.tenantA,
+            kind,
+            key: `test:${randomUUID()}`,
+            params: { firstFailingSeq: 3, reason: 'recordMismatch' },
+            raisedByJobId: null,
+            now: harness.clock.now(),
+          }),
+        );
+      } catch (error) {
+        refusal = describeError(error);
+      }
+      expect(refusal).toMatch(/unrecognized_keys|Unrecognized key/);
     });
 
     it("delivers a failed email's alert to the recipients, and raises no further alert when that email fails too", async () => {
@@ -635,6 +779,7 @@ describe('notifications', () => {
       const failed = await raiseAlert(tenantId, 'notificationDeliveryFailed', {
         notificationId: randomUUID(),
         template: 'rfqAmended',
+        recipientKind: 'supplierContact',
         attempts: maximumSendAttempts,
       });
       email.failingAddresses.add(address);
@@ -643,7 +788,7 @@ describe('notifications', () => {
       if (recorded === undefined) {
         throw new Error('One notification expected');
       }
-      expect(recorded.params).toEqual({ attempts: maximumSendAttempts });
+      expect(recorded.params).toMatchObject({ recipientKind: 'supplierContact', attempts: maximumSendAttempts });
       const job = await sendJobFor(recorded.id);
       for (let attempt = 1; attempt <= maximumSendAttempts; attempt += 1) {
         try {
@@ -664,6 +809,7 @@ describe('notifications', () => {
       const failed = await raiseAlert(tenantId, 'notificationDeliveryFailed', {
         notificationId: randomUUID(),
         template: 'rfqAmended',
+        recipientKind: 'supplierContact',
         attempts: maximumSendAttempts,
       });
       await runner.run(deliveryJob(tenantId));
@@ -676,7 +822,10 @@ describe('notifications', () => {
       expect(message?.subject).toBe(
         `Partledger alert for Synthetic ${await tenantSlug(tenantId)}: an email could not be delivered`,
       );
-      expect(message?.text).toContain(`after ${maximumSendAttempts} attempts`);
+      expect(message?.text).toContain(
+        `could not deliver the notice of a changed request for quotation to a supplier contact after ${maximumSendAttempts} attempts`,
+      );
+      expect(message?.text).toContain("Check that the recipient's email address is correct");
     });
 
     it('keeps alert recipient addresses out of the outbox, job payloads and audit entries', async () => {
@@ -704,13 +853,17 @@ describe('notifications', () => {
 
   describe('the staff shell', () => {
     it("lists the tenant's operational alerts and the reader's own in-app notifications, newest first", async () => {
-      const alert = await raiseAlert(harness.tenantA, 'chainVerificationFailed', { firstFailingSeq: 7, reason: 'x' });
+      const alert = await raiseAlert(harness.tenantA, 'chainVerificationFailed', {
+        firstFailingSeq: 7,
+        reason: 'recordMismatch',
+      });
       harness.clock.advance(1_000);
       const evidenceId = randomUUID();
+      const supplierId = randomUUID();
       const response = await harness.command(
         'staff',
         'notificationsTest.flagExpiringEvidence',
-        { evidenceId, daysLeft: 21, personId: buyerA.subjectId },
+        { evidenceId, supplierId, daysLeft: 21, personId: buyerA.subjectId },
         { token: qualityA.token },
       );
       expect(response.status).toBe(200);
@@ -726,18 +879,23 @@ describe('notifications', () => {
         alertId: notificationId,
         source: 'notification',
         titleKey: 'pl.notifications.inApp.evidenceExpiring.title',
-        params: { evidenceId, daysLeft: 21 },
-        path: null,
+        descriptionKey: 'pl.notifications.inApp.evidenceExpiring.description.other',
+        params: { evidenceId, supplierId, daysLeft: 21 },
+        path: '/evidence',
       });
       const operational = alerts.find((candidate) => candidate.alertId === alert.id);
       expect(operational).toMatchObject({
         source: 'operational',
         titleKey: 'pl.notifications.alert.chainVerificationFailed.title',
-        params: { firstFailingSeq: 7, reason: 'x' },
+        params: { firstFailingSeq: 7, reason: 'recordMismatch' },
       });
       for (const shown of alerts) {
-        expect(() => formatMessage(shown.titleKey, shown.params)).not.toThrow();
-        expect(() => formatMessage(shown.descriptionKey, shown.params)).not.toThrow();
+        const params = {
+          ...shown.params,
+          ...Object.fromEntries(Object.entries(shown.keyParams).map(([name, key]) => [name, formatMessage(key)])),
+        };
+        expect(() => formatMessage(shown.titleKey, params)).not.toThrow();
+        expect(() => formatMessage(shown.descriptionKey, params)).not.toThrow();
       }
       expect(alerts.map((shown) => shown.raisedAt)).toEqual(
         [...alerts.map((shown) => shown.raisedAt)].sort((left, right) => right.localeCompare(left)),

@@ -4,9 +4,21 @@ import { englishCatalogue, formatMessage, operationalAlertKinds } from '@partled
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { alertTemplates, notificationTemplates, rfqAmendedTemplate } from './index';
+import {
+  alertTemplates,
+  evidenceExpiringTemplate,
+  notificationTemplates,
+  rfqAmendedTemplate,
+  templateNames,
+} from './index';
 import { messageParamsOf, renderEmail } from './render';
-import { defineTemplate, InvalidTemplateError, templateField, type NotificationTemplate } from './template';
+import {
+  countedMessageKey,
+  defineTemplate,
+  InvalidTemplateError,
+  templateField,
+  type NotificationTemplate,
+} from './template';
 
 const origins = { staff: 'https://app.example', portal: 'https://suppliers.example' };
 
@@ -14,7 +26,14 @@ const origins = { staff: 'https://app.example', portal: 'https://suppliers.examp
 function sampleParams(template: NotificationTemplate): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const [name, schema] of Object.entries(template.params.shape)) {
-    values[name] = schema instanceof z.ZodUUID ? randomUUID() : schema instanceof z.ZodNumber ? 3 : 'sampleCode';
+    values[name] =
+      schema instanceof z.ZodUUID
+        ? randomUUID()
+        : schema instanceof z.ZodNumber
+          ? 3
+          : schema instanceof z.ZodEnum
+            ? schema.options[0]
+            : 'sampleCode';
   }
   return template.params.parse(values);
 }
@@ -24,13 +43,16 @@ describe('notification templates', () => {
     for (const template of notificationTemplates) {
       const params = sampleParams(template);
       if (template.channel === 'email') {
-        const rendered = renderEmail(template, params, { tenantName: 'Synthetic Tenant', origins });
-        expect(rendered.subject, template.name).not.toMatch(/[{}]/);
-        expect(rendered.text, template.name).not.toMatch(/[{}]/);
+        for (const recipientKind of template.audiences) {
+          const rendered = renderEmail(template, params, { tenantName: 'Synthetic Tenant', origins, recipientKind });
+          expect(rendered.subject, template.name).not.toMatch(/[{}]/);
+          expect(rendered.text, template.name).not.toMatch(/[{}]/);
+        }
       } else {
         for (const part of ['title', 'description']) {
           const key = `pl.notifications.inApp.${template.name}.${part}`;
-          expect(() => formatMessage(key, messageParamsOf(params)), key).not.toThrow();
+          const counted = countedMessageKey(template, key, params);
+          expect(() => formatMessage(counted, messageParamsOf(params)), counted).not.toThrow();
         }
       }
     }
@@ -38,9 +60,11 @@ describe('notification templates', () => {
 
   it('give every operational alert kind an email template and in-app wording', () => {
     for (const kind of operationalAlertKinds) {
-      expect(alertTemplates[kind].audience).toBe('alertRecipient');
+      expect(alertTemplates[kind].audiences).toEqual(['alertRecipient', 'operator']);
+      const params = sampleParams(alertTemplates[kind]);
       for (const part of ['title', 'description']) {
-        expect(Object.hasOwn(englishCatalogue, `pl.notifications.alert.${kind}.${part}`), `${kind}.${part}`).toBe(true);
+        const key = countedMessageKey(alertTemplates[kind], `pl.notifications.alert.${kind}.${part}`, params);
+        expect(Object.hasOwn(englishCatalogue, key), key).toBe(true);
       }
     }
   });
@@ -50,7 +74,7 @@ describe('notification templates', () => {
     const rendered = renderEmail(
       rfqAmendedTemplate,
       { rfqId, version: 3 },
-      { tenantName: 'Synthetic Tenant', origins },
+      { tenantName: 'Synthetic Tenant', origins, recipientKind: 'supplierContact' },
     );
     expect(rendered.subject).toBe('Synthetic Tenant changed a request for quotation');
     expect(rendered.text).toBe(
@@ -74,7 +98,7 @@ describe('notification templates', () => {
       defineTemplate({
         name: 'freeText',
         channel: 'email',
-        audience: 'supplierContact',
+        audiences: ['supplierContact'],
         params: { lineDescription: z.string() },
         link: () => ({ app: 'portal', path: '/' }),
       }),
@@ -88,7 +112,7 @@ describe('notification templates', () => {
       defineTemplate({
         name: 'portalAlert',
         channel: 'inApp',
-        audience: 'supplierContact',
+        audiences: ['supplierContact'],
         params: {},
         link: () => null,
       }),
@@ -96,7 +120,7 @@ describe('notification templates', () => {
     const linkless = defineTemplate({
       name: 'linkless',
       channel: 'email',
-      audience: 'alertRecipient',
+      audiences: ['alertRecipient'],
       params: {},
       link: () => null,
     });
@@ -104,10 +128,48 @@ describe('notification templates', () => {
     const offsite = defineTemplate({
       name: 'offsite',
       channel: 'email',
-      audience: 'alertRecipient',
+      audiences: ['alertRecipient'],
       params: {},
       link: () => ({ app: 'staff', path: '//elsewhere.example/phish' }),
     });
     expect(() => offsite.link({})).toThrow(/not a path/);
+  });
+
+  it('names every template and recipient kind, so an alert about a failed email can say which failed', () => {
+    expect([...templateNames].sort()).toEqual(notificationTemplates.map((template) => template.name).sort());
+    for (const name of templateNames) {
+      expect(Object.hasOwn(englishCatalogue, `pl.notifications.templateName.${name}`), name).toBe(true);
+    }
+    for (const kind of ['person', 'supplierContact', 'alertRecipient', 'operator']) {
+      expect(Object.hasOwn(englishCatalogue, `pl.notifications.recipientKind.${kind}`), kind).toBe(true);
+      expect(Object.hasOwn(englishCatalogue, `pl.notifications.email.footer.${kind}`), kind).toBe(true);
+    }
+  });
+
+  it('tells the recipients of a failed email which email failed, for whom, after how many attempts, and what to check', () => {
+    const rendered = renderEmail(
+      alertTemplates.notificationDeliveryFailed,
+      { notificationId: randomUUID(), template: 'rfqAmended', recipientKind: 'supplierContact', attempts: 4 },
+      { tenantName: 'Synthetic Tenant', origins, recipientKind: 'alertRecipient' },
+    );
+    expect(rendered.text).toContain(
+      'could not deliver the notice of a changed request for quotation to a supplier contact after 4 attempts',
+    );
+    expect(rendered.text).toContain("Check that the recipient's email address is correct");
+  });
+
+  it('chooses the plural form of a counted message by its count', () => {
+    const description = (daysLeft: number) =>
+      countedMessageKey(evidenceExpiringTemplate, 'pl.notifications.inApp.evidenceExpiring.description', { daysLeft });
+    expect(formatMessage(description(0), { daysLeft: 0 })).toBe('A supplier document expires today.');
+    expect(formatMessage(description(1), { daysLeft: 1 })).toBe('A supplier document expires in 1 day.');
+    expect(formatMessage(description(21), { daysLeft: 21 })).toBe('A supplier document expires in 21 days.');
+  });
+
+  it('links expiring evidence to evidence review in the staff app', () => {
+    expect(evidenceExpiringTemplate.link({ evidenceId: randomUUID(), supplierId: randomUUID(), daysLeft: 3 })).toEqual({
+      app: 'staff',
+      path: '/evidence',
+    });
   });
 });

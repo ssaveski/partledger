@@ -49,8 +49,9 @@ To repair either case, insert the tenant id into `pl_jobs.tenant_enrolment` if i
 - Commands record notifications in the `notifications` outbox inside their own transaction, and enqueue one `notifications.send` job per email. A command that rolls back leaves neither.
 - `notifications.send` resolves the recipient's address when it runs; the outbox, job payloads, audit entries and logs hold only the recipient's kind and id. A failed send is retried by pg-boss. After 4 attempts the notification is marked `failed` with a code, and a `notificationDeliveryFailed` operational alert is raised. A failed email about such an alert raises nothing more.
 - `notifications.deliverOperationalAlerts` runs every five minutes for every enrolled tenant. It sets each new alert's `notified_at`, which never changes afterwards, and records one email per alert recipient. So each alert reaches each recipient once.
-- A tenant admin configures alert recipients with `notifications.addAlertRecipient` and `notifications.removeAlertRecipient`. While a tenant has none, its alerts stay undelivered, the staff shell still lists them, and each run logs `Tenant <id> has operational alerts to deliver and no alert recipients`.
-- Locally, `EMAIL_ADAPTER=local` writes each email to `EMAIL_LOCAL_INBOX_DIRECTORY` as `<notification id>.json` and sends nothing.
+- A tenant admin configures alert recipients with `notifications.addAlertRecipient` and `notifications.removeAlertRecipient`. While a tenant has none, its alerts go to the platform operator's `OPERATIONAL_ALERT_FALLBACK_EMAIL`, which production requires. Without that setting (development only), the alerts stay undelivered, the staff shell still lists them, and each run logs `Tenant <id> has operational alerts to deliver, no alert recipients and no operator fallback`.
+- An alert whose kind or params this build cannot read is still marked delivered and sent in general words ("an alert needs your attention"), with the audit outcome `unreadable`, so it never holds back the alerts after it.
+- Locally, `EMAIL_ADAPTER=local` writes each email to `EMAIL_LOCAL_INBOX_DIRECTORY` as `<notification id>.json` and sends nothing. Production refuses `local` and refuses to start without an adapter named.
 
 ```sql
 -- Operational alerts not yet handed to anyone, oldest first.

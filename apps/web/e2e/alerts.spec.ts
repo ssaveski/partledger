@@ -26,3 +26,12 @@ for (const colorScheme of ['dark', 'light'] as const) {
     await expect(trigger).toBeFocused();
   });
 }
+
+test("following an alert's link navigates inside the app and closes the alerts dialog", async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('banner').getByRole('button', { name: 'Alerts, 2 in the last 30 days' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Alerts' });
+  await dialog.getByRole('link', { name: 'View Supplier evidence expires soon' }).click();
+  await expect(page).toHaveURL(/\/evidence$/);
+  await expect(dialog).toBeHidden();
+});

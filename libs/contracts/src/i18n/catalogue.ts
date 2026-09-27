@@ -73,3 +73,20 @@ export function formatMessage(
     return String(value);
   });
 }
+
+/**
+ * The key for a message that depends on a count: `<base>.zero` for 0 and `<base>.one` for 1
+ * when the catalogue has them, otherwise `<base>.other`.
+ */
+export function pluralMessageKey(
+  baseKey: string,
+  count: number,
+  catalogue: ModuleCatalogue = englishCatalogue,
+): string {
+  const candidates = [
+    ...(count === 0 ? [`${baseKey}.zero`] : []),
+    ...(count === 1 ? [`${baseKey}.one`] : []),
+    `${baseKey}.other`,
+  ];
+  return candidates.find((key) => Object.hasOwn(catalogue, key)) ?? baseKey;
+}

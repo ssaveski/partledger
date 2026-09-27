@@ -42,6 +42,9 @@ export const staffAlertSchema = z
     params: z
       .record(z.string(), z.union([z.string(), z.number()]))
       .describe('Values for the title and description: identifiers, counts and codes only.'),
+    keyParams: z
+      .record(z.string(), messageKeySchema)
+      .describe('Values that are themselves messages, such as the name of a template: translate each first.'),
     raisedAt: z.iso.datetime().describe('When the alert was raised, in UTC.'),
     path: staffPathSchema.nullable(),
   })

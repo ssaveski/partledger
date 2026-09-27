@@ -21,6 +21,7 @@ export {
   notificationRecipientKinds,
   notifications,
   notificationStatuses,
+  operatorRecipientId,
 } from './notifications.ts';
 export { operationalAlerts } from './operational-alerts.ts';
 export { tenantRegions, tenants } from './tenants.ts';

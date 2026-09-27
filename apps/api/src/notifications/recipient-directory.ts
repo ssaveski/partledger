@@ -38,3 +38,14 @@ export const storedRecipientDirectory: RecipientDirectory = {
     return addressRows.parse(result.rows)[0]?.email_address ?? null;
   },
 };
+
+/**
+ * The platform operator's fallback address (KTD41), from configuration: a tenant with no alert
+ * recipient has its alerts sent here, so an alert always reaches a person. It is resolved at
+ * send time like any address; notifications name it only by `operatorRecipientId`.
+ */
+export interface OperatorFallback {
+  readonly address: string | null;
+}
+
+export const operatorFallback = Symbol('OperatorFallback');

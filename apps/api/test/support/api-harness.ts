@@ -100,6 +100,8 @@ export interface ApiHarnessOptions {
   readonly identityProvider?: 'keycloak' | IdentityProvider;
   /** The first API process. */
   readonly process?: ApiProcessOptions;
+  /** Further settings for every API process, such as the operator's alert fallback address. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -137,6 +139,7 @@ export async function startApiHarness(options: ApiHarnessOptions = {}): Promise<
         JOBS_WORKERS: apiProcess.workers === true ? 'on' : 'off',
         // Tests move the clock by up to a day; sessions they issue must outlast that.
         ...(options.authEnvironment ?? placeholderAuthEnvironment({ STAFF_SESSION_IDLE_TIMEOUT_MINUTES: '10080' })),
+        ...options.environment,
       }),
       { staff: loopback, portal: loopback, drop: loopback, operator: loopback },
       {

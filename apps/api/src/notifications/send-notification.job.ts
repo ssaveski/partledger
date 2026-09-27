@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { operationalAlertKindSchema } from '@partledger/contracts';
+import { schema } from '@partledger/db';
 import { refuse, success, type DomainError, type Result } from '@partledger/domain';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -8,8 +9,13 @@ import { raiseOperationalAlert } from '../alerts/operational-alerts';
 import { auditId, auditToken } from '../audit/audit-payload';
 import { defineJob, jobField, type JobHandler, type JobItemContext, type PayloadOf } from '../jobs/job.types';
 import { emailPort, type EmailMessage, type EmailPort } from './email.port';
-import { recipientDirectory, type RecipientDirectory } from './recipient-directory';
-import { templateNamed } from './templates/index';
+import {
+  operatorFallback,
+  recipientDirectory,
+  type OperatorFallback,
+  type RecipientDirectory,
+} from './recipient-directory';
+import { templateNamed, templateNames } from './templates/index';
 import { linkOrigins, renderEmail, type LinkOrigins } from './templates/render';
 
 /**
@@ -31,7 +37,7 @@ const notificationRows = z.array(
   z.object({
     channel: z.enum(['email', 'inApp']),
     template: z.string(),
-    recipient_kind: z.enum(['person', 'supplierContact', 'alertRecipient']),
+    recipient_kind: z.enum(schema.notificationRecipientKinds),
     recipient_id: z.uuid(),
     params: z.record(z.string(), z.unknown()),
     status: z.enum(['pending', 'sent', 'failed']),
@@ -57,6 +63,7 @@ export class SendNotificationHandler implements JobHandler<typeof sendNotificati
     @Inject(emailPort) private readonly email: EmailPort,
     @Inject(recipientDirectory) private readonly recipients: RecipientDirectory,
     @Inject(linkOrigins) private readonly origins: LinkOrigins,
+    @Inject(operatorFallback) private readonly fallback: OperatorFallback,
   ) {}
 
   items(payload: PayloadOf<typeof sendNotificationJob>): Promise<readonly string[]> {
@@ -90,10 +97,13 @@ export class SendNotificationHandler implements JobHandler<typeof sendNotificati
     if (template === undefined || params?.success !== true) {
       return this.finish(context, notificationId, 'failed', 'templateInvalid');
     }
-    const address = await this.recipients.emailAddressOf(context.database, {
-      kind: notification.recipient_kind,
-      id: notification.recipient_id,
-    });
+    const address =
+      notification.recipient_kind === 'operator'
+        ? this.fallback.address
+        : await this.recipients.emailAddressOf(context.database, {
+            kind: notification.recipient_kind,
+            id: notification.recipient_id,
+          });
     if (address === null) {
       return this.finish(context, notificationId, 'failed', 'recipientUnavailable');
     }
@@ -104,6 +114,7 @@ export class SendNotificationHandler implements JobHandler<typeof sendNotificati
     const rendered = renderEmail(template, params.data, {
       tenantName: tenant?.display_name ?? '',
       origins: this.origins,
+      recipientKind: notification.recipient_kind,
     });
     const sent = await this.send({ to: address, ...rendered, idempotencyKey: notificationId }, context.jobId);
     if (sent) {
@@ -114,12 +125,18 @@ export class SendNotificationHandler implements JobHandler<typeof sendNotificati
     }
     const failureCode = 'emailUnavailable';
     const alertKind = operationalAlertKindSchema.safeParse(notification.alert_kind);
-    if (!(alertKind.success && alertKind.data === 'notificationDeliveryFailed')) {
+    const failedTemplate = z.enum(templateNames).safeParse(template.name);
+    if (failedTemplate.success && !(alertKind.success && alertKind.data === 'notificationDeliveryFailed')) {
       await raiseOperationalAlert(context.database, {
         tenantId: context.principal.tenantId,
         kind: 'notificationDeliveryFailed',
         key: `notification:${notificationId}`,
-        params: { notificationId, template: notification.template, attempts: context.attempt },
+        params: {
+          notificationId,
+          template: failedTemplate.data,
+          recipientKind: notification.recipient_kind,
+          attempts: context.attempt,
+        },
         raisedByJobId: context.jobId,
         now: context.now,
       });
