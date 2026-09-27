@@ -1,4 +1,13 @@
 export {
+  returnToSchema,
+  signInFailedParameter,
+  signInQuerySchema,
+  staffAuthPaths,
+  staffRequestHeader,
+  staffSessionSchema,
+  type StaffSession,
+} from './auth';
+export {
   apiBasePath,
   commandPath,
   correlationIdHeader,

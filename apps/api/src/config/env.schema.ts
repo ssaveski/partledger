@@ -2,6 +2,11 @@ import { z } from 'zod';
 
 const port = z.coerce.number().int().min(1).max(65535);
 
+/** A bare origin such as `https://app.example`, with no path, query or trailing slash. */
+const origin = z
+  .url({ protocol: /^https?$/, abort: true })
+  .refine((value) => new URL(value).origin === value, 'must be an origin with no path or trailing slash');
+
 const listenerPorts = ['STAFF_PORT', 'PORTAL_PORT', 'DROP_PORT', 'OPERATOR_PORT'] as const;
 
 export const envSchema = z
@@ -19,6 +24,30 @@ export const envSchema = z
     /** Connects as `pl_app`, never as the owner or a superuser; row-level security depends on it. */
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+    /**
+     * The staff app's origin. It reaches the API through its own `/api` proxy (KTD30), so the
+     * sign-in callback and the post-sign-in redirect both live on it.
+     */
+    STAFF_APP_ORIGIN: origin,
+    /** The region's Keycloak realm, such as `https://id.example/realms/partledger` (KTD20). */
+    KEYCLOAK_ISSUER: z.url({ protocol: /^https?$/ }).transform((issuer) => issuer.replace(/\/+$/, '')),
+    KEYCLOAK_CLIENT_ID: z.string().min(1).default('partledger-api'),
+    /** The confidential client's secret; set per environment from the secret store. */
+    KEYCLOAK_CLIENT_SECRET: z.string().min(16),
+    /** The shortest time between two fetches of the realm's signing keys when a token names an unknown key. */
+    KEYCLOAK_JWKS_COOLDOWN_SECONDS: z.coerce.number().int().min(0).max(300).default(30),
+    /**
+     * 32 random bytes, base64: encrypts the refresh tokens kept with staff sessions and the
+     * short-lived sign-in state cookie. Generate with `openssl rand -base64 32`.
+     */
+    SESSION_TOKEN_KEY: z
+      .string()
+      .regex(/^[A-Za-z0-9+/]{43}=$/, 'must be 32 bytes, base64-encoded')
+      .transform((key) => Buffer.from(key, 'base64')),
+    STAFF_SESSION_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(10_080).default(30),
+    STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS: z.coerce.number().int().min(1).max(168).default(10),
+    /** How often a session's tokens are refreshed against Keycloak; a failed refresh ends the session. */
+    STAFF_SESSION_REFRESH_INTERVAL_SECONDS: z.coerce.number().int().min(10).max(3_600).default(60),
   })
   .superRefine((config, context) => {
     const seen = new Set<number>();
@@ -27,6 +56,13 @@ export const envSchema = z
         context.addIssue({ code: 'custom', path: [name], message: 'must differ from the other listener ports' });
       }
       seen.add(config[name]);
+    }
+    if (config.NODE_ENV === 'production') {
+      for (const name of ['STAFF_APP_ORIGIN', 'KEYCLOAK_ISSUER'] as const) {
+        if (!config[name].startsWith('https://')) {
+          context.addIssue({ code: 'custom', path: [name], message: 'must use https in production' });
+        }
+      }
     }
   });
 

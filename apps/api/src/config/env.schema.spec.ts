@@ -4,10 +4,26 @@ import { InvalidConfigurationError, parseConfig } from './env.schema';
 
 const databaseUrl = 'postgres://pl_app:placeholder@127.0.0.1:5432/partledger';
 const ports = { STAFF_PORT: '3000', PORTAL_PORT: '3001', DROP_PORT: '3002', OPERATOR_PORT: '3003' };
+const sessionKey = Buffer.alloc(32, 7);
+const auth = {
+  STAFF_APP_ORIGIN: 'http://127.0.0.1:5173',
+  KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger/',
+  KEYCLOAK_CLIENT_SECRET: 'placeholder-client-secret',
+  SESSION_TOKEN_KEY: sessionKey.toString('base64'),
+};
+
+function fieldsRefusedIn(environment: Readonly<Record<string, string | undefined>>): readonly string[] {
+  try {
+    parseConfig(environment);
+  } catch (error) {
+    return error instanceof InvalidConfigurationError ? error.fields : [];
+  }
+  return [];
+}
 
 describe('API configuration', () => {
   it('accepts a valid environment', () => {
-    expect(parseConfig({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl })).toEqual({
+    expect(parseConfig({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth })).toEqual({
       NODE_ENV: 'test',
       STAFF_PORT: 3000,
       PORTAL_PORT: 3001,
@@ -17,39 +33,42 @@ describe('API configuration', () => {
       OPERATOR_HOST: '127.0.0.1',
       DATABASE_URL: databaseUrl,
       DATABASE_POOL_SIZE: 10,
+      STAFF_APP_ORIGIN: 'http://127.0.0.1:5173',
+      KEYCLOAK_ISSUER: 'http://127.0.0.1:8080/realms/partledger',
+      KEYCLOAK_CLIENT_ID: 'partledger-api',
+      KEYCLOAK_CLIENT_SECRET: 'placeholder-client-secret',
+      KEYCLOAK_JWKS_COOLDOWN_SECONDS: 30,
+      SESSION_TOKEN_KEY: sessionKey,
+      STAFF_SESSION_IDLE_TIMEOUT_MINUTES: 30,
+      STAFF_SESSION_ABSOLUTE_TIMEOUT_HOURS: 10,
+      STAFF_SESSION_REFRESH_INTERVAL_SECONDS: 60,
     });
   });
 
   it('refuses an invalid STAFF_PORT and names the field', () => {
-    expect(() => parseConfig({ NODE_ENV: 'test', ...ports, STAFF_PORT: 'eighty', DATABASE_URL: databaseUrl })).toThrow(
-      /STAFF_PORT/,
-    );
-    expect(() => parseConfig({ NODE_ENV: 'test', ...ports, STAFF_PORT: '70000', DATABASE_URL: databaseUrl })).toThrow(
-      InvalidConfigurationError,
-    );
+    expect(() =>
+      parseConfig({ NODE_ENV: 'test', ...ports, STAFF_PORT: 'eighty', DATABASE_URL: databaseUrl, ...auth }),
+    ).toThrow(/STAFF_PORT/);
+    expect(() =>
+      parseConfig({ NODE_ENV: 'test', ...ports, STAFF_PORT: '70000', DATABASE_URL: databaseUrl, ...auth }),
+    ).toThrow(InvalidConfigurationError);
   });
 
   it('refuses a missing listener port and names the field', () => {
-    try {
-      parseConfig({ NODE_ENV: 'test', ...ports, OPERATOR_PORT: undefined, DATABASE_URL: databaseUrl });
-      expect.unreachable();
-    } catch (error) {
-      expect(error instanceof InvalidConfigurationError ? error.fields : []).toEqual(['OPERATOR_PORT']);
-    }
+    expect(
+      fieldsRefusedIn({ NODE_ENV: 'test', ...ports, OPERATOR_PORT: undefined, DATABASE_URL: databaseUrl, ...auth }),
+    ).toEqual(['OPERATOR_PORT']);
   });
 
   it('refuses two listeners on the same port and names the second one', () => {
-    try {
-      parseConfig({ NODE_ENV: 'test', ...ports, DROP_PORT: '3001', DATABASE_URL: databaseUrl });
-      expect.unreachable();
-    } catch (error) {
-      expect(error instanceof InvalidConfigurationError ? error.fields : []).toEqual(['DROP_PORT']);
-    }
+    expect(
+      fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DROP_PORT: '3001', DATABASE_URL: databaseUrl, ...auth }),
+    ).toEqual(['DROP_PORT']);
   });
 
   it('refuses an unknown NODE_ENV and names the field', () => {
     try {
-      parseConfig({ NODE_ENV: 'staging', ...ports, DATABASE_URL: databaseUrl });
+      parseConfig({ NODE_ENV: 'staging', ...ports, DATABASE_URL: databaseUrl, ...auth });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(InvalidConfigurationError);
@@ -60,12 +79,55 @@ describe('API configuration', () => {
 
   it('refuses a missing or non-PostgreSQL DATABASE_URL and names the field', () => {
     for (const DATABASE_URL of [undefined, 'https://127.0.0.1/partledger', 'not a url']) {
-      try {
-        parseConfig({ NODE_ENV: 'test', ...ports, DATABASE_URL });
-        expect.unreachable();
-      } catch (error) {
-        expect(error instanceof InvalidConfigurationError ? error.fields : []).toEqual(['DATABASE_URL']);
-      }
+      expect(fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DATABASE_URL, ...auth })).toEqual(['DATABASE_URL']);
     }
+  });
+
+  it('refuses a staff app origin with a path or trailing slash', () => {
+    for (const STAFF_APP_ORIGIN of ['https://app.example/', 'https://app.example/staff', 'app.example']) {
+      expect(
+        fieldsRefusedIn({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth, STAFF_APP_ORIGIN }),
+      ).toEqual(['STAFF_APP_ORIGIN']);
+    }
+  });
+
+  it('refuses a session token key that is not 32 bytes of base64 and never echoes it', () => {
+    const shortKey = Buffer.alloc(16, 7).toString('base64');
+    try {
+      parseConfig({ NODE_ENV: 'test', ...ports, DATABASE_URL: databaseUrl, ...auth, SESSION_TOKEN_KEY: shortKey });
+      expect.unreachable();
+    } catch (error) {
+      expect(error instanceof InvalidConfigurationError ? error.fields : []).toEqual(['SESSION_TOKEN_KEY']);
+      expect(String(error)).not.toContain(shortKey);
+    }
+  });
+
+  it('refuses a missing Keycloak client secret', () => {
+    expect(
+      fieldsRefusedIn({
+        NODE_ENV: 'test',
+        ...ports,
+        DATABASE_URL: databaseUrl,
+        ...auth,
+        KEYCLOAK_CLIENT_SECRET: undefined,
+      }),
+    ).toEqual(['KEYCLOAK_CLIENT_SECRET']);
+  });
+
+  it('requires https for the staff app and Keycloak in production', () => {
+    expect(fieldsRefusedIn({ NODE_ENV: 'production', ...ports, DATABASE_URL: databaseUrl, ...auth })).toEqual([
+      'STAFF_APP_ORIGIN',
+      'KEYCLOAK_ISSUER',
+    ]);
+    expect(
+      fieldsRefusedIn({
+        NODE_ENV: 'production',
+        ...ports,
+        DATABASE_URL: databaseUrl,
+        ...auth,
+        STAFF_APP_ORIGIN: 'https://app.example',
+        KEYCLOAK_ISSUER: 'https://id.example/realms/partledger',
+      }),
+    ).toEqual([]);
   });
 });

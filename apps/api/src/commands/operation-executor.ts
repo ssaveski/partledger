@@ -15,7 +15,7 @@ import { inputFingerprint } from '../idempotency/fingerprint';
 import type { HttpEntryAdapter } from '../listeners/entry-adapters';
 import { isAllowed } from '../principals/authorize';
 import type { AuthenticatedPrincipal, Principal } from '../principals/principal';
-import { PrincipalResolver } from '../principals/principal-resolver';
+import { PrincipalResolver, type PresentedHeaders } from '../principals/principal-resolver';
 import { roleDirectory, type RoleDirectory } from '../principals/role-directory';
 import { hasRecentStepUp } from '../principals/step-up';
 import { clock, type Clock } from '../time/clock';
@@ -25,7 +25,8 @@ import { operationRoutes, type OperationRoutes } from './route-generator';
 export interface OperationRequest {
   /** The listener the request arrived on; `undefined` when no listener accepted it. */
   readonly adapter: HttpEntryAdapter | undefined;
-  readonly authorization: string | undefined;
+  /** The `Authorization` and `Cookie` headers; which one counts depends on the listener. */
+  readonly credentialHeaders: PresentedHeaders;
   readonly correlationId: string;
 }
 
@@ -209,7 +210,7 @@ export class OperationExecutor {
     if (request.adapter === undefined) {
       return null;
     }
-    return this.principals.authenticate(request.adapter, request.authorization, request.correlationId, now);
+    return this.principals.authenticate(request.adapter, request.credentialHeaders, request.correlationId, now);
   }
 
   private async inTenantTransaction(

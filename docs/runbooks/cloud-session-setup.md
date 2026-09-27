@@ -25,6 +25,8 @@ if ! docker info > /dev/null 2>&1; then
   for _ in $(seq 1 30); do docker info > /dev/null 2>&1 && break; sleep 1; done
 fi
 docker pull postgres:18
+# Keycloak for the staff sign-in tests (docs/runbooks/keycloak.md).
+docker pull quay.io/keycloak/keycloak:26.4
 ```
 
 If the image already has Node 24 installed but not first on `PATH`, prefix commands with `PATH=/usr/local/n/versions/node/24.<minor>.<patch>/bin:$PATH`.
@@ -42,6 +44,7 @@ The environment's network policy must allow:
 | `registry.npmjs.org` | dependencies, and the supply-chain policy tests that probe the registry |
 | `github.com`, `api.github.com`, `codeload.github.com` | clone, push, resolving action digests |
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the `postgres:18` image and later service images |
+| `quay.io`, `cdn01.quay.io` | the `quay.io/keycloak/keycloak:26.4` image |
 | `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` | only if a laptop or CI installs Playwright browsers |
 
 ## Checks
